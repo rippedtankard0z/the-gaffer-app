@@ -2825,26 +2825,6 @@
                         </div>
                     </div>
 
-                    <div className="bg-white p-5 rounded-2xl shadow-soft border border-slate-100">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="font-bold text-slate-900">Quick Actions</h3>
-                        </div>
-                        <div className="grid grid-cols-4 gap-2">
-                            {[
-                                { icon: 'UserPlus', label: 'Player', action: () => onNavigate('players') },
-                                { icon: 'CalendarPlus', label: 'Match', action: () => onNavigate('fixtures') },
-                                { icon: 'Banknote', label: 'Expense', action: () => onNavigate('finances') },
-                                { icon: 'Share', label: 'Share', action: () => alert('Feature coming in Phase 4') },
-                            ].map((item, i) => (
-                                <button key={i} onClick={item.action} className="flex flex-col items-center gap-2 py-2 hover:bg-slate-50 rounded-xl transition-colors">
-                                    <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center text-brand-600">
-                                        <Icon name={item.icon} size={20} />
-                                    </div>
-                                    <span className="text-[10px] font-bold text-slate-500">{item.label}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
                 </div>
             );
         };
@@ -2861,13 +2841,13 @@
             ];
 
             return (
-                <div className="fixed bottom-8 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
-                    <nav className="glass-panel pointer-events-auto flex items-center gap-1 p-1.5 rounded-2xl shadow-glass">
+                <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pb-safe">
+                    <nav className="glass-panel mx-auto w-full max-w-md flex items-center justify-between gap-1 p-2 rounded-t-2xl shadow-glass">
                         {items.map(item => {
                             const isActive = activeTab === item.id;
                             return (
                                 <button key={item.id} onClick={() => setTab(item.id)}
-                                    className={`relative flex flex-col items-center justify-center w-16 h-14 rounded-xl transition-all duration-300 ${isActive ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+                                    className={`relative flex flex-col items-center justify-center flex-1 h-14 rounded-xl transition-all duration-300 ${isActive ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
                                 >
                                     <Icon name={item.icon} size={20} strokeWidth={isActive ? 2.5 : 2} className="mb-0.5" />
                                     <span className="text-[10px] font-bold tracking-wide">{item.label}</span>
