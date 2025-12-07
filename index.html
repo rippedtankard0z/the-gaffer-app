@@ -2943,8 +2943,302 @@
             );
         };
 
+        const Kit = ({ inventory = [], setInventory, kitOrders = [], setKitOrders, seasonCategories = [] }) => {
+            const defaultSeason = seasonCategories?.[0] || '2025/2026 Season';
+            const [inventoryForm, setInventoryForm] = useState({
+                type: 'SHIRT',
+                season: defaultSeason,
+                size: 'M',
+                number: '',
+                qty: 1,
+                unitCost: 20,
+                notes: ''
+            });
+            const [orderForm, setOrderForm] = useState({
+                season: defaultSeason,
+                supplier: '',
+                dateOrdered: new Date().toISOString().split('T')[0],
+                items: [],
+                itemEntry: { type: 'SHIRT', size: 'M', number: '', qty: 1, unitCost: 20 }
+            });
+            const kitTypes = ['SHIRT', 'SHORTS', 'BALL', 'OTHER'];
+            const kitSizes = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+            const normalizeKitField = (value) => {
+                if (value === undefined || value === null) return null;
+                const trimmed = String(value).trim();
+                return trimmed === '' ? null : trimmed;
+            };
+            const filteredInventory = inventory.filter(item => {
+                const matchesSeason = !inventoryForm.season || item.season === inventoryForm.season;
+                const matchesType = !inventoryForm.type || item.type === inventoryForm.type;
+                return matchesSeason && matchesType;
+            });
+            const lowStockInventory = filteredInventory.filter(item => (Number(item.qtyOnHand) || 0) <= 2);
+            const computeOrderTotal = (items = []) => items.reduce((sum, item) => sum + (Number(item.unitCost) || 0) * (Number(item.qty) || 0), 0);
+
+            const addInventoryItem = async () => {
+                const qty = Math.max(0, Number(inventoryForm.qty) || 0);
+                if (!qty) return alert('Enter a quantity');
+                const payload = {
+                    type: inventoryForm.type,
+                    season: inventoryForm.season || defaultSeason,
+                    size: inventoryForm.type === 'BALL' ? null : normalizeKitField(inventoryForm.size),
+                    number: normalizeKitField(inventoryForm.number),
+                    qtyOnHand: qty,
+                    qtyLoaned: 0,
+                    unitCost: Number(inventoryForm.unitCost) || 0,
+                    notes: inventoryForm.notes?.trim() || ''
+                };
+                const id = await db.inventory.add(payload);
+                setInventory(prev => [...prev, { ...payload, id }]);
+                setInventoryForm({
+                    type: 'SHIRT',
+                    season: defaultSeason,
+                    size: 'M',
+                    number: '',
+                    qty: 1,
+                    unitCost: 20,
+                    notes: ''
+                });
+            };
+
+            const adjustInventoryQty = async (item, delta) => {
+                const nextQty = Math.max(0, (Number(item.qtyOnHand) || 0) + delta);
+                await db.inventory.update(item.id, { qtyOnHand: nextQty });
+                setInventory(prev => prev.map(i => i.id === item.id ? { ...i, qtyOnHand: nextQty } : i));
+            };
+
+            const addOrderLine = () => {
+                const entry = {
+                    ...orderForm.itemEntry,
+                    type: orderForm.itemEntry.type || 'OTHER',
+                    size: orderForm.itemEntry.type === 'BALL' ? null : normalizeKitField(orderForm.itemEntry.size),
+                    number: normalizeKitField(orderForm.itemEntry.number),
+                    qty: Math.max(1, Number(orderForm.itemEntry.qty) || 1),
+                    unitCost: Number(orderForm.itemEntry.unitCost) || 0
+                };
+                setOrderForm(prev => ({
+                    ...prev,
+                    items: [...prev.items, entry],
+                    itemEntry: { ...prev.itemEntry, qty: 1, number: '', unitCost: 20 }
+                }));
+            };
+
+            const removeOrderLine = (index) => {
+                setOrderForm(prev => {
+                    const next = [...prev.items];
+                    next.splice(index, 1);
+                    return { ...prev, items: next };
+                });
+            };
+
+            const submitOrderForm = async () => {
+                if (!orderForm.items.length) return alert('Add at least one line item.');
+                const payload = {
+                    season: orderForm.season || defaultSeason,
+                    supplier: orderForm.supplier?.trim() || 'Unknown',
+                    dateOrdered: orderForm.dateOrdered ? new Date(orderForm.dateOrdered).toISOString() : new Date().toISOString(),
+                    status: 'PENDING',
+                    totalCost: computeOrderTotal(orderForm.items),
+                    items: orderForm.items.map(item => ({
+                        ...item,
+                        size: normalizeKitField(item.size),
+                        number: normalizeKitField(item.number),
+                        qty: Number(item.qty) || 0,
+                        unitCost: Number(item.unitCost) || 0
+                    }))
+                };
+                const id = await db.kitOrders.add(payload);
+                setKitOrders(prev => [{ ...payload, id }, ...prev]);
+                setOrderForm({
+                    season: defaultSeason,
+                    supplier: '',
+                    dateOrdered: new Date().toISOString().split('T')[0],
+                    items: [],
+                    itemEntry: { type: 'SHIRT', size: 'M', number: '', qty: 1, unitCost: 20 }
+                });
+            };
+
+            const receiveOrder = async (order) => {
+                if (order.status === 'RECEIVED') return;
+                for (const rawItem of order.items || []) {
+                    const type = (rawItem.type || 'OTHER').toUpperCase();
+                    const normalizedSize = normalizeKitField(rawItem.size);
+                    const normalizedNumber = normalizeKitField(rawItem.number);
+                    const runner = db.inventory.where('type').equals(type);
+                    const existing = await runner.and(item =>
+                        item.season === order.season &&
+                        normalizeKitField(item.size) === normalizedSize &&
+                        normalizeKitField(item.number) === normalizedNumber
+                    ).first();
+                    if (existing) {
+                        const nextQty = (Number(existing.qtyOnHand) || 0) + (Number(rawItem.qty) || 0);
+                        await db.inventory.update(existing.id, { qtyOnHand: nextQty });
+                        setInventory(prev => prev.map(item => item.id === existing.id ? { ...item, qtyOnHand: nextQty } : item));
+                    } else {
+                        const payload = {
+                            type,
+                            season: order.season,
+                            size: normalizedSize,
+                            number: normalizedNumber,
+                            qtyOnHand: Number(rawItem.qty) || 0,
+                            qtyLoaned: 0,
+                            unitCost: Number(rawItem.unitCost) || 0,
+                            notes: ''
+                        };
+                        const newId = await db.inventory.add(payload);
+                        setInventory(prev => [...prev, { ...payload, id: newId }]);
+                    }
+                }
+                const receivedAt = new Date().toISOString();
+                await db.kitOrders.update(order.id, { status: 'RECEIVED', dateReceived: receivedAt });
+                setKitOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'RECEIVED', dateReceived: receivedAt } : o));
+            };
+
+            return (
+                <div className="space-y-6 pb-28 animate-fade-in">
+                    <header className="px-1">
+                        <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Kit</h1>
+                        <p className="text-slate-500 text-sm font-medium">Track stock, orders & player sales</p>
+                        <div className="text-[11px] text-slate-500 mt-2 space-y-1">
+                            <div>1. Log every sponsor delivery here to capture inventory. Tap “Track Stock” for the units you now own.</div>
+                            <div>2. Record the purchase in the Bank tab as an <strong>EXPENSE</strong> (try category “Kit Purchase”) at the wholesale cost.</div>
+                            <div>3. When a player buys, log an <strong>INCOME</strong> record (category “Kit Sale”) for your sale price—profit is the difference.</div>
+                            <div>4. “Receive order” bumps inventory and clears the pending order list once the gear arrives.</div>
+                        </div>
+                    </header>
+
+                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Inventory</div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={inventoryForm.type} onChange={e => setInventoryForm({ ...inventoryForm, type: e.target.value })}>
+                                {kitTypes.map(type => <option key={type} value={type}>{type}</option>)}
+                            </select>
+                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={inventoryForm.season} onChange={e => setInventoryForm({ ...inventoryForm, season: e.target.value })}>
+                                {seasonCategories.map(season => <option key={season} value={season}>{season}</option>)}
+                            </select>
+                        </div>
+                        {inventoryForm.type !== 'BALL' && (
+                            <div className="grid grid-cols-2 gap-2">
+                                <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={inventoryForm.size} onChange={e => setInventoryForm({ ...inventoryForm, size: e.target.value })}>
+                                    {kitSizes.map(size => <option key={size} value={size}>{size}</option>)}
+                                </select>
+                                <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Number (optional)" value={inventoryForm.number} onChange={e => setInventoryForm({ ...inventoryForm, number: e.target.value })} />
+                            </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-2">
+                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" value={inventoryForm.qty} onChange={e => setInventoryForm({ ...inventoryForm, qty: e.target.value })} placeholder="Quantity" />
+                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" value={inventoryForm.unitCost} onChange={e => setInventoryForm({ ...inventoryForm, unitCost: e.target.value })} placeholder="Unit cost (SGD)" />
+                        </div>
+                        <textarea className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" placeholder="Notes" value={inventoryForm.notes} onChange={e => setInventoryForm({ ...inventoryForm, notes: e.target.value })} />
+                        <button onClick={addInventoryItem} className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">Track Stock</button>
+                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                            {filteredInventory.length ? filteredInventory.map(item => (
+                                <div key={item.id} className={`p-3 rounded-xl border ${item.qtyOnHand <= 2 ? 'border-amber-200 bg-amber-50/80' : 'border-slate-100 bg-white'}`}>
+                                    <div className="flex justify-between items-center text-sm font-bold text-slate-900">
+                                        <span>{item.type} {item.size || item.number ? `· ${item.size || item.number}` : ''}</span>
+                                        <span className="text-xs text-slate-500">{item.season || 'Season'}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between mt-2 text-xs text-slate-500">
+                                        <span>On hand: {item.qtyOnHand || 0}</span>
+                                        <span>Loaned: {item.qtyLoaned || 0}</span>
+                                        <span>Cost: {formatCurrency(Number(item.unitCost) || 0)}</span>
+                                    </div>
+                                    <div className="flex gap-2 mt-2">
+                                        <button onClick={() => adjustInventoryQty(item, 1)} className="flex-1 text-[11px] font-bold bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg border border-emerald-100">+1</button>
+                                        <button onClick={() => adjustInventoryQty(item, -1)} className="flex-1 text-[11px] font-bold bg-rose-50 text-rose-700 px-2 py-1 rounded-lg border border-rose-100">-1</button>
+                                    </div>
+                                </div>
+                            )) : (
+                                <div className="text-[11px] text-slate-400 text-center">No inventory tracked yet.</div>
+                            )}
+                        </div>
+                        {lowStockInventory.length > 0 && (
+                            <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                                Low stock: {lowStockInventory.map(item => `${item.type}${item.size ? ` ${item.size}` : ''}${item.number ? ` #${item.number}` : ''}`).join(', ')}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Kit Orders</div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={orderForm.season} onChange={e => setOrderForm({ ...orderForm, season: e.target.value })}>
+                                {seasonCategories.map(season => <option key={season} value={season}>{season}</option>)}
+                            </select>
+                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Supplier" value={orderForm.supplier} onChange={e => setOrderForm({ ...orderForm, supplier: e.target.value })} />
+                        </div>
+                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="date" value={orderForm.dateOrdered} onChange={e => setOrderForm({ ...orderForm, dateOrdered: e.target.value })} />
+                        <div className="grid grid-cols-2 gap-2">
+                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={orderForm.itemEntry.type} onChange={e => setOrderForm({ ...orderForm, itemEntry: { ...orderForm.itemEntry, type: e.target.value } })}>
+                                {kitTypes.map(type => <option key={type} value={type}>{type}</option>)}
+                            </select>
+                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={orderForm.itemEntry.size} onChange={e => setOrderForm({ ...orderForm, itemEntry: { ...orderForm.itemEntry, size: e.target.value } })}>
+                                {kitSizes.map(size => <option key={size} value={size}>{size}</option>)}
+                            </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Number (optional)" value={orderForm.itemEntry.number} onChange={e => setOrderForm({ ...orderForm, itemEntry: { ...orderForm.itemEntry, number: e.target.value } })} />
+                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" min="1" placeholder="Qty" value={orderForm.itemEntry.qty} onChange={e => setOrderForm({ ...orderForm, itemEntry: { ...orderForm.itemEntry, qty: e.target.value } })} />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" placeholder="Unit cost" value={orderForm.itemEntry.unitCost} onChange={e => setOrderForm({ ...orderForm, itemEntry: { ...orderForm.itemEntry, unitCost: e.target.value } })} />
+                            <button onClick={addOrderLine} className="text-[11px] font-bold bg-slate-900 text-white rounded-lg px-3 py-3">Add line</button>
+                        </div>
+                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                            {orderForm.items.length ? orderForm.items.map((item, idx) => (
+                                <div key={`${item.type}-${idx}`} className="p-2 rounded-xl border border-slate-100 bg-slate-50 flex items-center justify-between text-xs font-semibold text-slate-700">
+                                    <span>{item.type} {item.size || item.number ? `· ${item.size || item.number}` : ''} · {item.qty} · {formatCurrency(item.unitCost)}</span>
+                                    <button onClick={() => removeOrderLine(idx)} className="text-rose-600">Remove</button>
+                                </div>
+                            )) : (
+                                <div className="text-[11px] text-slate-400 text-center">No lines added yet.</div>
+                            )}
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-slate-500">
+                            <span>Total cost: {formatCurrency(computeOrderTotal(orderForm.items))}</span>
+                            <span>{kitOrders.filter(o => ((o.status || 'PENDING').toUpperCase() !== 'RECEIVED')).length} pending</span>
+                        </div>
+                        <button onClick={submitOrderForm} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl">Create Order</button>
+                        <div className="space-y-2">
+                            {kitOrders.slice(0, 3).map(order => (
+                                <div key={order.id} className="p-3 rounded-xl border border-slate-100 bg-white space-y-1">
+                                    <div className="flex items-center justify-between text-sm font-bold text-slate-900">
+                                        <span>{order.season} · {order.supplier || 'Supplier'}</span>
+                                        <span className={`text-[11px] font-bold ${order.status === 'RECEIVED' ? 'text-emerald-600' : 'text-amber-600'}`}>{order.status || 'PENDING'}</span>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500">
+                                        {(order.items?.length || 0)} item{order.items?.length === 1 ? '' : 's'} · {order.dateOrdered ? new Date(order.dateOrdered).toLocaleDateString() : 'Date pending'}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500">Total {formatCurrency(order.totalCost || computeOrderTotal(order.items || []))}</div>
+                                    <div className="flex gap-2">
+                                        {order.status !== 'RECEIVED' && (
+                                            <button onClick={() => receiveOrder(order)} className="flex-1 text-[11px] font-bold bg-emerald-50 text-emerald-700 px-3 py-2 rounded-lg border border-emerald-100">Mark received</button>
+                                        )}
+                                        <button onClick={() => setOrderForm({
+                                            ...orderForm,
+                                            season: order.season,
+                                            supplier: order.supplier || '',
+                                            dateOrdered: order.dateOrdered?.split('T')[0] || new Date().toISOString().split('T')[0],
+                                            items: order.items || [],
+                                            itemEntry: order.itemEntry || orderForm.itemEntry
+                                        })} className="flex-1 text-[11px] font-bold bg-slate-50 text-slate-700 px-3 py-2 rounded-lg border border-slate-200">
+                                            Import
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                            {!kitOrders.length && (
+                                <div className="text-[11px] text-slate-400 text-center">Nothing ordered yet.</div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
         // --- DASHBOARD MODULE ---
-        const Dashboard = ({ onNavigate, inventory = [], kitLoans = [], kitOrders = [] }) => {
+        const Dashboard = ({ onNavigate, inventory = [], kitLoans = [], kitOrders = [], onOpenSettings }) => {
             const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [], outstanding: { receivable: 0, payable: 0 } });
             const [nextFixture, setNextFixture] = useState(null);
             const [lastResult, setLastResult] = useState(null);
@@ -2999,8 +3293,11 @@
                             <div className="text-brand-600 font-display font-bold text-lg tracking-tight">BRITISH EXILES</div>
                             <div className="text-slate-400 text-xs font-medium uppercase tracking-widest">Manager Dashboard</div>
                         </div>
-                        <div className="w-10 h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden">
-                            <img src="https://ui-avatars.com/api/?name=Manager&background=0D8ABC&color=fff" alt="Profile" />
+                        <div className="flex items-center gap-2">
+                            <button onClick={onOpenSettings} className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 text-[11px] font-bold text-slate-700">MA</button>
+                            <div className="w-10 h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden">
+                                <img src="https://ui-avatars.com/api/?name=Manager&background=0D8ABC&color=fff" alt="Profile" />
+                            </div>
                         </div>
                     </header>
 
@@ -3108,7 +3405,7 @@
                 { id: 'players', icon: 'Users', label: 'Squad' },
                 { id: 'opponents', icon: 'Shield', label: 'League' },
                 { id: 'finances', icon: 'Wallet', label: 'Bank' },
-                { id: 'settings', icon: 'Settings', label: 'Settings' },
+                { id: 'kit', icon: 'Box', label: 'Kit' },
             ];
 
             return (
@@ -3483,7 +3780,7 @@
             );
         };
 
-        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, inventory = [], kitOrders = [], setInventory, setKitOrders }) => {
+        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults }) => {
             const [newCat, setNewCat] = useState('');
             const [newItemCat, setNewItemCat] = useState('');
             const importInputRef = useRef(null);
@@ -3495,137 +3792,6 @@
             const [legacyImporting, setLegacyImporting] = useState(false);
             const [legacyPreview, setLegacyPreview] = useState([]);
             const [fixtures, setFixtures] = useState([]);
-            const defaultSeasonTag = seasonCategories?.[0] || '2025/2026 Season';
-            const availableSeasons = seasonCategories.length ? seasonCategories : [defaultSeasonTag];
-            const getToday = () => new Date().toISOString().split('T')[0];
-            const createInventoryForm = () => ({
-                type: 'SHIRT',
-                season: defaultSeasonTag,
-                size: 'M',
-                number: '',
-                qty: 1,
-                unitCost: 20,
-                notes: ''
-            });
-            const createOrderForm = () => ({
-                season: defaultSeasonTag,
-                supplier: '',
-                dateOrdered: getToday(),
-                items: [],
-                itemEntry: { type: 'SHIRT', size: 'M', number: '', qty: 1, unitCost: 20 }
-            });
-            const [inventoryForm, setInventoryForm] = useState(createInventoryForm());
-            const [inventorySeasonFilter, setInventorySeasonFilter] = useState(defaultSeasonTag);
-            const [inventoryTypeFilter, setInventoryTypeFilter] = useState('SHIRT');
-            const [orderForm, setOrderForm] = useState(createOrderForm());
-            const kitTypes = ['SHIRT', 'SHORTS', 'BALL', 'OTHER'];
-            const kitSizes = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
-            const normalizeKitField = (value) => {
-                if (value === undefined || value === null) return null;
-                const trimmed = String(value).trim();
-                return trimmed === '' ? null : trimmed;
-            };
-            const filteredInventory = inventory.filter(item => {
-                const matchesSeason = !inventorySeasonFilter || item.season === inventorySeasonFilter;
-                const matchesType = !inventoryTypeFilter || item.type === inventoryTypeFilter;
-                return matchesSeason && matchesType;
-            });
-            const lowStockInventory = filteredInventory.filter(item => (Number(item.qtyOnHand) || 0) <= 2);
-            const computeOrderTotal = (items = []) => {
-                return items.reduce((sum, item) => sum + (Number(item.unitCost) || 0) * (Number(item.qty) || 0), 0);
-            };
-            const addInventoryItem = async () => {
-                const qty = Math.max(0, Number(inventoryForm.qty) || 0);
-                if(!qty) { alert('Enter a quantity'); return; }
-                await db.inventory.add({
-                    type: inventoryForm.type,
-                    season: inventoryForm.season || defaultSeasonTag,
-                    size: inventoryForm.type === 'BALL' ? null : normalizeKitField(inventoryForm.size),
-                    number: normalizeKitField(inventoryForm.number),
-                    qtyOnHand: qty,
-                    qtyLoaned: 0,
-                    unitCost: Number(inventoryForm.unitCost) || 0,
-                    notes: inventoryForm.notes?.trim() || ''
-                });
-                setInventoryForm(createInventoryForm());
-            };
-            const adjustInventoryQty = async (item, delta) => {
-                const nextQty = Math.max(0, (Number(item.qtyOnHand) || 0) + delta);
-                await db.inventory.update(item.id, { qtyOnHand: nextQty });
-            };
-            const addOrderLine = () => {
-                const entry = {
-                    ...orderForm.itemEntry,
-                    type: orderForm.itemEntry.type || 'OTHER',
-                    size: orderForm.itemEntry.type === 'BALL' ? null : normalizeKitField(orderForm.itemEntry.size),
-                    number: normalizeKitField(orderForm.itemEntry.number),
-                    qty: Math.max(1, Number(orderForm.itemEntry.qty) || 1),
-                    unitCost: Number(orderForm.itemEntry.unitCost) || 0
-                };
-                setOrderForm(prev => ({
-                    ...prev,
-                    items: [...prev.items, entry],
-                    itemEntry: { ...prev.itemEntry, qty: 1, number: '', unitCost: 20 }
-                }));
-            };
-            const removeOrderLine = (index) => {
-                setOrderForm(prev => {
-                    const next = [...prev.items];
-                    next.splice(index, 1);
-                    return { ...prev, items: next };
-                });
-            };
-            const submitOrderForm = async () => {
-                if(!orderForm.items.length) { alert('Add at least one line item.'); return; }
-                await db.kitOrders.add({
-                    season: orderForm.season || defaultSeasonTag,
-                    supplier: orderForm.supplier?.trim() || 'Unknown',
-                    dateOrdered: orderForm.dateOrdered ? new Date(orderForm.dateOrdered).toISOString() : new Date().toISOString(),
-                    status: 'PENDING',
-                    totalCost: computeOrderTotal(orderForm.items),
-                    items: orderForm.items.map(item => ({
-                        ...item,
-                        size: normalizeKitField(item.size),
-                        number: normalizeKitField(item.number),
-                        qty: Number(item.qty) || 0,
-                        unitCost: Number(item.unitCost) || 0
-                    }))
-                });
-                setOrderForm(createOrderForm());
-            };
-            const receiveOrder = async (order) => {
-                if(order.status === 'RECEIVED') return;
-                for(const rawItem of order.items || []) {
-                    const type = (rawItem.type || 'OTHER').toUpperCase();
-                    const normalizedSize = normalizeKitField(rawItem.size);
-                    const normalizedNumber = normalizeKitField(rawItem.number);
-                    const runner = db.inventory.where('type').equals(type);
-                    const existing = await runner.and(item => 
-                        item.season === order.season &&
-                        normalizeKitField(item.size) === normalizedSize &&
-                        normalizeKitField(item.number) === normalizedNumber
-                    ).first();
-                    if(existing) {
-                        const nextQty = (Number(existing.qtyOnHand) || 0) + (Number(rawItem.qty) || 0);
-                        await db.inventory.update(existing.id, { qtyOnHand: nextQty });
-                    } else {
-                        await db.inventory.add({
-                            type,
-                            season: order.season,
-                            size: normalizedSize,
-                            number: normalizedNumber,
-                            qtyOnHand: Number(rawItem.qty) || 0,
-                            qtyLoaned: 0,
-                            unitCost: Number(rawItem.unitCost) || 0,
-                            notes: ''
-                        });
-                    }
-                }
-                await db.kitOrders.update(order.id, { status: 'RECEIVED', dateReceived: new Date().toISOString() });
-                if(setKitOrders) {
-                    setKitOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'RECEIVED', dateReceived: new Date().toISOString() } : o));
-                }
-            };
 
             useEffect(() => {
                 const loadFixtures = async () => {
@@ -4159,133 +4325,12 @@
                         <div className="text-[11px] text-slate-500">Seasons are used on games and imports to tag records by year.</div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Kit Inventory</div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={inventoryTypeFilter} onChange={e => setInventoryTypeFilter(e.target.value)}>
-                                <option value="">All types</option>
-                                {kitTypes.map(type => <option key={type} value={type}>{type}</option>)}
-                            </select>
-                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={inventorySeasonFilter} onChange={e => setInventorySeasonFilter(e.target.value)}>
-                                <option value="">All seasons</option>
-                                {availableSeasons.map(season => <option key={season} value={season}>{season}</option>)}
-                            </select>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={inventoryForm.type} onChange={e => setInventoryForm({ ...inventoryForm, type: e.target.value })}>
-                                {kitTypes.map(type => <option key={type} value={type}>{type[0] + type.slice(1).toLowerCase()}</option>)}
-                            </select>
-                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={inventoryForm.season} onChange={e => setInventoryForm({ ...inventoryForm, season: e.target.value })}>
-                                {availableSeasons.map(season => <option key={season} value={season}>{season}</option>)}
-                            </select>
-                        </div>
-                        {inventoryForm.type !== 'BALL' && (
-                            <div className="grid grid-cols-2 gap-2">
-                                <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={inventoryForm.size} onChange={e => setInventoryForm({ ...inventoryForm, size: e.target.value })}>
-                                    {kitSizes.map(size => <option key={size} value={size}>{size}</option>)}
-                                </select>
-                                <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Number (optional)" value={inventoryForm.number} onChange={e => setInventoryForm({ ...inventoryForm, number: e.target.value })} />
-                            </div>
-                        )}
-                        <div className="grid grid-cols-2 gap-2">
-                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" value={inventoryForm.qty} onChange={e => setInventoryForm({ ...inventoryForm, qty: e.target.value })} placeholder="Quantity" />
-                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" value={inventoryForm.unitCost} onChange={e => setInventoryForm({ ...inventoryForm, unitCost: e.target.value })} placeholder="Unit cost (SGD)" />
-                        </div>
-                        <textarea className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" placeholder="Notes" value={inventoryForm.notes} onChange={e => setInventoryForm({ ...inventoryForm, notes: e.target.value })} />
-                        <button onClick={addInventoryItem} className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">Track Stock</button>
-                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                            {filteredInventory.length ? filteredInventory.map(item => (
-                                <div key={item.id} className={`p-3 rounded-xl border ${item.qtyOnHand <= 2 ? 'border-amber-200 bg-amber-50/80' : 'border-slate-100 bg-white'}`}>
-                                    <div className="flex justify-between items-center text-sm font-bold text-slate-900">
-                                        <span>{item.type} {item.size || item.number ? `· ${item.size || item.number}` : ''}</span>
-                                        <span className="text-xs text-slate-500">{item.season || 'Season'}</span>
-                                    </div>
-                                    <div className="flex items-center justify-between mt-2 text-xs text-slate-500">
-                                        <span>On hand: {item.qtyOnHand || 0}</span>
-                                        <span>Loaned: {item.qtyLoaned || 0}</span>
-                                        <span>Cost: {formatCurrency(Number(item.unitCost) || 0)}</span>
-                                    </div>
-                                    <div className="flex gap-2 mt-2">
-                                        <button onClick={() => adjustInventoryQty(item, 1)} className="flex-1 text-[11px] font-bold bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg border border-emerald-100">+1</button>
-                                        <button onClick={() => adjustInventoryQty(item, -1)} className="flex-1 text-[11px] font-bold bg-rose-50 text-rose-700 px-2 py-1 rounded-lg border border-rose-100">-1</button>
-                                    </div>
-                                </div>
-                            )) : (
-                                <div className="text-[11px] text-slate-400 text-center">No inventory tracked yet.</div>
-                            )}
-                        </div>
-                        {lowStockInventory.length > 0 && (
-                            <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
-                                Low stock alerts: {lowStockInventory.map(item => `${item.type}${item.size ? ` ${item.size}` : ''}${item.number ? ` #${item.number}` : ''}`).join(', ')}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Kit Orders</div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={orderForm.season} onChange={e => setOrderForm({ ...orderForm, season: e.target.value })}>
-                                {availableSeasons.map(season => <option key={season} value={season}>{season}</option>)}
-                            </select>
-                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Supplier" value={orderForm.supplier} onChange={e => setOrderForm({ ...orderForm, supplier: e.target.value })} />
-                        </div>
-                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="date" value={orderForm.dateOrdered} onChange={e => setOrderForm({ ...orderForm, dateOrdered: e.target.value })} />
-                        <div className="grid grid-cols-2 gap-2">
-                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={orderForm.itemEntry.type} onChange={e => setOrderForm({ ...orderForm, itemEntry: { ...orderForm.itemEntry, type: e.target.value } })}>
-                                {kitTypes.map(type => <option key={type} value={type}>{type}</option>)}
-                            </select>
-                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm font-medium" value={orderForm.itemEntry.size} onChange={e => setOrderForm({ ...orderForm, itemEntry: { ...orderForm.itemEntry, size: e.target.value } })}>
-                                {kitSizes.map(size => <option key={size} value={size}>{size}</option>)}
-                            </select>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Number (optional)" value={orderForm.itemEntry.number} onChange={e => setOrderForm({ ...orderForm, itemEntry: { ...orderForm.itemEntry, number: e.target.value } })} />
-                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" min="1" placeholder="Qty" value={orderForm.itemEntry.qty} onChange={e => setOrderForm({ ...orderForm, itemEntry: { ...orderForm.itemEntry, qty: e.target.value } })} />
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" placeholder="Unit cost" value={orderForm.itemEntry.unitCost} onChange={e => setOrderForm({ ...orderForm, itemEntry: { ...orderForm.itemEntry, unitCost: e.target.value } })} />
-                            <button onClick={addOrderLine} className="text-[11px] font-bold bg-slate-900 text-white rounded-lg px-3 py-3">Add line</button>
-                        </div>
-                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                            {orderForm.items.length ? orderForm.items.map((item, idx) => (
-                                <div key={`${item.type}-${idx}`} className="p-2 rounded-xl border border-slate-100 bg-slate-50 flex items-center justify-between text-xs font-semibold text-slate-700">
-                                    <span>{item.type} {item.size || item.number ? `· ${item.size || item.number}` : ''} · {item.qty} · {formatCurrency(item.unitCost)}</span>
-                                    <button onClick={() => removeOrderLine(idx)} className="text-rose-600">Remove</button>
-                                </div>
-                            )) : (
-                                <div className="text-[11px] text-slate-400 text-center">No lines added yet.</div>
-                            )}
-                        </div>
-                        <div className="flex items-center justify-between text-xs text-slate-500">
-                            <span>Total cost: {formatCurrency(computeOrderTotal(orderForm.items))}</span>
-                            <span>{(kitOrders || []).filter(o => (o.status || 'PENDING').toUpperCase() !== 'RECEIVED').length} pending</span>
-                        </div>
-                        <button onClick={submitOrderForm} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl">Create Order</button>
-                        <div className="space-y-2">
-                            {(kitOrders || []).slice(0,3).map(order => (
-                                <div key={order.id} className="p-3 rounded-xl border border-slate-100 bg-white space-y-1">
-                                    <div className="flex items-center justify-between text-sm font-bold text-slate-900">
-                                        <span>{order.season} · {order.supplier || 'Supplier'}</span>
-                                        <span className={`text-[11px] font-bold ${order.status === 'RECEIVED' ? 'text-emerald-600' : 'text-amber-600'}`}>{order.status || 'PENDING'}</span>
-                                    </div>
-                                    <div className="text-[11px] text-slate-500">
-                                        {order.items?.length || 0} item{order.items?.length === 1 ? '' : 's'} · {order.dateOrdered ? new Date(order.dateOrdered).toLocaleDateString() : 'Date pending'}
-                                    </div>
-                                    <div className="text-[11px] text-slate-500">Total {formatCurrency(order.totalCost || computeOrderTotal(order.items || []))}</div>
-                                    <div className="flex gap-2">
-                                        {order.status !== 'RECEIVED' && (
-                                            <button onClick={() => receiveOrder(order)} className="flex-1 text-[11px] font-bold bg-emerald-50 text-emerald-700 px-3 py-2 rounded-lg border border-emerald-100">Mark received</button>
-                                        )}
-                                        <button onClick={() => setOrderForm({ ...orderForm, season: order.season, supplier: order.supplier || '', dateOrdered: order.dateOrdered?.split('T')[0] || getToday(), items: order.items || [], itemEntry: order.itemEntry || orderForm.itemEntry })} className="flex-1 text-[11px] font-bold bg-slate-50 text-slate-700 px-3 py-2 rounded-lg border border-slate-200">
-                                            Import
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                            {(kitOrders || []).length === 0 && (
-                                <div className="text-[11px] text-slate-400 text-center">Nothing ordered yet.</div>
-                            )}
-                        </div>
+                    <div className="bg-blue-50 p-4 rounded-2xl shadow-soft border border-blue-100 space-y-2">
+                        <div className="text-xs font-bold text-blue-600 uppercase tracking-wider">Kit workflow</div>
+                        <p className="text-sm text-blue-700">
+                            The new Kit tab handles bulk inventory, supplier orders, and stock adjustments. Record the purchase total as an EXPENSE in the Bank tab (category like “Kit Purchase”), and log each player sale as INCOME for your marked-up price.
+                            If you ever need to tweak categories, use the MA button on the dashboard to reopen these settings.
+                        </p>
                     </div>
 
                     {/* Opponents and Venues moved to dedicated tab */}
@@ -4494,6 +4539,7 @@
             const [inventory, setInventory] = useState([]);
             const [kitOrders, setKitOrders] = useState([]);
             const [kitLoans, setKitLoans] = useState([]);
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
             useEffect(() => {
                 const load = async () => {
@@ -4530,15 +4576,18 @@
                     </div>
 
                     <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
-                        {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} inventory={inventory} kitLoans={kitLoans} kitOrders={kitOrders} />}
+                        {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} inventory={inventory} kitLoans={kitLoans} kitOrders={kitOrders} onOpenSettings={() => setIsSettingsOpen(true)} />}
                         {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
                         {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
                         {activeTab === 'players' && <Players itemCategories={itemCategories} />}
                         {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
-                        {activeTab === 'settings' && <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} inventory={inventory} kitOrders={kitOrders} setInventory={setInventory} setKitOrders={setKitOrders} />}
+                        {activeTab === 'kit' && <Kit inventory={inventory} setInventory={setInventory} kitOrders={kitOrders} setKitOrders={setKitOrders} seasonCategories={seasonCategories} />}
                     </main>
                     
                     <Nav activeTab={activeTab} setTab={setActiveTab} />
+                    <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="Settings">
+                        <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} />
+                    </Modal>
                 </div>
             );
         };
