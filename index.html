@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>The Gaffer on GitHub | British Exiles</title>
+    <title>The Gaffer | British Exiles</title>
     
     <!-- React & DOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -18,21 +18,174 @@
     <!-- Styles & Icons -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Firebase SDKs & Firestore bridge -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
+        import { 
+            getFirestore, collection, doc, setDoc, addDoc, updateDoc, deleteDoc, 
+            getDocs, onSnapshot 
+        } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
-    <!-- Firebase Config (from gaffer-web) -->
-    <script>
-        window.GAFFER_FIREBASE_CONFIG = {
-            apiKey: "AIzaSyDUUv9wyXMzGBL3Taf9hUl7tFIqZWDX2WA",
-            authDomain: "the-gaffer-581d8.firebaseapp.com",
-            projectId: "the-gaffer-581d8",
-            storageBucket: "the-gaffer-581d8.firebasestorage.app",
-            messagingSenderId: "1001996489848",
-            appId: "1:1001996489848:web:dd5978d553f7314f06c98d"
+        const firebaseConfig = window.GAFFER_FIREBASE_CONFIG;
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const fs = getFirestore(app);
+
+        const cache = {
+            players: [],
+            fixtures: [],
+            transactions: [],
+            participations: [],
+            opponents: [],
+            venues: [],
+            referees: []
+        };
+
+        const numericOrId = (val) => {
+            const asNum = Number(val);
+            return Number.isNaN(asNum) ? val : asNum;
+        };
+
+        const ready = (async () => {
+            try {
+                await signInAnonymously(auth);
+            } catch (err) {
+                console.error("Anon auth failed", err);
+            }
+            const names = Object.keys(cache);
+            await Promise.all(names.map(async (name) => {
+                const snap = await getDocs(collection(fs, name));
+                cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
+            }));
+            names.forEach((name) => {
+                const colRef = collection(fs, name);
+                onSnapshot(colRef, (snap) => {
+                    cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
+                    window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name } }));
+                });
+            });
+        })();
+
+        const docRef = (name, id) => doc(fs, name, String(id));
+
+        const nextId = (name) => {
+            const items = cache[name] || [];
+            const max = items.reduce((m, item) => {
+                const n = Number(item.id);
+                return Number.isNaN(n) ? m : Math.max(m, n);
+            }, 0);
+            return String(max + 1 || 1);
+        };
+
+        const createRunner = (name, filterFn, opts = { reverse: false }) => ({
+            and(extraFn) { return createRunner(name, (item) => filterFn(item) && extraFn(item), opts); },
+            reverse() { return createRunner(name, filterFn, { ...opts, reverse: !opts.reverse }); },
+            async toArray() {
+                await ready;
+                const arr = (cache[name] || []).filter(filterFn);
+                return opts.reverse ? [...arr].reverse() : arr;
+            },
+            async first() {
+                const arr = await this.toArray();
+                return arr[0];
+            },
+            async delete() {
+                const arr = await this.toArray();
+                await Promise.all(arr.map(item => deleteDoc(docRef(name, item.id))));
+            },
+            async modify(patch) {
+                const arr = await this.toArray();
+                await Promise.all(arr.map(item => {
+                    const data = typeof patch === 'function' ? patch(item) : patch;
+                    return updateDoc(docRef(name, item.id), data);
+                }));
+            },
+            async sortBy(field) {
+                const arr = await this.toArray();
+                const sorted = [...arr].sort((a, b) => {
+                    const av = a?.[field] ?? '';
+                    const bv = b?.[field] ?? '';
+                    if (av === bv) return 0;
+                    return av > bv ? 1 : -1;
+                });
+                return opts.reverse ? sorted.reverse() : sorted;
+            }
+        });
+
+        const createTable = (name) => {
+            const colRef = collection(fs, name);
+            return {
+                async toArray() { await ready; return [...cache[name]]; },
+                async count() { await ready; return cache[name].length; },
+                async add(data) {
+                    await ready;
+                    const id = nextId(name);
+                    await setDoc(docRef(name, id), { ...data, id: numericOrId(id) });
+                    return numericOrId(id);
+                },
+                async bulkAdd(items) {
+                    await ready;
+                    const ids = [];
+                    for (const item of items) {
+                        const id = nextId(name);
+                        await setDoc(docRef(name, id), { ...item, id: numericOrId(id) });
+                        ids.push(numericOrId(id));
+                    }
+                    return ids;
+                },
+                async bulkPut(items) {
+                    await ready;
+                    await Promise.all(items.map(item => {
+                        if (!item.id) return addDoc(colRef, item);
+                        return setDoc(docRef(name, item.id), item, { merge: true });
+                    }));
+                },
+                async update(id, data) { await ready; await updateDoc(docRef(name, id), data); },
+                async delete(id) { await ready; await deleteDoc(docRef(name, id)); },
+                async bulkDelete(ids) { await ready; await Promise.all(ids.map(i => deleteDoc(docRef(name, i)))); },
+                async clear() { await ready; await this.bulkDelete(cache[name].map(x => x.id)); },
+                toCollection() {
+                    return {
+                        primaryKeys: async () => { await ready; return cache[name].map(x => x.id); }
+                    };
+                },
+                where(field) {
+                    return {
+                        equals(val) { return createRunner(name, (item) => item?.[field] === val); }
+                    };
+                },
+                orderBy(field) {
+                    const base = async (rev) => {
+                        await ready;
+                        const arr = [...cache[name]].sort((a, b) => {
+                            const av = a?.[field] ?? '';
+                            const bv = b?.[field] ?? '';
+                            if (av === bv) return 0;
+                            return av > bv ? 1 : -1;
+                        });
+                        return rev ? arr.reverse() : arr;
+                    };
+                    return {
+                        toArray: () => base(false),
+                        reverse() { return { toArray: () => base(true) }; }
+                    };
+                }
+            };
+        };
+
+        window.firebaseReady = ready;
+        window.db = {
+            players: createTable('players'),
+            fixtures: createTable('fixtures'),
+            transactions: createTable('transactions'),
+            participations: createTable('participations'),
+            opponents: createTable('opponents'),
+            venues: createTable('venues'),
+            referees: createTable('referees')
         };
     </script>
-    
-    <!-- Database -->
-    <script src="https://unpkg.com/dexie@3/dist/dexie.js"></script>
 
     <!-- App Configuration -->
     <script>
@@ -107,18 +260,9 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // --- 1. Database & Domain Models (Dexie) ---
-        const db = new Dexie('BritishExilesDB');
-        db.version(5).stores({
-            players: '++id, isActive',
-            fixtures: '++id, date, seasonId, competitionType',
-            // Added payee index to support reassign queries
-            transactions: '++id, date, category, type, playerId, fixtureId, payee',
-            participations: '++id, fixtureId, playerId, status',
-            opponents: '++id, name',
-            venues: '++id, name, homeTeamId',
-            referees: '++id, name, phone'
-        });
+        // --- 1. Database & Domain Models (Firestore) ---
+        const db = window.db;
+        const waitForDb = () => window.firebaseReady || Promise.resolve();
 
         // --- 2. Shared Logic ---
         const parseCurrency = (str) => {
@@ -314,6 +458,7 @@
             const [newCharge, setNewCharge] = useState({ item: itemCategories[0] || 'Other', amount: '' });
 
             const refresh = async () => {
+                await waitForDb();
                 const list = await db.players.toArray();
                 const txs = await db.transactions.toArray();
                 const parts = await db.participations.toArray();
@@ -356,7 +501,17 @@
                 }
             };
 
-            useEffect(() => { refresh(); }, []);
+            useEffect(() => {
+                refresh();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (['players', 'transactions', 'participations', 'fixtures'].includes(e.detail.name)) {
+                        refresh();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, []);
 
             const openPlayerDetails = async (player) => {
                 const txs = await db.transactions.where('playerId').equals(player.id).reverse().sortBy('date');
@@ -847,6 +1002,7 @@
             }, [fixtures]);
 
             const refresh = async () => {
+                await waitForDb();
                 const list = await db.fixtures.orderBy('date').reverse().toArray();
                 setFixtures(list);
                 const pList = await db.players.toArray();
@@ -863,7 +1019,17 @@
                 }
             };
 
-            useEffect(() => { refresh(); }, []);
+            useEffect(() => {
+                refresh();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (['fixtures', 'players', 'transactions', 'participations', 'opponents', 'venues', 'referees'].includes(e.detail.name)) {
+                        refresh();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, []);
 
             const openMatchMode = async (fixture) => {
                 const participations = await db.participations.where('fixtureId').equals(fixture.id).toArray();
@@ -2101,6 +2267,7 @@
             }, [transactions]);
 
             const refresh = async () => {
+                await waitForDb();
                 const txs = await db.transactions.orderBy('date').reverse().toArray();
                 setTransactions(txs);
                 const parts = await db.participations.toArray();
@@ -2120,7 +2287,17 @@
                 setBreakdown(cats);
             };
 
-            useEffect(() => { refresh(); }, []);
+            useEffect(() => {
+                refresh();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (['transactions', 'participations', 'players', 'fixtures'].includes(e.detail.name)) {
+                        refresh();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, []);
 
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0];
@@ -2549,6 +2726,7 @@
 
             useEffect(() => {
                 const load = async () => {
+                    await waitForDb();
                     const txs = await db.transactions.toArray();
                     const players = await db.players.count();
                     const fixtures = await db.fixtures.count();
@@ -2561,6 +2739,14 @@
                     setStats({ balance: running, playerCt: players, fixtureCt: fixtures, history: chartData });
                 };
                 load();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (['transactions', 'players', 'fixtures'].includes(e.detail.name)) {
+                        load();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
             }, []);
 
             return (
@@ -2681,6 +2867,7 @@
 
             useEffect(() => {
                 const loadFacts = async () => {
+                    await waitForDb();
                     const fx = await db.fixtures.toArray();
                     const parts = await db.participations.toArray();
                     const players = await db.players.toArray();
@@ -3027,6 +3214,7 @@
 
             useEffect(() => {
                 const loadFixtures = async () => {
+                    await waitForDb();
                     const fx = await db.fixtures.toArray();
                     setFixtures(fx);
                 };
@@ -3762,6 +3950,7 @@
 
             useEffect(() => {
                 const load = async () => {
+                    await waitForDb();
                     const ops = await db.opponents.toArray();
                     const vns = await db.venues.toArray();
                     const refs = await db.referees.toArray();
@@ -3770,6 +3959,14 @@
                     setReferees(refs);
                 };
                 load();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (['opponents', 'venues', 'referees'].includes(e.detail.name)) {
+                        load();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
             }, []);
             
             return (
