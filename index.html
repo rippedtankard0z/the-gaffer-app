@@ -2755,21 +2755,30 @@
 
         // --- DASHBOARD MODULE ---
         const Dashboard = ({ onNavigate }) => {
-            const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [] });
+            const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [], outstanding: { receivable: 0, payable: 0 } });
+            const [nextFixture, setNextFixture] = useState(null);
+            const [lastResult, setLastResult] = useState(null);
 
             useEffect(() => {
                 const load = async () => {
                     await waitForDb();
-                    const txs = await db.transactions.toArray();
+                    const txs = await db.transactions.orderBy('date').toArray();
                     const players = await db.players.count();
-                    const fixtures = await db.fixtures.count();
+                    const fixtures = await db.fixtures.orderBy('date').toArray();
                     
                     const sortedTxs = txs.sort((a,b) => new Date(a.date) - new Date(b.date));
                     let running = 0;
                     const history = sortedTxs.map(t => { running += t.amount; return running; });
                     const chartData = history.slice(-20);
+                    const receivable = txs.filter(t => !t.isReconciled && (t.flow === 'receivable' || t.amount > 0)).reduce((a,b)=>a+b.amount,0);
+                    const payable = txs.filter(t => !t.isReconciled && (t.flow === 'payable' || t.amount < 0)).reduce((a,b)=>a+b.amount,0);
 
-                    setStats({ balance: running, playerCt: players, fixtureCt: fixtures, history: chartData });
+                    const upcoming = fixtures.filter(f => !f.status || f.status !== 'ARCHIVED').sort((a,b)=>new Date(a.date)-new Date(b.date)).find(f => new Date(f.date) >= new Date());
+                    const played = fixtures.filter(f => f.status === 'PLAYED').sort((a,b)=>new Date(b.date)-new Date(a.date))[0] || null;
+
+                    setStats({ balance: running, playerCt: players, fixtureCt: fixtures.length, history: chartData, outstanding: { receivable, payable } });
+                    setNextFixture(upcoming || null);
+                    setLastResult(played ? { opponent: played.opponent, score: `${played.homeScore ?? '-'}:${played.awayScore ?? '-'}`, date: played.date } : null);
                 };
                 load();
                 const handler = (e) => {
@@ -2794,35 +2803,60 @@
                         </div>
                     </header>
 
-                    {/* Hero Balance Card */}
-                    <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl p-6 text-white shadow-2xl shadow-slate-900/20 relative overflow-hidden">
-                        <div className="absolute top-0 right-0 w-48 h-48 bg-white/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
-                        <div className="relative z-10">
-                            <div className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">Total Balance</div>
-                            <div className="text-4xl font-display font-bold mb-4">
-                                {formatCurrency(stats.balance, { minimumFractionDigits: 0 })}
+                    {/* Compact Balance Card */}
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft">
+                        <div className="flex items-center justify-between mb-2">
+                            <div>
+                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Balance</div>
+                                <div className="text-2xl font-display font-bold text-slate-900">{formatCurrency(stats.balance, { minimumFractionDigits: 0 })}</div>
                             </div>
-                            <div className="h-16 w-full mb-4 -ml-2">
-                                <Sparkline data={stats.history} color="#3b82f6" />
+                            <div className="h-12 w-24">
+                                <Sparkline data={stats.history} color="#2563eb" />
                             </div>
-                            <div className="flex gap-3">
-                                <button onClick={() => onNavigate('finances')} className="flex-1 bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/10 py-3 rounded-xl text-sm font-bold transition-colors">
-                                    View Ledger
-                                </button>
-                                <button onClick={() => onNavigate('players')} className="flex-1 bg-brand-600 hover:bg-brand-500 py-3 rounded-xl text-sm font-bold shadow-lg shadow-brand-600/30 transition-colors">
-                                    Manage Squad
-                                </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600 mt-2">
+                            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2">
+                                <div>Receivable</div>
+                                <div className="text-emerald-700 font-bold">{formatCurrency(stats.outstanding.receivable)}</div>
                             </div>
+                            <div className="bg-amber-50 border border-amber-100 rounded-xl p-2">
+                                <div>Payable</div>
+                                <div className="text-amber-700 font-bold">{formatCurrency(Math.abs(stats.outstanding.payable))}</div>
+                            </div>
+                        </div>
+                        <div className="mt-3 flex gap-2">
+                            <button onClick={() => onNavigate('finances')} className="flex-1 bg-slate-900 text-white text-xs font-bold py-2 rounded-lg">Ledger</button>
+                            <button onClick={() => onNavigate('players')} className="flex-1 bg-brand-50 text-brand-700 text-xs font-bold py-2 rounded-lg border border-brand-100">Squad</button>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-3">
                         <div onClick={() => onNavigate('fixtures')} className="cursor-pointer">
                             <StatCard icon="Trophy" label="Games" value={stats.fixtureCt} subtext="Scheduled" color="blue" />
                         </div>
                         <div onClick={() => onNavigate('players')} className="cursor-pointer">
                             <StatCard icon="Users" label="Squad Size" value={stats.playerCt} subtext="Active Players" color="emerald" />
                         </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Match Centre</div>
+                        {nextFixture ? (
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <div className="text-sm font-bold text-slate-900">Next: vs {nextFixture.opponent}</div>
+                                    <div className="text-[11px] text-slate-500">{new Date(nextFixture.date).toLocaleDateString()} · {nextFixture.time} · {nextFixture.venue || 'TBC'}</div>
+                                </div>
+                                <button onClick={() => onNavigate('fixtures')} className="text-[11px] font-bold text-brand-600 underline">Open</button>
+                            </div>
+                        ) : <div className="text-sm text-slate-500">No upcoming game scheduled.</div>}
+                        {lastResult && (
+                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Last Result</div>
+                                <div className="text-sm font-bold text-slate-900">Exiles {lastResult.score} {lastResult.opponent}</div>
+                                <div className="text-[11px] text-slate-500">{new Date(lastResult.date).toLocaleDateString()}</div>
+                            </div>
+                        )}
                     </div>
 
                 </div>
