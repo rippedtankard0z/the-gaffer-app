@@ -419,7 +419,7 @@
             return (
                 <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4">
                     <div className="absolute inset-0 bg-slate-900/20 backdrop-blur-sm" onClick={onClose}></div>
-                    <div className="relative w-full max-w-md bg-white sm:rounded-3xl rounded-t-3xl shadow-2xl p-6 animate-slide-up max-h-[90vh] overflow-y-auto">
+                    <div className="relative w-full max-w-md bg-white sm:rounded-3xl rounded-t-3xl shadow-2xl p-6 pb-safe pb-24 animate-slide-up max-h-[90vh] overflow-y-auto">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-xl font-display font-bold text-slate-900">{title}</h3>
                             <button onClick={onClose} className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors">
@@ -3989,7 +3989,7 @@
                          <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-emerald-100/40 rounded-full blur-[120px]"></div>
                     </div>
 
-                    <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe">
+                    <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
                         {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} />}
                         {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
                         {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
