@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>The Gaffer | British Exiles</title>
+    <title>The Gaffer on GitHub | British Exiles</title>
     
     <!-- React & DOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -19,59 +19,20 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
 
-    <!-- Firebase (App/Auth/Firestore) -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
-        import { getFirestore, collection, doc, addDoc, setDoc, getDocs, updateDoc, deleteDoc, writeBatch, query, where, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
-
-        const firebaseConfig = window.GAFFER_FIREBASE_CONFIG || {
-            apiKey: "YOUR_API_KEY",
-            authDomain: "YOUR_AUTH_DOMAIN",
-            projectId: "YOUR_PROJECT_ID",
-            storageBucket: "YOUR_STORAGE_BUCKET",
-            messagingSenderId: "YOUR_SENDER_ID",
-            appId: "YOUR_APP_ID"
+    <!-- Firebase Config (from gaffer-web) -->
+    <script>
+        window.GAFFER_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyDUUv9wyXMzGBL3Taf9hUl7tFIqZWDX2WA",
+            authDomain: "the-gaffer-581d8.firebaseapp.com",
+            projectId: "the-gaffer-581d8",
+            storageBucket: "the-gaffer-581d8.firebasestorage.app",
+            messagingSenderId: "1001996489848",
+            appId: "1:1001996489848:web:dd5978d553f7314f06c98d"
         };
-
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-
-        const ensureAnon = () => signInAnonymously(auth).catch(console.error);
-        ensureAnon();
-
-        window.firebaseServices = {
-            app,
-            auth,
-            db,
-            collection,
-            doc,
-            addDoc,
-            setDoc,
-            getDocs,
-            updateDoc,
-            deleteDoc,
-            writeBatch,
-            query,
-            where,
-            orderBy,
-            onSnapshot,
-            signInAnonymously,
-            onAuthStateChanged
-        };
-
-        window.firebaseReady = new Promise((resolve) => {
-            onAuthStateChanged(auth, (user) => {
-                if (!user) {
-                    ensureAnon();
-                    return;
-                }
-                window.firebaseServices.user = user;
-                resolve(window.firebaseServices);
-            });
-        });
     </script>
+    
+    <!-- Database -->
+    <script src="https://unpkg.com/dexie@3/dist/dexie.js"></script>
 
     <!-- App Configuration -->
     <script>
@@ -146,226 +107,18 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // --- 1. Database & Domain Models (Firestore) ---
-        const waitForFirebaseServices = () => {
-            if (window.firebaseReady) return window.firebaseReady;
-            return new Promise((resolve) => {
-                const check = () => {
-                    if (window.firebaseServices?.db) {
-                        resolve(window.firebaseServices);
-                    } else {
-                        setTimeout(check, 30);
-                    }
-                };
-                check();
-            });
-        };
-
-        class QueryWrapper {
-            constructor(table) {
-                this.table = table;
-                this.field = null;
-                this.filters = [];
-                this.sortField = null;
-                this.sortDir = 'asc';
-            }
-            where(fieldOrObj) {
-                if (typeof fieldOrObj === 'object') {
-                    this.filters.push(item => Object.entries(fieldOrObj).every(([k, v]) => String(item[k] ?? '') === String(v ?? '')));
-                } else {
-                    this.field = fieldOrObj;
-                }
-                return this;
-            }
-            equals(val) {
-                const target = this.field;
-                this.filters.push(item => String(item[target] ?? '') === String(val ?? ''));
-                return this;
-            }
-            anyOf(values = []) {
-                const target = this.field;
-                const set = new Set(values.map(v => String(v)));
-                this.filters.push(item => set.has(String(item[target] ?? '')));
-                return this;
-            }
-            and(fn) { this.filters.push(fn); return this; }
-            filter(fn) { this.filters.push(fn); return this; }
-            reverse() { this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc'; return this; }
-            orderBy(field) { this.sortField = field; return this; }
-            async sortBy(field) { this.sortField = field; return this.toArray(); }
-            async toArray() {
-                let list = await this.table.toArray();
-                this.filters.forEach(fn => { list = list.filter(fn); });
-                if (this.sortField) {
-                    const dir = this.sortDir === 'desc' ? -1 : 1;
-                    list = [...list].sort((a, b) => {
-                        const av = a[this.sortField];
-                        const bv = b[this.sortField];
-                        if (av === bv) return 0;
-                        return av > bv ? dir : -dir;
-                    });
-                } else if (this.sortDir === 'desc') {
-                    list = [...list].reverse();
-                }
-                return list;
-            }
-            async first() { const arr = await this.toArray(); return arr[0] || null; }
-            async count() { const arr = await this.toArray(); return arr.length; }
-            async delete() { const arr = await this.toArray(); await Promise.all(arr.map(item => this.table.delete(item.id))); }
-            async modify(update) {
-                const arr = await this.toArray();
-                await Promise.all(arr.map(item => {
-                    const patch = typeof update === 'function' ? update(item) : update;
-                    return patch ? this.table.update(item.id, patch) : Promise.resolve();
-                }));
-            }
-        }
-
-        class FirestoreTable {
-            constructor(name, servicesPromise) {
-                this.name = name;
-                this.servicesPromise = servicesPromise;
-                this.cache = [];
-                this.subscribers = new Set();
-                this.unsubscribe = null;
-                this.startListener();
-            }
-            async getServices() {
-                const svc = await this.servicesPromise;
-                if (!svc || !svc.db) throw new Error('Firebase not ready');
-                return svc;
-            }
-            async startListener() {
-                if (this.unsubscribe) return;
-                try {
-                    const svc = await this.getServices();
-                    this.unsubscribe = svc.onSnapshot(
-                        svc.collection(svc.db, this.name),
-                        (snapshot) => {
-                            this.cache = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-                            this.notify();
-                        }
-                    );
-                } catch (err) {
-                    console.error(`Failed to listen to ${this.name}`, err);
-                }
-            }
-            subscribe(handler) {
-                const wrapped = () => handler([...this.cache]);
-                this.subscribers.add(wrapped);
-                this.startListener();
-                wrapped();
-                return () => this.subscribers.delete(wrapped);
-            }
-            notify() { this.subscribers.forEach(fn => fn([...this.cache])); }
-            async toArray() { 
-                await this.startListener(); 
-                if (!this.cache.length) {
-                    try {
-                        const svc = await this.getServices();
-                        const snap = await svc.getDocs(svc.collection(svc.db, this.name));
-                        this.cache = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-                    } catch (err) {
-                        console.warn(`Fallback fetch failed for ${this.name}`, err);
-                    }
-                }
-                return [...this.cache]; 
-            }
-            async add(data) {
-                const svc = await this.getServices();
-                const ref = await svc.addDoc(svc.collection(svc.db, this.name), data);
-                return ref.id;
-            }
-            async update(id, data) {
-                const svc = await this.getServices();
-                await svc.updateDoc(svc.doc(svc.db, this.name, String(id)), data);
-            }
-            async delete(id) {
-                const svc = await this.getServices();
-                await svc.deleteDoc(svc.doc(svc.db, this.name, String(id)));
-            }
-            async clear() {
-                const list = await this.toArray();
-                if (!list.length) return;
-                const svc = await this.getServices();
-                const batch = svc.writeBatch(svc.db);
-                list.forEach(item => batch.delete(svc.doc(svc.db, this.name, String(item.id))));
-                await batch.commit();
-            }
-            async bulkAdd(items = []) {
-                if (!items.length) return;
-                const svc = await this.getServices();
-                const batch = svc.writeBatch(svc.db);
-                items.forEach(item => {
-                    const ref = item.id ? svc.doc(svc.db, this.name, String(item.id)) : svc.doc(svc.collection(svc.db, this.name));
-                    batch.set(ref, item);
-                });
-                await batch.commit();
-            }
-            async bulkPut(items = []) {
-                if (!items.length) return;
-                const svc = await this.getServices();
-                const batch = svc.writeBatch(svc.db);
-                items.forEach(item => {
-                    const ref = item.id ? svc.doc(svc.db, this.name, String(item.id)) : svc.doc(svc.collection(svc.db, this.name));
-                    batch.set(ref, item, { merge: true });
-                });
-                await batch.commit();
-            }
-            async bulkDelete(ids = []) {
-                if (!ids.length) return;
-                const svc = await this.getServices();
-                const batch = svc.writeBatch(svc.db);
-                ids.forEach(id => batch.delete(svc.doc(svc.db, this.name, String(id))));
-                await batch.commit();
-            }
-            where(fieldOrObj) { return new QueryWrapper(this).where(fieldOrObj); }
-            filter(fn) { return new QueryWrapper(this).filter(fn); }
-            orderBy(field) { return new QueryWrapper(this).orderBy(field); }
-            toCollection() { return { primaryKeys: async () => (await this.toArray()).map(i => i.id) }; }
-            async count() { const arr = await this.toArray(); return arr.length; }
-        }
-
-        const servicesPromise = waitForFirebaseServices();
-        const db = {
-            players: new FirestoreTable('players', servicesPromise),
-            fixtures: new FirestoreTable('fixtures', servicesPromise),
-            transactions: new FirestoreTable('transactions', servicesPromise),
-            participations: new FirestoreTable('participations', servicesPromise),
-            opponents: new FirestoreTable('opponents', servicesPromise),
-            venues: new FirestoreTable('venues', servicesPromise),
-            referees: new FirestoreTable('referees', servicesPromise)
-        };
-
-        const useFirebase = () => {
-            const [state, setState] = useState({ ready: false, user: null });
-            useEffect(() => {
-                let unsub = null;
-                servicesPromise.then(svc => {
-                    setState(prev => ({ ...prev, ready: !!svc.user, user: svc.user || null }));
-                    if (svc?.auth && svc?.onAuthStateChanged) {
-                        unsub = svc.onAuthStateChanged(svc.auth, (user) => {
-                            setState({ ready: !!user, user: user || null });
-                        });
-                    }
-                }).catch(() => setState({ ready: false, user: null }));
-                return () => { if (typeof unsub === 'function') unsub(); };
-            }, []);
-            return { ...state, db };
-        };
-
-        const subscribeToCollections = (names, handler) => {
-            const cleanHandler = () => {
-                try {
-                    const res = handler();
-                    if (res?.catch) res.catch(err => console.error('Refresh failed', err));
-                } catch (err) {
-                    console.error('Refresh failed', err);
-                }
-            };
-            const unsubs = names.map(name => db[name]?.subscribe ? db[name].subscribe(cleanHandler) : null);
-            return () => unsubs.forEach(u => typeof u === 'function' && u());
-        };
+        // --- 1. Database & Domain Models (Dexie) ---
+        const db = new Dexie('BritishExilesDB');
+        db.version(5).stores({
+            players: '++id, isActive',
+            fixtures: '++id, date, seasonId, competitionType',
+            // Added payee index to support reassign queries
+            transactions: '++id, date, category, type, playerId, fixtureId, payee',
+            participations: '++id, fixtureId, playerId, status',
+            opponents: '++id, name',
+            venues: '++id, name, homeTeamId',
+            referees: '++id, name, phone'
+        });
 
         // --- 2. Shared Logic ---
         const parseCurrency = (str) => {
@@ -583,7 +336,7 @@
                 });
                 fixt.forEach(f => {
                     (f.scorers || []).forEach(s => {
-                        const pid = s === 'OG' ? null : String(s);
+                        const pid = s === 'OG' ? null : Number(s);
                         if(pid && stats[pid]) {
                             stats[pid].goals = (stats[pid].goals || 0) + 1;
                         }
@@ -603,11 +356,7 @@
                 }
             };
 
-            useEffect(() => {
-                const unsub = subscribeToCollections(['players', 'transactions', 'participations', 'fixtures'], refresh);
-                refresh();
-                return unsub;
-            }, []);
+            useEffect(() => { refresh(); }, []);
 
             const openPlayerDetails = async (player) => {
                 const txs = await db.transactions.where('playerId').equals(player.id).reverse().sortBy('date');
@@ -890,7 +639,7 @@
                                         {participations.filter(pa => pa.playerId === selectedPlayer.id).map(pa => {
                                             const fx = fixtures.find(f => f.id === pa.fixtureId);
                                             if(!fx) return null;
-                                            const scored = (fx.scorers || []).filter(s => String(s) === String(selectedPlayer.id)).length;
+                                            const scored = (fx.scorers || []).filter(s => Number(s) === selectedPlayer.id).length;
                                             return (
                                                 <div key={pa.id} className="flex justify-between items-center p-2 rounded-lg bg-white border border-slate-100">
                                                     <div>
@@ -1104,7 +853,7 @@
                 setPlayers(pList);
                 const txs = await db.transactions.toArray();
                 setAllTx(txs);
-                if(seasonCategories?.length) setSelectedSeason(prev => prev || seasonCategories[0]);
+                if(seasonCategories?.length && !selectedSeason) setSelectedSeason(seasonCategories[0]);
 
                 const focusOpp = localStorage.getItem('gaffer:focusFixtureOpponent');
                 if(focusOpp) {
@@ -1114,11 +863,7 @@
                 }
             };
 
-            useEffect(() => {
-                const unsub = subscribeToCollections(['fixtures', 'players', 'transactions', 'participations'], refresh);
-                refresh();
-                return unsub;
-            }, []);
+            useEffect(() => { refresh(); }, []);
 
             const openMatchMode = async (fixture) => {
                 const participations = await db.participations.where('fixtureId').equals(fixture.id).toArray();
@@ -1135,7 +880,7 @@
                 });
                 const newFeeEdits = {};
                 Object.keys(squadState).forEach(pid => {
-                    const feeTx = txs.find(tx => String(tx.playerId) === String(pid) && tx.amount < 0 && tx.category === 'MATCH_FEE');
+                    const feeTx = txs.find(tx => tx.playerId === Number(pid) && tx.amount < 0 && tx.category === 'MATCH_FEE');
                     const fee = feeTx ? Math.abs(feeTx.amount) : (fixture.feeAmount || 20);
                     newFeeEdits[pid] = fee;
                 });
@@ -1165,7 +910,7 @@
                     flow: 'payable',
                     amount: -Math.abs(amount), 
                     description: `Match Fee vs ${selectedFixture.opponent}`,
-                    playerId: String(pid),
+                    playerId: parseInt(pid),
                     fixtureId: selectedFixture.id,
                     isReconciled: false
                 }));
@@ -1283,10 +1028,10 @@
                 const categoryToUse = newCost.category || (categories[0] || 'Other');
                 let payeeName = '';
                 if(payee.type === 'referee') {
-                    const ref = referees.find(r => String(r.id) === String(payee.value));
+                    const ref = referees.find(r => r.id === Number(payee.value));
                     payeeName = ref ? `${ref.name}${ref.phone ? ' (' + ref.phone + ')' : ''}` : '';
                 } else if(payee.type === 'venue') {
-                    const v = venues.find(v => String(v.id) === String(payee.value));
+                    const v = venues.find(v => v.id === Number(payee.value));
                     payeeName = v ? `${v.name}${v.payee ? ' · ' + v.payee : ''}` : '';
                 } else if(payee.type === 'opponent') {
                     payeeName = payee.value;
@@ -1622,7 +1367,7 @@
                 const transactions = [];
 
                 for (const entry of parsedData.entries) {
-                    let playerId = entry.selectedId ? String(entry.selectedId) : null;
+                    let playerId = entry.selectedId ? parseInt(entry.selectedId) : null;
                     if (!playerId) {
                         const names = entry.name.split(' ');
                         playerId = await db.players.add({
@@ -2158,7 +1903,7 @@
                                                 <label className="text-[11px] font-bold text-slate-600 uppercase">Opponent</label>
                                                 <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.opponentId ? `id:${r.opponentId}` : (r.opponent || '')} onChange={e => {
                                                     const val = e.target.value;
-                                                    setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, opponent: val.startsWith('id:') ? opponents.find(o=>String(o.id)===val.replace('id:',''))?.name : val, opponentId: val.startsWith('id:') ? val.replace('id:','') : null }) : x));
+                                                    setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, opponent: val.startsWith('id:') ? opponents.find(o=>o.id===Number(val.replace('id:','')))?.name : val, opponentId: val.startsWith('id:') ? Number(val.replace('id:','')) : null }) : x));
                                                 }}>
                                                     {opponents.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(o => <option key={o.id} value={`id:${o.id}`}>{o.name}</option>)}
                                                     <option value="__new__">Create new...</option>
@@ -2171,7 +1916,7 @@
                                                 <label className="text-[11px] font-bold text-slate-600 uppercase">Venue</label>
                                                 <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.venueId ? `id:${r.venueId}` : (r.venue || '')} onChange={e => {
                                                     const val = e.target.value;
-                                                    setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>String(v.id)===val.replace('id:',''))?.name : val, venueId: val.startsWith('id:') ? val.replace('id:','') : null }) : x));
+                                                    setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val, venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null }) : x));
                                                 }}>
                                                     {venues.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v => <option key={v.id} value={`id:${v.id}`}>{v.name}</option>)}
                                                     <option value="__new__">Create new...</option>
@@ -2284,7 +2029,7 @@
                                                     </label>
                                                 </div>
                                                 <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3 gap-2">
-                                <select className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={entry.selectedId !== null && entry.selectedId !== undefined ? String(entry.selectedId) : 'new'} onChange={e => updateEntry(idx, { selectedId: e.target.value === 'new' ? null : String(e.target.value), needsReview: e.target.value === 'new' })}>
+                                <select className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={entry.selectedId !== null && entry.selectedId !== undefined ? String(entry.selectedId) : 'new'} onChange={e => updateEntry(idx, { selectedId: e.target.value === 'new' ? null : parseInt(e.target.value, 10), needsReview: e.target.value === 'new' })}>
                                     <option value="new">Create new player</option>
                                     {entry.suggestions?.map((sugg, i) => (
                                         <option key={i} value={String(sugg.player.id)}>
@@ -2375,11 +2120,7 @@
                 setBreakdown(cats);
             };
 
-            useEffect(() => {
-                const unsub = subscribeToCollections(['transactions', 'participations', 'players', 'fixtures'], refresh);
-                refresh();
-                return unsub;
-            }, []);
+            useEffect(() => { refresh(); }, []);
 
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0];
@@ -2513,7 +2254,7 @@
                     type: newTx.type,
                     flow: deriveFlow(newTx.type),
                     amount: isExpense ? -Math.abs(amt) : Math.abs(amt),
-                    playerId: newTx.playerId ? String(newTx.playerId) : null,
+                    playerId: newTx.playerId ? Number(newTx.playerId) : null,
                     isReconciled: true
                 });
                 setNewTx({ description: '', amount: '', category: newTx.category === '__new__' ? cat : newTx.category, type: newTx.type, date: new Date().toISOString().split('T')[0], playerId: '' });
@@ -2819,9 +2560,7 @@
 
                     setStats({ balance: running, playerCt: players, fixtureCt: fixtures, history: chartData });
                 };
-                const unsub = subscribeToCollections(['transactions', 'players', 'fixtures'], load);
                 load();
-                return unsub;
             }, []);
 
             return (
@@ -3013,13 +2752,8 @@
 
             const addVenue = async () => {
                 if(!newVenue.name.trim()) return;
-                const payload = { 
-                    ...newVenue, 
-                    homeTeamId: newVenue.homeTeamId ? String(newVenue.homeTeamId) : null,
-                    price: newVenue.price ? Number(newVenue.price) : null 
-                };
-                const id = await db.venues.add(payload);
-                setVenues([...venues, { ...payload, id }]);
+                const id = await db.venues.add({ ...newVenue, price: newVenue.price ? Number(newVenue.price) : null });
+                setVenues([...venues, { ...newVenue, price: newVenue.price ? Number(newVenue.price) : null, id }]);
                 setNewVenue({ name: '', price: '', homeTeamId: null, address: '', notes: '', payee: '', contact: '' });
             };
 
@@ -3231,7 +2965,7 @@
                                     <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Venue name" value={newVenue.name} onChange={e => setNewVenue({ ...newVenue, name: e.target.value })} />
                                     <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Address" value={newVenue.address} onChange={e => setNewVenue({ ...newVenue, address: e.target.value })} />
                                     <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" placeholder="Price" value={newVenue.price} onChange={e => setNewVenue({ ...newVenue, price: e.target.value })} />
-                                    <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={newVenue.homeTeamId ?? ''} onChange={e => setNewVenue({ ...newVenue, homeTeamId: e.target.value ? String(e.target.value) : null })}>
+                                    <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={newVenue.homeTeamId ?? ''} onChange={e => setNewVenue({ ...newVenue, homeTeamId: e.target.value ? Number(e.target.value) : null })}>
                                         <option value="">Home team (optional)</option>
                                         {opponents.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                                     </select>
@@ -3321,7 +3055,7 @@
                         flow: bal >=0 ? 'payable' : 'receivable',
                         amount: -bal,
                         description: 'Season balance reset',
-                        playerId: String(pid),
+                        playerId: parseInt(pid,10),
                         isReconciled: true
                     })).filter(r => r.amount !== 0);
                     if(resets.length) await db.transactions.bulkAdd(resets);
@@ -3568,7 +3302,7 @@
                             flow: deriveFlow(row.type),
                             amount: isExpense ? -Math.abs(Number(row.amount)) : Math.abs(Number(row.amount)),
                             payee: row.payee || undefined,
-                            fixtureId: row.fixtureId ? String(row.fixtureId) : null,
+                            fixtureId: row.fixtureId ? Number(row.fixtureId) : null,
                             opponentId: opponentId || null,
                             venueId: venueId || null,
                             isReconciled: true
@@ -4017,7 +3751,6 @@
         };
 
         const App = () => {
-            const { ready, user } = useFirebase();
             const [activeTab, setActiveTab] = useState('dashboard');
             const [categories, setCategories] = useState(loadCategories());
             const [itemCategories, setItemCategories] = useState(loadItemCategories());
@@ -4028,7 +3761,7 @@
             const [refDefaults, setRefDefaults] = useState(loadRefDefaults());
 
             useEffect(() => {
-                const refreshLists = async () => {
+                const load = async () => {
                     const ops = await db.opponents.toArray();
                     const vns = await db.venues.toArray();
                     const refs = await db.referees.toArray();
@@ -4036,21 +3769,8 @@
                     setVenues(vns);
                     setReferees(refs);
                 };
-                const unsub = subscribeToCollections(['opponents', 'venues', 'referees'], refreshLists);
-                refreshLists();
-                return unsub;
+                load();
             }, []);
-
-            if (!ready) {
-                return (
-                    <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-700 font-sans">
-                        <div className="text-center space-y-2">
-                            <div className="text-lg font-display font-bold">Connecting to the cloud…</div>
-                            <div className="text-sm text-slate-500">Ensuring anonymous access to Firestore.</div>
-                        </div>
-                    </div>
-                );
-            }
             
             return (
                 <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-brand-100 selection:text-brand-900 relative overflow-hidden">
