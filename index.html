@@ -35,166 +35,18 @@
             return Number.isNaN(asNum) ? val : asNum;
         };
 
-        // Lightweight localStorage-backed DB so the app still works without Firebase config.
-        const createOfflineDb = () => {
-            const STORAGE_KEY = 'gaffer:offline-db';
-            const base = {
-                players: [],
-                fixtures: [],
-                transactions: [],
-                participations: [],
-                opponents: [],
-                venues: [],
-                referees: []
-            };
-            const load = () => {
-                try {
-                    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-                    return { ...base, ...parsed };
-                } catch (e) {
-                    console.warn('Local DB parse failed, starting fresh', e);
-                    return { ...base };
-                }
-            };
-            let state = load();
-            const persist = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-            const nextId = (name) => {
-                const items = state[name] || [];
-                const max = items.reduce((m, item) => {
-                    const n = Number(item.id);
-                    return Number.isNaN(n) ? m : Math.max(m, n);
-                }, 0);
-                return numericOrId(max + 1 || 1);
-            };
-            const createRunner = (name, filterFn, opts = { reverse: false }) => ({
-                and(extraFn) { return createRunner(name, (item) => filterFn(item) && extraFn(item), opts); },
-                reverse() { return createRunner(name, filterFn, { ...opts, reverse: !opts.reverse }); },
-                async toArray() {
-                    const arr = (state[name] || []).filter(filterFn);
-                    return opts.reverse ? [...arr].reverse() : arr;
-                },
-                async first() {
-                    const arr = await this.toArray();
-                    return arr[0];
-                },
-                async delete() {
-                    const arr = await this.toArray();
-                    state[name] = (state[name] || []).filter(item => !arr.some(target => target.id === item.id));
-                    persist();
-                },
-                async modify(patch) {
-                    const arr = await this.toArray();
-                    arr.forEach(item => {
-                        const data = typeof patch === 'function' ? patch(item) : patch;
-                        const idx = (state[name] || []).findIndex(x => x.id === item.id);
-                        if (idx >= 0) state[name][idx] = { ...state[name][idx], ...data };
-                    });
-                    persist();
-                },
-                async sortBy(field) {
-                    const arr = await this.toArray();
-                    const sorted = [...arr].sort((a, b) => {
-                        const av = a?.[field] ?? '';
-                        const bv = b?.[field] ?? '';
-                        if (av === bv) return 0;
-                        return av > bv ? 1 : -1;
-                    });
-                    return opts.reverse ? sorted.reverse() : sorted;
-                }
-            });
-            const createTable = (name) => ({
-                async toArray() { return [...(state[name] || [])]; },
-                async count() { return (state[name] || []).length; },
-                async add(data) {
-                    const id = nextId(name);
-                    state[name] = [...(state[name] || []), { ...data, id }];
-                    persist();
-                    return id;
-                },
-                async bulkAdd(items) {
-                    const ids = [];
-                    for (const item of items) {
-                        const id = nextId(name);
-                        state[name] = [...(state[name] || []), { ...item, id }];
-                        ids.push(id);
-                    }
-                    persist();
-                    return ids;
-                },
-                async bulkPut(items) {
-                    items.forEach(item => {
-                        if (!item.id) {
-                            const id = nextId(name);
-                            state[name] = [...(state[name] || []), { ...item, id }];
-                        } else {
-                            const idx = (state[name] || []).findIndex(x => x.id === item.id);
-                            if (idx >= 0) state[name][idx] = { ...state[name][idx], ...item };
-                            else state[name] = [...(state[name] || []), item];
-                        }
-                    });
-                    persist();
-                },
-                async update(id, data) {
-                    const idx = (state[name] || []).findIndex(x => x.id === id);
-                    if (idx >= 0) {
-                        state[name][idx] = { ...state[name][idx], ...data };
-                        persist();
-                    }
-                },
-                async delete(id) {
-                    state[name] = (state[name] || []).filter(x => x.id !== id);
-                    persist();
-                },
-                async bulkDelete(ids) {
-                    state[name] = (state[name] || []).filter(x => !ids.includes(x.id));
-                    persist();
-                },
-                async clear() { state[name] = []; persist(); },
-                toCollection() {
-                    return {
-                        primaryKeys: async () => (state[name] || []).map(x => x.id)
-                    };
-                },
-                where(field) {
-                    return {
-                        equals(val) { return createRunner(name, (item) => item?.[field] === val); }
-                    };
-                },
-                orderBy(field) {
-                    const base = async (rev) => {
-                        const arr = [...(state[name] || [])].sort((a, b) => {
-                            const av = a?.[field] ?? '';
-                            const bv = b?.[field] ?? '';
-                            if (av === bv) return 0;
-                            return av > bv ? 1 : -1;
-                        });
-                        return rev ? arr.reverse() : arr;
-                    };
-                    return {
-                        toArray: () => base(false),
-                        reverse() { return { toArray: () => base(true) }; }
-                    };
-                }
-            });
-            return {
-                ready: Promise.resolve(),
-                db: {
-                    players: createTable('players'),
-                    fixtures: createTable('fixtures'),
-                    transactions: createTable('transactions'),
-                    participations: createTable('participations'),
-                    opponents: createTable('opponents'),
-                    venues: createTable('venues'),
-                    referees: createTable('referees')
-                }
-            };
+        const ensureFirebaseConfig = (cfg) => {
+            const required = ['apiKey', 'authDomain', 'projectId', 'appId'];
+            if (!cfg || required.some(k => !cfg[k] || String(cfg[k]).startsWith('YOUR_'))) {
+                const missing = required.filter(k => !cfg || !cfg[k] || String(cfg[k]).startsWith('YOUR_'));
+                throw new Error(`GAFFER_FIREBASE_CONFIG is missing/placeholder for: ${missing.join(', ')}. Set window.GAFFER_FIREBASE_CONFIG before loading the app.`);
+            }
+            return cfg;
         };
 
         try {
-            if (!firebaseConfig || !firebaseConfig.projectId) {
-                throw new Error('GAFFER_FIREBASE_CONFIG is missing. Using offline mode.');
-            }
-            const app = initializeApp(firebaseConfig);
+            const validatedConfig = ensureFirebaseConfig(firebaseConfig);
+            const app = initializeApp(validatedConfig);
             const auth = getAuth(app);
             const fs = getFirestore(app);
 
@@ -346,10 +198,10 @@
                 referees: createTable('referees')
             };
         } catch (err) {
-            console.warn('Firebase init failed or missing config. Switching to local-only mode.', err);
-            const offline = createOfflineDb();
-            window.firebaseReady = offline.ready;
-            window.db = offline.db;
+            console.error('Firebase init failed. Provide a valid GAFFER_FIREBASE_CONFIG to continue.', err);
+            window.firebaseReady = Promise.reject(err);
+            window.db = null;
+            throw err;
         }
     </script>
 
@@ -427,8 +279,11 @@
         const { useState, useEffect, useMemo, useRef } = React;
 
         // --- 1. Database & Domain Models (Firestore) ---
+        if (!window.db) {
+            throw new Error('Firebase is not initialized. Set window.GAFFER_FIREBASE_CONFIG with real project keys before loading this page.');
+        }
         const db = window.db;
-        const waitForDb = () => window.firebaseReady || Promise.resolve();
+        const waitForDb = () => window.firebaseReady;
 
         // --- 2. Shared Logic ---
         const parseCurrency = (str) => {
