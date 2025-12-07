@@ -29,126 +29,130 @@
         } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
         const firebaseConfig = window.GAFFER_FIREBASE_CONFIG;
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const fs = getFirestore(app);
-
-        const cache = {
-            players: [],
-            fixtures: [],
-            transactions: [],
-            participations: [],
-            opponents: [],
-            venues: [],
-            referees: []
-        };
 
         const numericOrId = (val) => {
             const asNum = Number(val);
             return Number.isNaN(asNum) ? val : asNum;
         };
 
-        const ready = (async () => {
-            try {
-                await signInAnonymously(auth);
-            } catch (err) {
-                console.error("Anon auth failed", err);
-            }
-            const names = Object.keys(cache);
-            await Promise.all(names.map(async (name) => {
-                const snap = await getDocs(collection(fs, name));
-                cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
-            }));
-            names.forEach((name) => {
-                const colRef = collection(fs, name);
-                onSnapshot(colRef, (snap) => {
-                    cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
-                    window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name } }));
-                });
+        // Lightweight localStorage-backed DB so the app still works without Firebase config.
+        const createOfflineDb = () => {
+            const STORAGE_KEY = 'gaffer:offline-db';
+            const base = {
+                players: [],
+                fixtures: [],
+                transactions: [],
+                participations: [],
+                opponents: [],
+                venues: [],
+                referees: []
+            };
+            const load = () => {
+                try {
+                    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+                    return { ...base, ...parsed };
+                } catch (e) {
+                    console.warn('Local DB parse failed, starting fresh', e);
+                    return { ...base };
+                }
+            };
+            let state = load();
+            const persist = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            const nextId = (name) => {
+                const items = state[name] || [];
+                const max = items.reduce((m, item) => {
+                    const n = Number(item.id);
+                    return Number.isNaN(n) ? m : Math.max(m, n);
+                }, 0);
+                return numericOrId(max + 1 || 1);
+            };
+            const createRunner = (name, filterFn, opts = { reverse: false }) => ({
+                and(extraFn) { return createRunner(name, (item) => filterFn(item) && extraFn(item), opts); },
+                reverse() { return createRunner(name, filterFn, { ...opts, reverse: !opts.reverse }); },
+                async toArray() {
+                    const arr = (state[name] || []).filter(filterFn);
+                    return opts.reverse ? [...arr].reverse() : arr;
+                },
+                async first() {
+                    const arr = await this.toArray();
+                    return arr[0];
+                },
+                async delete() {
+                    const arr = await this.toArray();
+                    state[name] = (state[name] || []).filter(item => !arr.some(target => target.id === item.id));
+                    persist();
+                },
+                async modify(patch) {
+                    const arr = await this.toArray();
+                    arr.forEach(item => {
+                        const data = typeof patch === 'function' ? patch(item) : patch;
+                        const idx = (state[name] || []).findIndex(x => x.id === item.id);
+                        if (idx >= 0) state[name][idx] = { ...state[name][idx], ...data };
+                    });
+                    persist();
+                },
+                async sortBy(field) {
+                    const arr = await this.toArray();
+                    const sorted = [...arr].sort((a, b) => {
+                        const av = a?.[field] ?? '';
+                        const bv = b?.[field] ?? '';
+                        if (av === bv) return 0;
+                        return av > bv ? 1 : -1;
+                    });
+                    return opts.reverse ? sorted.reverse() : sorted;
+                }
             });
-        })();
-
-        const docRef = (name, id) => doc(fs, name, String(id));
-
-        const nextId = (name) => {
-            const items = cache[name] || [];
-            const max = items.reduce((m, item) => {
-                const n = Number(item.id);
-                return Number.isNaN(n) ? m : Math.max(m, n);
-            }, 0);
-            return String(max + 1 || 1);
-        };
-
-        const createRunner = (name, filterFn, opts = { reverse: false }) => ({
-            and(extraFn) { return createRunner(name, (item) => filterFn(item) && extraFn(item), opts); },
-            reverse() { return createRunner(name, filterFn, { ...opts, reverse: !opts.reverse }); },
-            async toArray() {
-                await ready;
-                const arr = (cache[name] || []).filter(filterFn);
-                return opts.reverse ? [...arr].reverse() : arr;
-            },
-            async first() {
-                const arr = await this.toArray();
-                return arr[0];
-            },
-            async delete() {
-                const arr = await this.toArray();
-                await Promise.all(arr.map(item => deleteDoc(docRef(name, item.id))));
-            },
-            async modify(patch) {
-                const arr = await this.toArray();
-                await Promise.all(arr.map(item => {
-                    const data = typeof patch === 'function' ? patch(item) : patch;
-                    return updateDoc(docRef(name, item.id), data);
-                }));
-            },
-            async sortBy(field) {
-                const arr = await this.toArray();
-                const sorted = [...arr].sort((a, b) => {
-                    const av = a?.[field] ?? '';
-                    const bv = b?.[field] ?? '';
-                    if (av === bv) return 0;
-                    return av > bv ? 1 : -1;
-                });
-                return opts.reverse ? sorted.reverse() : sorted;
-            }
-        });
-
-        const createTable = (name) => {
-            const colRef = collection(fs, name);
-            return {
-                async toArray() { await ready; return [...cache[name]]; },
-                async count() { await ready; return cache[name].length; },
+            const createTable = (name) => ({
+                async toArray() { return [...(state[name] || [])]; },
+                async count() { return (state[name] || []).length; },
                 async add(data) {
-                    await ready;
                     const id = nextId(name);
-                    await setDoc(docRef(name, id), { ...data, id: numericOrId(id) });
-                    return numericOrId(id);
+                    state[name] = [...(state[name] || []), { ...data, id }];
+                    persist();
+                    return id;
                 },
                 async bulkAdd(items) {
-                    await ready;
                     const ids = [];
                     for (const item of items) {
                         const id = nextId(name);
-                        await setDoc(docRef(name, id), { ...item, id: numericOrId(id) });
-                        ids.push(numericOrId(id));
+                        state[name] = [...(state[name] || []), { ...item, id }];
+                        ids.push(id);
                     }
+                    persist();
                     return ids;
                 },
                 async bulkPut(items) {
-                    await ready;
-                    await Promise.all(items.map(item => {
-                        if (!item.id) return addDoc(colRef, item);
-                        return setDoc(docRef(name, item.id), item, { merge: true });
-                    }));
+                    items.forEach(item => {
+                        if (!item.id) {
+                            const id = nextId(name);
+                            state[name] = [...(state[name] || []), { ...item, id }];
+                        } else {
+                            const idx = (state[name] || []).findIndex(x => x.id === item.id);
+                            if (idx >= 0) state[name][idx] = { ...state[name][idx], ...item };
+                            else state[name] = [...(state[name] || []), item];
+                        }
+                    });
+                    persist();
                 },
-                async update(id, data) { await ready; await updateDoc(docRef(name, id), data); },
-                async delete(id) { await ready; await deleteDoc(docRef(name, id)); },
-                async bulkDelete(ids) { await ready; await Promise.all(ids.map(i => deleteDoc(docRef(name, i)))); },
-                async clear() { await ready; await this.bulkDelete(cache[name].map(x => x.id)); },
+                async update(id, data) {
+                    const idx = (state[name] || []).findIndex(x => x.id === id);
+                    if (idx >= 0) {
+                        state[name][idx] = { ...state[name][idx], ...data };
+                        persist();
+                    }
+                },
+                async delete(id) {
+                    state[name] = (state[name] || []).filter(x => x.id !== id);
+                    persist();
+                },
+                async bulkDelete(ids) {
+                    state[name] = (state[name] || []).filter(x => !ids.includes(x.id));
+                    persist();
+                },
+                async clear() { state[name] = []; persist(); },
                 toCollection() {
                     return {
-                        primaryKeys: async () => { await ready; return cache[name].map(x => x.id); }
+                        primaryKeys: async () => (state[name] || []).map(x => x.id)
                     };
                 },
                 where(field) {
@@ -158,8 +162,7 @@
                 },
                 orderBy(field) {
                     const base = async (rev) => {
-                        await ready;
-                        const arr = [...cache[name]].sort((a, b) => {
+                        const arr = [...(state[name] || [])].sort((a, b) => {
                             const av = a?.[field] ?? '';
                             const bv = b?.[field] ?? '';
                             if (av === bv) return 0;
@@ -172,19 +175,182 @@
                         reverse() { return { toArray: () => base(true) }; }
                     };
                 }
+            });
+            return {
+                ready: Promise.resolve(),
+                db: {
+                    players: createTable('players'),
+                    fixtures: createTable('fixtures'),
+                    transactions: createTable('transactions'),
+                    participations: createTable('participations'),
+                    opponents: createTable('opponents'),
+                    venues: createTable('venues'),
+                    referees: createTable('referees')
+                }
             };
         };
 
-        window.firebaseReady = ready;
-        window.db = {
-            players: createTable('players'),
-            fixtures: createTable('fixtures'),
-            transactions: createTable('transactions'),
-            participations: createTable('participations'),
-            opponents: createTable('opponents'),
-            venues: createTable('venues'),
-            referees: createTable('referees')
-        };
+        try {
+            if (!firebaseConfig || !firebaseConfig.projectId) {
+                throw new Error('GAFFER_FIREBASE_CONFIG is missing. Using offline mode.');
+            }
+            const app = initializeApp(firebaseConfig);
+            const auth = getAuth(app);
+            const fs = getFirestore(app);
+
+            const cache = {
+                players: [],
+                fixtures: [],
+                transactions: [],
+                participations: [],
+                opponents: [],
+                venues: [],
+                referees: []
+            };
+
+            const ready = (async () => {
+                try {
+                    await signInAnonymously(auth);
+                } catch (err) {
+                    console.error("Anon auth failed", err);
+                }
+                const names = Object.keys(cache);
+                await Promise.all(names.map(async (name) => {
+                    const snap = await getDocs(collection(fs, name));
+                    cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
+                }));
+                names.forEach((name) => {
+                    const colRef = collection(fs, name);
+                    onSnapshot(colRef, (snap) => {
+                        cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
+                        window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name } }));
+                    });
+                });
+            })();
+
+            const docRef = (name, id) => doc(fs, name, String(id));
+
+            const nextId = (name) => {
+                const items = cache[name] || [];
+                const max = items.reduce((m, item) => {
+                    const n = Number(item.id);
+                    return Number.isNaN(n) ? m : Math.max(m, n);
+                }, 0);
+                return String(max + 1 || 1);
+            };
+
+            const createRunner = (name, filterFn, opts = { reverse: false }) => ({
+                and(extraFn) { return createRunner(name, (item) => filterFn(item) && extraFn(item), opts); },
+                reverse() { return createRunner(name, filterFn, { ...opts, reverse: !opts.reverse }); },
+                async toArray() {
+                    await ready;
+                    const arr = (cache[name] || []).filter(filterFn);
+                    return opts.reverse ? [...arr].reverse() : arr;
+                },
+                async first() {
+                    const arr = await this.toArray();
+                    return arr[0];
+                },
+                async delete() {
+                    const arr = await this.toArray();
+                    await Promise.all(arr.map(item => deleteDoc(docRef(name, item.id))));
+                },
+                async modify(patch) {
+                    const arr = await this.toArray();
+                    await Promise.all(arr.map(item => {
+                        const data = typeof patch === 'function' ? patch(item) : patch;
+                        return updateDoc(docRef(name, item.id), data);
+                    }));
+                },
+                async sortBy(field) {
+                    const arr = await this.toArray();
+                    const sorted = [...arr].sort((a, b) => {
+                        const av = a?.[field] ?? '';
+                        const bv = b?.[field] ?? '';
+                        if (av === bv) return 0;
+                        return av > bv ? 1 : -1;
+                    });
+                    return opts.reverse ? sorted.reverse() : sorted;
+                }
+            });
+
+            const createTable = (name) => {
+                const colRef = collection(fs, name);
+                return {
+                    async toArray() { await ready; return [...cache[name]]; },
+                    async count() { await ready; return cache[name].length; },
+                    async add(data) {
+                        await ready;
+                        const id = nextId(name);
+                        await setDoc(docRef(name, id), { ...data, id: numericOrId(id) });
+                        return numericOrId(id);
+                    },
+                    async bulkAdd(items) {
+                        await ready;
+                        const ids = [];
+                        for (const item of items) {
+                            const id = nextId(name);
+                            await setDoc(docRef(name, id), { ...item, id: numericOrId(id) });
+                            ids.push(numericOrId(id));
+                        }
+                        return ids;
+                    },
+                    async bulkPut(items) {
+                        await ready;
+                        await Promise.all(items.map(item => {
+                            if (!item.id) return addDoc(colRef, item);
+                            return setDoc(docRef(name, item.id), item, { merge: true });
+                        }));
+                    },
+                    async update(id, data) { await ready; await updateDoc(docRef(name, id), data); },
+                    async delete(id) { await ready; await deleteDoc(docRef(name, id)); },
+                    async bulkDelete(ids) { await ready; await Promise.all(ids.map(i => deleteDoc(docRef(name, i)))); },
+                    async clear() { await ready; await this.bulkDelete(cache[name].map(x => x.id)); },
+                    toCollection() {
+                        return {
+                            primaryKeys: async () => { await ready; return cache[name].map(x => x.id); }
+                        };
+                    },
+                    where(field) {
+                        return {
+                            equals(val) { return createRunner(name, (item) => item?.[field] === val); }
+                        };
+                    },
+                    orderBy(field) {
+                        const base = async (rev) => {
+                            await ready;
+                            const arr = [...cache[name]].sort((a, b) => {
+                                const av = a?.[field] ?? '';
+                                const bv = b?.[field] ?? '';
+                                if (av === bv) return 0;
+                                return av > bv ? 1 : -1;
+                            });
+                            return rev ? arr.reverse() : arr;
+                        };
+                        return {
+                            toArray: () => base(false),
+                            reverse() { return { toArray: () => base(true) }; }
+                        };
+                    }
+                };
+            };
+
+            window.firebaseReady = ready;
+            window.db = {
+                players: createTable('players'),
+                fixtures: createTable('fixtures'),
+                transactions: createTable('transactions'),
+                participations: createTable('participations'),
+                opponents: createTable('opponents'),
+                venues: createTable('venues'),
+                referees: createTable('referees')
+            };
+        } catch (err) {
+            console.warn('Firebase init failed or missing config. Switching to local-only mode.', err);
+            const offline = createOfflineDb();
+            window.firebaseReady = offline.ready;
+            window.db = offline.db;
+        }
     </script>
 
     <!-- App Configuration -->
