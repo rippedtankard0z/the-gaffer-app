@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0">
     <title>The Gaffer | British Exiles</title>
     <script>
-        window.GAFFER_BUILD_VERSION = '2024.12.06-01';
+        window.GAFFER_BUILD_VERSION = '2024.12.06-03';
     </script>
     
     <!-- React & DOM -->
@@ -2494,16 +2494,14 @@
                         rawContent = rawContent.replace(/Paid\s*$/i, '').trim();
                     }
                     
-                    // Extract Name & Position
+                    // Extract Name & Position Token (position token is only used to strip trailing codes)
                     let name = rawContent;
-                    let position = 'MID'; 
 
                     const sortedPos = positions.sort((a,b) => b.length - a.length);
                     for(const pos of sortedPos) {
                         const regex = new RegExp(`[\\/\\s]*${pos}$`, 'i');
                         if(regex.test(name)) {
                             name = name.replace(regex, '').trim();
-                            position = pos.toUpperCase();
                             break;
                         }
                     }
@@ -2525,7 +2523,6 @@
                         name.toLowerCase().includes(p.firstName.toLowerCase()) && name.length > 3
                     );
 
-                    const normalizedPos = (position || 'MID').toUpperCase();
                     const suggestions = suggestPlayers(name, players);
                     const bestSuggestion = suggestions[0];
                     const needsReview = !existing || (bestSuggestion && bestSuggestion.player.id !== existing.id && bestSuggestion.score < 0.65);
@@ -2533,7 +2530,6 @@
                     if(existing) {
                         entries.push({ 
                             name: `${existing.firstName} ${existing.lastName}`, 
-                            position: (existing.position || normalizedPos), 
                             isPaid, 
                             selectedId: existing.id,
                             suggestions,
@@ -2542,7 +2538,6 @@
                     } else {
                         entries.push({ 
                             name, 
-                            position: normalizedPos, 
                             isPaid, 
                             selectedId: null,
                             suggestions,
@@ -2605,11 +2600,14 @@
                 for (const entry of parsedData.entries) {
                     let playerId = entry.selectedId ? parseInt(entry.selectedId) : null;
                     if (!playerId) {
-                        const names = entry.name.split(' ');
+                        const names = entry.name.split(' ').filter(Boolean);
+                        const firstName = names.shift() || 'Player';
+                        const lastName = names.join(' ') || '(New)';
                         playerId = await db.players.add({
-                            firstName: names[0],
-                            lastName: names.slice(1).join(' ') || '(New)',
-                            position: entry.position || 'MID',
+                            firstName,
+                            lastName,
+                            position: 'MID',
+                            preferredPosition: 'MID',
                             isActive: true
                         });
                     }
@@ -3258,21 +3256,31 @@
                                             <div key={idx} className={`p-3 rounded-xl border ${entry.needsReview ? 'border-amber-200 bg-amber-50/60' : 'border-slate-100 bg-white'} space-y-2`}>
                                                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                                                     <input className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={entry.name} onChange={e => updateEntry(idx, { name: e.target.value })} placeholder="Name" />
-                                                    <input className="w-24 bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={entry.position} onChange={e => updateEntry(idx, { position: e.target.value.toUpperCase() })} placeholder="Pos" />
                                                     <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
                                                         <input type="checkbox" checked={entry.isPaid} onChange={e => updateEntry(idx, { isPaid: e.target.checked })} />
                                                         Paid
                                                     </label>
                                                 </div>
                                                 <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3 gap-2">
-                                <select className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={entry.selectedId !== null && entry.selectedId !== undefined ? String(entry.selectedId) : 'new'} onChange={e => updateEntry(idx, { selectedId: e.target.value === 'new' ? null : parseInt(e.target.value, 10), needsReview: e.target.value === 'new' })}>
-                                    <option value="new">Create new player</option>
-                                    {entry.suggestions?.map((sugg, i) => (
-                                        <option key={i} value={String(sugg.player.id)}>
-                                            {sugg.player.firstName} {sugg.player.lastName} ({Math.round(sugg.score * 100)}%)
-                                        </option>
-                                    ))}
-                                </select>
+                                                    <select className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={entry.selectedId !== null && entry.selectedId !== undefined ? String(entry.selectedId) : 'new'} onChange={e => updateEntry(idx, { selectedId: e.target.value === 'new' ? null : parseInt(e.target.value, 10), needsReview: e.target.value === 'new' })}>
+                                                        <option value="new">Create new player (adds to squad)</option>
+                                                        {entry.suggestions?.length ? (
+                                                            <optgroup label="Suggested matches">
+                                                                {entry.suggestions.map((sugg, i) => (
+                                                                    <option key={`sugg-${idx}-${i}`} value={String(sugg.player.id)}>
+                                                                        {sugg.player.firstName} {sugg.player.lastName} ({Math.round(sugg.score * 100)}%)
+                                                                    </option>
+                                                                ))}
+                                                            </optgroup>
+                                                        ) : null}
+                                                        <optgroup label="All squad players">
+                                                            {players.map(p => (
+                                                                <option key={`all-${idx}-${p.id}`} value={String(p.id)}>
+                                                                    {p.firstName} {p.lastName}
+                                                                </option>
+                                                            ))}
+                                                        </optgroup>
+                                                    </select>
                                                     <div className="text-[11px] text-slate-500">
                                                         {nearest ? `Nearest match: ${nearest.player.firstName} ${nearest.player.lastName} (${Math.round(nearest.score * 100)}%)` : 'No nearby match found'}
                                                     </div>
@@ -3285,7 +3293,7 @@
                                 </div>
 
                                 <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 p-3 rounded-lg">
-                                    Edit any entries above. Rows in amber are uncertain; we pre-filled the nearest match so you can fix mistakes before importing.
+                                    Edit any entries above. Rows in amber are uncertain; we pre-filled the nearest match so you can fix mistakes before importing. Selecting “Create new player” adds that name to the squad automatically before the game is created.
                                 </div>
 
                             <div className="flex gap-3 mt-2 pt-2 border-t border-slate-100">
@@ -3852,6 +3860,7 @@
                             <button onClick={onOpenSettings} className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-700 hover:bg-slate-100 transition">
                                 <Icon name="Settings" size={18} />
                             </button>
+                            <span className="text-[10px] font-semibold text-slate-400">v{APP_VERSION}</span>
                         </div>
                     </header>
 
