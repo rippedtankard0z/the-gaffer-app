@@ -1186,18 +1186,52 @@
             }, [players, sortPlayersBy, balances]);
 
             const findDuplicatePlayers = () => {
+                if (!players || players.length < 2) {
+                    alert('Load players first – no records to scan.');
+                    return;
+                }
+
                 const pairs = [];
+                const seenPairs = new Set();
+
+                // First pass: strict exact name match (sanitized)
+                const nameIndex = {};
+                players.forEach(p => {
+                    const key = sanitizeNameKey(`${p.firstName} ${p.lastName}`);
+                    if (!key) return;
+                    if (nameIndex[key]) {
+                        const a = nameIndex[key];
+                        const b = p;
+                        const idKey = [a.id, b.id].sort().join('-');
+                        if (!seenPairs.has(idKey)) {
+                            seenPairs.add(idKey);
+                            pairs.push({ a, b, score: 1 });
+                        }
+                    } else {
+                        nameIndex[key] = p;
+                    }
+                });
+
+                // Second pass: fuzzy similarity
                 for (let i = 0; i < players.length; i++) {
                     for (let j = i + 1; j < players.length; j++) {
                         const a = players[i], b = players[j];
                         const score = stringSimilarity(`${a.firstName} ${a.lastName}`, `${b.firstName} ${b.lastName}`);
-                        if (score >= 0.9) {
-                            pairs.push({ a, b, score });
+                        if (score >= 0.86) {
+                            const idKey = [a.id, b.id].sort().join('-');
+                            if (!seenPairs.has(idKey)) {
+                                seenPairs.add(idKey);
+                                pairs.push({ a, b, score });
+                            }
                         }
                     }
                 }
+
                 setDuplicatePairs(pairs);
                 setIsDupModalOpen(true);
+                if (!pairs.length) {
+                    alert('No potential duplicates detected.');
+                }
             };
 
             const deletePlayerAndRelations = async (player) => {
