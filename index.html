@@ -431,6 +431,15 @@
         const persistKitDetails = (details) => {
             writeStorageJSON(KIT_DETAILS_KEY, details);
         };
+        const KIT_SIZE_OPTIONS_KEY = 'gaffer:kitSizeOptions';
+        const DEFAULT_KIT_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+        const loadKitSizeOptions = () => {
+            const data = readStorageJSON(KIT_SIZE_OPTIONS_KEY, DEFAULT_KIT_SIZE_OPTIONS);
+            return Array.isArray(data) ? data : DEFAULT_KIT_SIZE_OPTIONS;
+        };
+        const persistKitSizeOptions = (options) => {
+            writeStorageJSON(KIT_SIZE_OPTIONS_KEY, options);
+        };
 
         const loadPositionDefinitions = () => {
             const data = readStorageJSON(POSITION_DEFS_KEY, []);
@@ -862,17 +871,17 @@
         };
 
         // --- PLAYERS MODULE ---
-        const Players = ({ itemCategories, positionDefinitions }) => {
+        const Players = ({ itemCategories, positionDefinitions, kitDetails = [], setKitDetails, kitSizeOptions = [] }) => {
             const [players, setPlayers] = useState([]);
             const [balances, setBalances] = useState({});
             const [selectedPlayer, setSelectedPlayer] = useState(null);
-            const [selectedPlayerKit, setSelectedPlayerKit] = useState(null);
             const [fixtures, setFixtures] = useState([]);
             const [participations, setParticipations] = useState([]);
             const [playerTx, setPlayerTx] = useState([]);
             const [isAddOpen, setIsAddOpen] = useState(false);
             const [isEditOpen, setIsEditOpen] = useState(false);
             const [editPlayer, setEditPlayer] = useState(null);
+            const [editPlayerKit, setEditPlayerKit] = useState({ shirtSize: '', shortSize: '' });
             const [isWallOpen, setIsWallOpen] = useState(false);
             const [newPlayer, setNewPlayer] = useState({
                 firstName: '',
@@ -899,6 +908,10 @@
             const [duplicateDebug, setDuplicateDebug] = useState(null);
             const [isDupScanning, setIsDupScanning] = useState(false);
             const [dupScanProgress, setDupScanProgress] = useState({ phase: '', checked: 0, total: 0, found: 0, lastFound: '' });
+            const selectedPlayerKit = useMemo(() => {
+                if (!selectedPlayer) return null;
+                return kitDetails.find(detail => detail?.playerId && String(detail.playerId) === String(selectedPlayer.id)) || null;
+            }, [selectedPlayer, kitDetails]);
 
             const refresh = async () => {
                 await waitForDb();
@@ -960,7 +973,6 @@
                 if (!selectedPlayer) {
                     setPlayerPositionSelection('');
                     setPlayerCustomPositionInput('');
-                    setSelectedPlayerKit(null);
                 }
             }, [selectedPlayer]);
 
@@ -968,8 +980,6 @@
             const openPlayerDetails = async (player) => {
                 const txs = await db.transactions.where('playerId').equals(player.id).reverse().sortBy('date');
                 setPlayerTx(txs);
-                const kitEntry = loadKitDetails().find(detail => String(detail.playerId) === String(player.id));
-                setSelectedPlayerKit(kitEntry || null);
                 setSelectedPlayer(player);
             };
 
@@ -1024,6 +1034,35 @@
                 refresh();
             };
 
+            const upsertPlayerKitSizes = (player, patch) => {
+                if (!player || !setKitDetails) return;
+                setKitDetails(prev => {
+                    const playerId = String(player.id);
+                    const existingIndex = prev.findIndex(detail => detail?.playerId && String(detail.playerId) === playerId);
+                    const trimmed = {
+                        shirtSize: (patch.shirtSize || '').trim(),
+                        shortSize: (patch.shortSize || '').trim()
+                    };
+                    if (existingIndex < 0 && !trimmed.shirtSize && !trimmed.shortSize) {
+                        return prev;
+                    }
+                    const base = existingIndex >= 0 ? prev[existingIndex] : null;
+                    const updated = {
+                        ...(base || {}),
+                        ...trimmed,
+                        playerId,
+                        playerName: `${player.firstName} ${player.lastName}`.trim(),
+                        id: base?.id || `kit-${playerId}`
+                    };
+                    if (existingIndex >= 0) {
+                        const next = [...prev];
+                        next[existingIndex] = updated;
+                        return next;
+                    }
+                    return [...prev, updated];
+                });
+            };
+
             const startEdit = (player) => {
                 setEditPlayer({ 
                     ...player, 
@@ -1035,6 +1074,10 @@
                     positions: player.positions || '',
                     shirtNumber: player.shirtNumber || '',
                     isActive: player.isActive !== false 
+                });
+                setEditPlayerKit({
+                    shirtSize: selectedPlayerKit?.shirtSize || '',
+                    shortSize: selectedPlayerKit?.shortSize || ''
                 });
                 setIsEditOpen(true);
             };
@@ -1054,6 +1097,7 @@
                     shirtNumber: editPlayer.shirtNumber,
                     isActive: editPlayer.isActive 
                 });
+                upsertPlayerKitSizes(editPlayer, editPlayerKit);
                 setIsEditOpen(false);
                 setSelectedPlayer(prev => prev && prev.id === editPlayer.id ? { ...prev, ...editPlayer } : prev);
                 refresh();
@@ -1586,7 +1630,7 @@
                                         </div>
                                         <div>
                                             <div className="font-bold text-slate-900 text-sm">{p.firstName} {p.lastName}</div>
-                                            <div className="text-[11px] text-slate-500">Available {availPositions || p.position}</div>
+                                            <div className="text-[11px] text-slate-500">{availPositions || p.position}</div>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -1599,6 +1643,9 @@
                                             </span>
                                         )}
                                         {bal >= 0 && <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md">Paid</span>}
+                                        <button type="button" onClick={(e) => { e.stopPropagation(); handleDeletePlayer(p); }} className="text-[10px] font-bold px-2 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 focus-visible:outline-none">
+                                            Delete
+                                        </button>
                                         <Icon name="ChevronRight" size={16} className="text-slate-300" />
                                     </div>
                                 </button>
@@ -1652,7 +1699,6 @@
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <button onClick={() => startEdit(selectedPlayer)} className="text-xs font-bold text-brand-600 bg-brand-50 px-3 py-1 rounded-lg border border-brand-100">Edit</button>
-                                        <button type="button" onClick={() => handleDeletePlayer(selectedPlayer)} className="text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1 rounded-lg border border-rose-100 hover:bg-rose-100 focus-visible:outline-rose-500">Delete</button>
                                     </div>
                                 </div>
                                 <div className="space-y-1 text-[11px] text-slate-500">
@@ -1791,14 +1837,6 @@
                                     value={editPlayer.firstName} onChange={e => setEditPlayer({ ...editPlayer, firstName: e.target.value })} />
                                 <input required placeholder="Last Name" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                     value={editPlayer.lastName} onChange={e => setEditPlayer({ ...editPlayer, lastName: e.target.value })} />
-                                <div className="grid grid-cols-4 gap-2">
-                                    {['GK', 'DEF', 'MID', 'FWD'].map(pos => (
-                                        <button type="button" key={pos} onClick={() => setEditPlayer({ ...editPlayer, position: pos })}
-                                            className={`p-2 rounded-lg text-sm font-bold border ${editPlayer.position === pos ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-slate-200 text-slate-600'}`}>{pos}</button>
-                                    ))}
-                                </div>
-                                <input placeholder="Preferred Position" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
-                                    value={editPlayer.preferredPosition} onChange={e => setEditPlayer({ ...editPlayer, preferredPosition: e.target.value })} />
                                 <div className="grid grid-cols-2 gap-3">
                                     <input placeholder="Phone Number" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                         value={editPlayer.phone} onChange={e => setEditPlayer({ ...editPlayer, phone: e.target.value })} />
@@ -1812,6 +1850,26 @@
                                 </div>
                                 <input placeholder="Shirt Number" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                     value={editPlayer.shirtNumber} onChange={e => setEditPlayer({ ...editPlayer, shirtNumber: e.target.value })} />
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="space-y-1">
+                                        <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Shirt size</div>
+                                        <select className="w-full bg-white border border-slate-200 rounded-xl p-3 text-sm" value={editPlayerKit.shirtSize} onChange={e => setEditPlayerKit({ ...editPlayerKit, shirtSize: e.target.value })}>
+                                            <option value="">Not set</option>
+                                            {kitSizeOptions.map(size => (
+                                                <option key={`shirt-size-${size}`} value={size}>{size}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Short size</div>
+                                        <select className="w-full bg-white border border-slate-200 rounded-xl p-3 text-sm" value={editPlayerKit.shortSize} onChange={e => setEditPlayerKit({ ...editPlayerKit, shortSize: e.target.value })}>
+                                            <option value="">Not set</option>
+                                            {kitSizeOptions.map(size => (
+                                                <option key={`short-size-${size}`} value={size}>{size}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
                                 <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
                                     <input type="checkbox" checked={editPlayer.isActive} onChange={e => setEditPlayer({ ...editPlayer, isActive: e.target.checked })} />
                                     Active
@@ -4437,7 +4495,7 @@
             const cancelKitImport = () => {
                 setKitImportRows(null);
             };
-
+            
             const addToQueue = () => {
                 if (!queueCandidate) {
                     alert('Choose a player to add to the next order.');
@@ -4626,13 +4684,14 @@
                 </div>
             );
         };
-        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, hideHeader = false }) => {
+        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, kitSizeOptions = [], setKitSizeOptions, hideHeader = false }) => {
             const [newCat, setNewCat] = useState('');
             const [newItemCat, setNewItemCat] = useState('');
             const importInputRef = useRef(null);
             const [isImporting, setIsImporting] = useState(false);
             const [newRef, setNewRef] = useState({ name: '', phone: '' });
             const [newSeason, setNewSeason] = useState('');
+            const [newKitSize, setNewKitSize] = useState('');
             const [removeCat, setRemoveCat] = useState('');
             const [fallbackName, setFallbackName] = useState('');
             const [legacyImporting, setLegacyImporting] = useState(false);
@@ -4844,6 +4903,14 @@
                 setSeasonCategories(updated);
                 persistSeasonCategories(updated);
                 setNewSeason('');
+            };
+
+            const addKitSize = () => {
+                const value = (newKitSize || '').trim().toUpperCase();
+                if(!value) return;
+                if(kitSizeOptions.some(size => size.toUpperCase() === value)) { alert('Size already exists'); return; }
+                setKitSizeOptions(prev => [...prev, value]);
+                setNewKitSize('');
             };
 
             const renameCategory = async (cat, isItem = false) => {
@@ -5325,6 +5392,25 @@
                     </div>
 
                     <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Kit Sizes</div>
+                        <div className="flex flex-wrap gap-2">
+                            {kitSizeOptions.length ? kitSizeOptions.map(size => (
+                                <div key={`kit-size-${size}`} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
+                                    <span>{size}</span>
+                                    <button onClick={() => setKitSizeOptions(prev => prev.filter(s => s !== size))} className="text-rose-600">✕</button>
+                                </div>
+                            )) : (
+                                <div className="text-xs text-slate-400">No kit sizes defined yet.</div>
+                            )}
+                        </div>
+                        <div className="flex gap-2">
+                            <input className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Add size (e.g. XS)" value={newKitSize} onChange={e => setNewKitSize(e.target.value)} />
+                            <button onClick={addKitSize} className="bg-slate-900 text-white font-bold rounded-lg px-4">Add</button>
+                        </div>
+                        <div className="text-[11px] text-slate-500">These sizes power the shirt and short selectors when editing players and updating kit records.</div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Position Definitions</div>
                         <div className="flex flex-wrap gap-2">
                             {positionDefinitions.map(def => (
@@ -5583,6 +5669,7 @@
             const [kitDetails, setKitDetails] = useState(loadKitDetails());
             const [kitQueue, setKitQueue] = useState(loadKitQueue());
             const [kitNumberLimit, setKitNumberLimit] = useState(loadKitNumberLimit());
+            const [kitSizeOptions, setKitSizeOptions] = useState(loadKitSizeOptions());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
             useEffect(() => {
@@ -5619,6 +5706,10 @@
             }, [kitDetails]);
 
             useEffect(() => {
+                persistKitSizeOptions(kitSizeOptions);
+            }, [kitSizeOptions]);
+
+            useEffect(() => {
                 persistPositionDefinitions(positionDefinitions);
             }, [positionDefinitions]);
 
@@ -5633,14 +5724,14 @@
                         {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
                         {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
                         {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
-                        {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} />}
+                        {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} setKitDetails={setKitDetails} kitSizeOptions={kitSizeOptions} />}
                         {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
                         {activeTab === 'kit' && <Kit kitDetails={kitDetails} setKitDetails={setKitDetails} kitQueue={kitQueue} setKitQueue={setKitQueue} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} onNavigate={setActiveTab} />}
                     </main>
                     
                     <Nav activeTab={activeTab} setTab={setActiveTab} />
                     <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="Settings">
-                        <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} />
+                        <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} />
                     </Modal>
                 </div>
             );
