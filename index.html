@@ -175,9 +175,13 @@
                             primaryKeys: async () => { await ready; return cache[name].map(x => x.id); }
                         };
                     },
-                    where(field) {
+                    where(fieldOrFilter) {
+                        if (typeof fieldOrFilter === 'object' && fieldOrFilter !== null) {
+                            const filters = Object.entries(fieldOrFilter);
+                            return createRunner(name, (item) => filters.every(([key, value]) => item?.[key] === value));
+                        }
                         return {
-                            equals(val) { return createRunner(name, (item) => item?.[field] === val); }
+                            equals(val) { return createRunner(name, (item) => item?.[fieldOrFilter] === val); }
                         };
                     },
                     orderBy(field) {
@@ -1297,31 +1301,45 @@
                 const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
                 setIsDupScanning(true);
                 setDupScanProgress({ phase: 'Preparing', checked: 0, total: players.length, found: 0, lastFound: '' });
+
+                let pairs = [];
+                let fallbackError = null;
                 try {
                     // Yield so the progress modal paints before the heavy loop starts.
                     await new Promise(res => setTimeout(res, 0));
-                    const pairs = await scanDuplicatesAsync(players, (progress) => setDupScanProgress(progress));
-                    const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
-                    setDuplicatePairs(pairs);
-                    setDuplicateDebug({
-                        playerCount: players.length,
-                        pairCount: pairs.length,
-                        elapsedMs: Math.round(elapsed),
-                        sample: pairs.slice(0, 3).map(p => ({
-                            a: `${p.a.firstName} ${p.a.lastName}`,
-                            b: `${p.b.firstName} ${p.b.lastName}`,
-                            score: Math.round(p.score * 100)
-                        }))
-                    });
-                    setIsDupModalOpen(true);
-                    if (!pairs.length) {
-                        alert('No potential duplicates detected.');
-                    }
+                    pairs = await scanDuplicatesAsync(players, (progress) => setDupScanProgress(progress));
                 } catch (err) {
                     console.error('Duplicate scan failed', err);
-                    alert('Duplicate scan failed: ' + err.message);
+                    fallbackError = err;
+                    alert('Detailed duplicate scan failed — showing a quick fallback scan instead.');
+                    pairs = computeDuplicatePairs(players);
+                    setDupScanProgress({
+                        phase: 'Fallback scan',
+                        checked: pairs.length,
+                        total: Math.max(pairs.length, players.length),
+                        found: pairs.length,
+                        lastFound: ''
+                    });
                 } finally {
                     setIsDupScanning(false);
+                }
+
+                const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
+                setDuplicatePairs(pairs);
+                setDuplicateDebug({
+                    playerCount: players.length,
+                    pairCount: pairs.length,
+                    elapsedMs: Math.round(elapsed),
+                    fallback: Boolean(fallbackError),
+                    sample: pairs.slice(0, 3).map(p => ({
+                        a: `${p.a.firstName} ${p.a.lastName}`,
+                        b: `${p.b.firstName} ${p.b.lastName}`,
+                        score: Math.round(p.score * 100)
+                    }))
+                });
+                setIsDupModalOpen(true);
+                if (!pairs.length) {
+                    alert('No potential duplicates detected.');
                 }
             };
 
