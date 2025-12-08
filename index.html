@@ -2620,33 +2620,36 @@
                     return;
                 }
 
+                const normalizedFee = Number.isFinite(Number(feeForFixture)) ? Number(feeForFixture) : 20;
+                const importTimestamp = new Date().toISOString();
                 const participations = [];
                 const transactions = [];
 
                 for (const entry of parsedData.entries) {
-                    let playerId = entry.selectedId ? parseInt(entry.selectedId) : null;
+                    const trimmedName = (entry.name || '').trim();
+                    if(!trimmedName) continue;
+                    let playerId = typeof entry.selectedId === 'number' ? entry.selectedId : parseInt(entry.selectedId, 10);
+                    playerId = Number.isFinite(playerId) ? playerId : null;
                     if (!playerId) {
-                        const names = entry.name.split(' ').filter(Boolean);
-                        const firstName = names.shift() || 'Player';
-                        const lastName = names.join(' ') || '(New)';
+                        const nameTokens = trimmedName.split(/\s+/).filter(Boolean);
+                        const firstName = nameTokens.shift() || 'Player';
+                        const lastNameRaw = nameTokens.join(' ');
+                        const lastName = lastNameRaw.trim() ? lastNameRaw : '(New)';
                         playerId = await db.players.add({
                             firstName,
                             lastName,
-                            position: 'MID',
-                            preferredPosition: 'MID',
                             isActive: true
                         });
                     }
 
                     participations.push({ fixtureId: finalFixtureId, playerId, status: 'SELECTED' });
 
-                    const feeVal = feeForFixture || 20;
                     transactions.push({
-                        date: new Date().toISOString(),
+                        date: importTimestamp,
                         category: 'MATCH_FEE',
                         type: 'EXPENSE',
                         flow: 'payable',
-                        amount: -Math.abs(feeVal),
+                        amount: -Math.abs(normalizedFee),
                         description: `Match Fee vs ${fixtureOpponentLabel}`,
                         playerId,
                         fixtureId: finalFixtureId,
@@ -2655,11 +2658,11 @@
 
                     if (entry.isPaid) {
                         transactions.push({
-                            date: new Date().toISOString(),
+                            date: importTimestamp,
                             category: 'MATCH_FEE',
                             type: 'INCOME',
                             flow: 'receivable',
-                            amount: Math.abs(feeVal),
+                            amount: Math.abs(normalizedFee),
                             description: `Payment for vs ${fixtureOpponentLabel}`,
                             playerId,
                             fixtureId: finalFixtureId,
@@ -4777,6 +4780,8 @@
             const [positionReassignChoice, setPositionReassignChoice] = useState('');
             const [positionReassignNew, setPositionReassignNew] = useState('');
             const [positionReassignNewLabel, setPositionReassignNewLabel] = useState('');
+            const [isImportAllBusy, setIsImportAllBusy] = useState(false);
+            const [importAllStatus, setImportAllStatus] = useState('Preparing files…');
 
             useEffect(() => {
                 const loadFixtures = async () => {
@@ -5295,36 +5300,49 @@
                     persistSeasonCategories(arr);
                 } else if(key === 'all') {
                     if(!confirm('Import ALL data and replace current?')) return;
-                    await db.fixtures.clear();
-                    await db.players.clear();
-                    await db.transactions.clear();
-                    await db.participations.clear();
-                    await db.opponents.clear();
-                    await db.venues.clear();
-                    await db.referees.clear();
-                    if(data.players?.length) await db.players.bulkAdd(data.players);
-                    if(data.fixtures?.length) await db.fixtures.bulkAdd(data.fixtures);
-                    if(data.transactions?.length) {
-                        const normalizedTx = data.transactions.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) }));
-                        await db.transactions.bulkAdd(normalizedTx);
+                    setIsImportAllBusy(true);
+                    setImportAllStatus('Clearing old data…');
+                    try {
+                        await db.fixtures.clear();
+                        await db.players.clear();
+                        await db.transactions.clear();
+                        await db.participations.clear();
+                        await db.opponents.clear();
+                        await db.venues.clear();
+                        await db.referees.clear();
+                        setImportAllStatus('Restoring squad & fixtures…');
+                        if(data.players?.length) await db.players.bulkAdd(data.players);
+                        if(data.fixtures?.length) await db.fixtures.bulkAdd(data.fixtures);
+                        if(data.transactions?.length) {
+                            setImportAllStatus('Rebuilding ledger entries…');
+                            const normalizedTx = data.transactions.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) }));
+                            await db.transactions.bulkAdd(normalizedTx);
+                        }
+                        setImportAllStatus('Linking participations…');
+                        if(data.participations?.length) await db.participations.bulkAdd(data.participations);
+                        if(data.opponents?.length) await db.opponents.bulkAdd(data.opponents);
+                        if(data.venues?.length) await db.venues.bulkAdd(data.venues);
+                        if(data.referees?.length) await db.referees.bulkAdd(data.referees);
+                        setImportAllStatus('Applying saved settings…');
+                        const nextCatsAll = Array.isArray(data.categories) ? data.categories : [];
+                        setCategories(nextCatsAll);
+                        persistCategories(nextCatsAll);
+                        const nextItemCatsAll = Array.isArray(data.itemCategories) ? data.itemCategories : [];
+                        setItemCategories(nextItemCatsAll);
+                        persistItemCategories(nextItemCatsAll);
+                        const nextSeasonCatsAll = Array.isArray(data.seasonCategories) ? data.seasonCategories : [];
+                        setSeasonCategories(nextSeasonCatsAll);
+                        persistSeasonCategories(nextSeasonCatsAll);
+                        if(data.refDefaults) { setRefDefaults(data.refDefaults); persistRefDefaults(data.refDefaults); }
+                        setOpponents(await db.opponents.toArray());
+                        setVenues(await db.venues.toArray());
+                        setReferees(await db.referees.toArray());
+                        alert('Import complete.');
+                    } finally {
+                        setIsImportAllBusy(false);
+                        setImportAllStatus('Preparing files…');
                     }
-                    if(data.participations?.length) await db.participations.bulkAdd(data.participations);
-                    if(data.opponents?.length) await db.opponents.bulkAdd(data.opponents);
-                    if(data.venues?.length) await db.venues.bulkAdd(data.venues);
-                    if(data.referees?.length) await db.referees.bulkAdd(data.referees);
-                    const nextCatsAll = Array.isArray(data.categories) ? data.categories : [];
-                    setCategories(nextCatsAll);
-                    persistCategories(nextCatsAll);
-                    const nextItemCatsAll = Array.isArray(data.itemCategories) ? data.itemCategories : [];
-                    setItemCategories(nextItemCatsAll);
-                    persistItemCategories(nextItemCatsAll);
-                    const nextSeasonCatsAll = Array.isArray(data.seasonCategories) ? data.seasonCategories : [];
-                    setSeasonCategories(nextSeasonCatsAll);
-                    persistSeasonCategories(nextSeasonCatsAll);
-                    if(data.refDefaults) { setRefDefaults(data.refDefaults); persistRefDefaults(data.refDefaults); }
-                    setOpponents(await db.opponents.toArray());
-                    setVenues(await db.venues.toArray());
-                    setReferees(await db.referees.toArray());
+                    return;
                 }
                 alert('Import complete.');
             };
@@ -5598,7 +5616,9 @@
                             <button onClick={() => { setImportTarget('itemCategories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Player Items</button>
                             <button onClick={() => { setImportTarget('categories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Cost Categories</button>
                             <button onClick={() => { setImportTarget('seasonCategories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Seasons</button>
-                            <button onClick={() => { setImportTarget('all'); importSingleRef.current?.click(); }} className="bg-rose-600 text-white rounded-lg px-3 py-2 text-sm font-bold md:col-span-2">Import ALL</button>
+                            <button onClick={() => { setImportTarget('all'); importSingleRef.current?.click(); }} disabled={isImportAllBusy} className={`bg-rose-600 text-white rounded-lg px-3 py-2 text-sm font-bold md:col-span-2 ${isImportAllBusy ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                                {isImportAllBusy ? 'Importing…' : 'Import ALL'}
+                            </button>
                         </div>
                         <input type="file" accept="application/json" ref={importSingleRef} className="hidden" onChange={handleSingleImportFile} />
                         <div className="text-[11px] text-slate-500">Imports replace current data for that list. “ALL” replaces everything.</div>
@@ -5723,6 +5743,17 @@
                             </div>
                         </div>
                     </Modal>
+
+                    {isImportAllBusy && (
+                        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+                            <div className="bg-white w-72 rounded-2xl shadow-2xl border border-slate-100 p-6 text-center space-y-3 animate-slide-up">
+                                <div className="mx-auto h-12 w-12 rounded-full border-4 border-slate-200 border-t-brand-600 animate-spin"></div>
+                                <div className="text-sm font-display font-bold text-slate-900">Hang tight…</div>
+                                <p className="text-xs text-slate-500">{importAllStatus}</p>
+                                <p className="text-[11px] text-slate-400">Large imports can take a few seconds. Avoid closing this window.</p>
+                            </div>
+                        </div>
+                    )}
 
                 </div>
             );
