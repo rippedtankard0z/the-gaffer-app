@@ -807,6 +807,9 @@
             const [playerImportRows, setPlayerImportRows] = useState(null);
             const [playerPositionSelection, setPlayerPositionSelection] = useState('');
             const [playerCustomPositionInput, setPlayerCustomPositionInput] = useState('');
+            const [sortPlayersBy, setSortPlayersBy] = useState('name');
+            const [duplicatePairs, setDuplicatePairs] = useState([]);
+            const [isDupModalOpen, setIsDupModalOpen] = useState(false);
 
             const refresh = async () => {
                 await waitForDb();
@@ -876,6 +879,13 @@
                 const txs = await db.transactions.where('playerId').equals(player.id).reverse().sortBy('date');
                 setPlayerTx(txs);
                 setSelectedPlayer(player);
+            };
+
+            const toggleActiveStatus = async (player) => {
+                if (!player) return;
+                const next = !(player.isActive !== false);
+                await db.players.update(player.id, { isActive: next });
+                setPlayers(prev => prev.map(p => p.id === player.id ? { ...p, isActive: next } : p));
             };
 
             const hasExistingPayment = (tx) => {
@@ -1144,6 +1154,51 @@
                     .slice(0, 5);
             }, [players, balances]);
             const selectedPlayerPositions = selectedPlayer ? collectPlayerPositions(selectedPlayer) : [];
+            const sortedPlayers = useMemo(() => {
+                const arr = [...players];
+                if (sortPlayersBy === 'shirt') {
+                    return arr.sort((a, b) => {
+                        const an = parseInt(a.shirtNumber, 10) || 0;
+                        const bn = parseInt(b.shirtNumber, 10) || 0;
+                        if (an === bn) return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+                        return an - bn;
+                    });
+                }
+                if (sortPlayersBy === 'paid') {
+                    return arr.sort((a, b) => {
+                        const balA = balances[a.id] || 0;
+                        const balB = balances[b.id] || 0;
+                        const paidA = balA >= 0 ? 1 : 0;
+                        const paidB = balB >= 0 ? 1 : 0;
+                        if (paidA !== paidB) return paidB - paidA;
+                        return balB - balA;
+                    });
+                }
+                if (sortPlayersBy === 'active') {
+                    return arr.sort((a, b) => {
+                        const actA = a.isActive === false ? 0 : 1;
+                        const actB = b.isActive === false ? 0 : 1;
+                        if (actA !== actB) return actB - actA;
+                        return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+                    });
+                }
+                return arr.sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
+            }, [players, sortPlayersBy, balances]);
+
+            const findDuplicatePlayers = () => {
+                const pairs = [];
+                for (let i = 0; i < players.length; i++) {
+                    for (let j = i + 1; j < players.length; j++) {
+                        const a = players[i], b = players[j];
+                        const score = stringSimilarity(`${a.firstName} ${a.lastName}`, `${b.firstName} ${b.lastName}`);
+                        if (score >= 0.9) {
+                            pairs.push({ a, b, score });
+                        }
+                    }
+                }
+                setDuplicatePairs(pairs);
+                setIsDupModalOpen(true);
+            };
 
             const generateWallImage = () => {
                 const canvas = document.createElement('canvas');
@@ -1223,6 +1278,9 @@
                             <button onClick={() => importInputRef.current?.click()} disabled={isImportingPlayers} className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${isImportingPlayers ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-slate-900 text-white border-slate-900'}`}>
                                 {isImportingPlayers ? 'Importing…' : 'Import players CSV'}
                             </button>
+                            <button onClick={findDuplicatePlayers} className="text-xs font-bold bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg border border-amber-100">
+                                Check duplicates
+                            </button>
                             <button onClick={() => {
                                 const msg = players.map((p,i)=>`${i+1}. ${p.firstName} ${p.lastName}`).join('\n');
                                 if(navigator.clipboard){
@@ -1243,14 +1301,23 @@
                         {importSummary && (
                             <p className="text-[11px] text-slate-500 mt-1">{importSummary}</p>
                         )}
+                        <div className="mt-2 flex flex-wrap gap-2 items-center text-[11px] text-slate-600">
+                            <span className="font-bold uppercase tracking-wider text-slate-500">Sort:</span>
+                            <select value={sortPlayersBy} onChange={e => setSortPlayersBy(e.target.value)} className="bg-white border border-slate-200 rounded-lg p-2 text-xs">
+                                <option value="name">Name</option>
+                                <option value="shirt">Shirt #</option>
+                                <option value="paid">Paid status</option>
+                                <option value="active">Active status</option>
+                            </select>
+                        </div>
                     </header>
 
                     <div className="bg-white rounded-2xl shadow-soft border border-slate-100 overflow-hidden divide-y divide-slate-50">
-                        {players.map((p) => {
+                        {sortedPlayers.map((p) => {
                             const bal = balances[p.id] || 0;
                             const availPositions = p.positions || [p.position, p.preferredPosition || p.position].filter(Boolean).join(', ');
                             return (
-                                <button key={p.id} onClick={() => openPlayerDetails(p)} className="w-full text-left p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                                <button key={p.id} onClick={() => openPlayerDetails(p)} className={`w-full text-left p-4 flex items-center justify-between hover:bg-slate-50 transition-colors ${p.isActive === false ? 'opacity-60' : ''}`}>
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-600 font-display font-bold text-sm border border-white shadow-inner">
                                             {p.firstName[0]}{p.lastName[0]}
@@ -1261,9 +1328,9 @@
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${p.isActive === false ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                                            {p.isActive === false ? 'Archived' : 'Active'}
-                                        </span>
+                                        <button onClick={(e) => { e.stopPropagation(); toggleActiveStatus(p); }} className={`text-[10px] font-bold px-2 py-1 rounded-md border ${p.isActive === false ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                                            {p.isActive === false ? 'Inactive' : 'Active'}
+                                        </button>
                                         {bal < 0 && (
                                             <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2 py-1 rounded-md">
                                                 {formatCurrency(bal, { maximumFractionDigits: 0 })}
@@ -2895,6 +2962,19 @@
                                 </div>
                             </div>
                         )}
+                    </Modal>
+
+                    <Modal isOpen={isDupModalOpen} onClose={() => setIsDupModalOpen(false)} title="Potential duplicate players">
+                        <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                            {duplicatePairs.length === 0 && <div className="text-sm text-slate-500">No close matches found.</div>}
+                            {duplicatePairs.map((pair, idx) => (
+                                <div key={`dup-${idx}`} className="p-2 rounded-lg border border-slate-200 bg-slate-50 text-sm">
+                                    <div className="font-bold text-slate-900">{pair.a.firstName} {pair.a.lastName}</div>
+                                    <div className="font-bold text-slate-900">{pair.b.firstName} {pair.b.lastName}</div>
+                                    <div className="text-[11px] text-slate-500">Similarity: {Math.round(pair.score * 100)}%</div>
+                                </div>
+                            ))}
+                        </div>
                     </Modal>
                 </div>
             );
