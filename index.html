@@ -380,7 +380,27 @@
         const KIT_QUEUE_KEY = 'gaffer:kitQueue';
         const KIT_NUMBER_LIMIT_KEY = 'gaffer:kitNumberLimit';
         const KIT_DETAILS_KEY = 'gaffer:kitDetails';
+        const POSITION_DEFS_KEY = 'gaffer:positionDefinitions';
         const DEFAULT_KIT_NUMBER_LIMIT = 50;
+        const DEFAULT_POSITION_DEFINITIONS = [
+            { code: 'GK', label: 'Goalkeeper' },
+            { code: 'CB', label: 'Centre-Back' },
+            { code: 'LB', label: 'Left-Back' },
+            { code: 'RB', label: 'Right-Back' },
+            { code: 'LWB', label: 'Left Wing-Back' },
+            { code: 'RWB', label: 'Right Wing-Back' },
+            { code: 'SW', label: 'Sweeper' },
+            { code: 'CM', label: 'Central Midfielder' },
+            { code: 'CDM', label: 'Central Defensive Midfielder' },
+            { code: 'CAM', label: 'Central Attacking Midfielder' },
+            { code: 'LM', label: 'Left Midfielder' },
+            { code: 'RM', label: 'Right Midfielder' },
+            { code: 'LW', label: 'Left Winger' },
+            { code: 'RW', label: 'Right Winger' },
+            { code: 'CF', label: 'Centre-Forward' },
+            { code: 'ST', label: 'Striker' },
+            { code: 'SS', label: 'Second Striker / Support Striker' }
+        ];
 
         const loadKitQueue = () => {
             const data = readStorageJSON(KIT_QUEUE_KEY, []);
@@ -398,6 +418,16 @@
 
         const persistKitDetails = (details) => {
             writeStorageJSON(KIT_DETAILS_KEY, details);
+        };
+
+        const loadPositionDefinitions = () => {
+            const data = readStorageJSON(POSITION_DEFS_KEY, []);
+            if (!Array.isArray(data) || !data.length) return DEFAULT_POSITION_DEFINITIONS;
+            return data;
+        };
+
+        const persistPositionDefinitions = (definitions) => {
+            writeStorageJSON(POSITION_DEFS_KEY, definitions);
         };
 
         const KIT_DETAIL_HEADER_MAP = {
@@ -635,6 +665,19 @@
             });
         };
 
+        const collectPlayerPositions = (player) => {
+            if (!player) return [];
+            const collected = new Set();
+            (player.positions || '').split(',').map(token => normalizePositionToken(token)).forEach(token => {
+                if (token) collected.add(token);
+            });
+            [player.position, player.preferredPosition].forEach(token => {
+                const normalized = normalizePositionToken(token);
+                if (normalized) collected.add(normalized);
+            });
+            return Array.from(collected);
+        };
+
         const splitCsvLine = (line) => {
             const parts = [];
             let current = '';
@@ -670,9 +713,71 @@
         };
 
         const sanitizeNameKey = (name) => (name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        const extractPositionCodes = (value) => {
+            return (value || '')
+                .split(',')
+                .map(v => normalizePositionToken(v.trim()))
+                .filter(Boolean);
+        };
+
+        const parsePlayerImportRows = (text, players) => {
+            const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
+            if (lines.length < 2) throw new Error('Player CSV must include headers and at least one row.');
+            const headers = splitCsvLine(lines[0]);
+            if (!headers.length) throw new Error('Invalid header row.');
+            const headerMap = {};
+            headers.forEach((hdr, idx) => {
+                const key = (hdr || '').toLowerCase().trim();
+                if (CSV_HEADER_MAP[key]) headerMap[CSV_HEADER_MAP[key]] = idx;
+            });
+            if (headerMap.fullName === undefined) throw new Error('Missing "Full Name" column.');
+
+                    const parsed = [];
+                    const now = Date.now();
+                    for (let i = 1; i < lines.length; i++) {
+                const values = splitCsvLine(lines[i]);
+                if (!values.length) continue;
+                const record = {};
+                Object.entries(headerMap).forEach(([field, idx]) => {
+                    record[field] = (values[idx] || '').trim();
+                });
+                const rawName = record.fullName || '';
+                if (!rawName) continue;
+                const nameParts = rawName.split(/\s+/).filter(Boolean);
+                if (!nameParts.length) continue;
+                const firstName = nameParts.shift();
+                const lastName = nameParts.join(' ') || '(New)';
+                const sanitized = sanitizeNameKey(rawName);
+                const existingExact = sanitized ? players.find(p => sanitizeNameKey(`${p.firstName} ${p.lastName}`) === sanitized) : null;
+                const suggestions = suggestPlayers(rawName, players, 4);
+                const bestSuggestion = suggestions[0];
+                const matchedPlayerId = existingExact
+                    ? String(existingExact.id)
+                    : (bestSuggestion && bestSuggestion.score >= 0.7 ? String(bestSuggestion.player.id) : null);
+                const positionTokens = inferPositionsFromText(record.positionText || '');
+                const selectedPositions = Array.from(new Set(positionTokens.map(token => normalizePositionToken(token)).filter(Boolean)));
+                    parsed.push({
+                        id: `${now}-${i}`,
+                        rowNumber: i,
+                        fullName: rawName,
+                        firstName,
+                        lastName,
+                        record,
+                        selectedPositions,
+                        matchedPlayerId,
+                        suggestions,
+                        needsReview: !matchedPlayerId,
+                        drop: false,
+                        customPositionInput: '',
+                        currentPlayer: record.currentPlayer || ''
+                    });
+            }
+            if (!parsed.length) throw new Error('No player rows were detected.');
+            return parsed;
+        };
 
         // --- PLAYERS MODULE ---
-        const Players = ({ itemCategories }) => {
+        const Players = ({ itemCategories, positionDefinitions }) => {
             const [players, setPlayers] = useState([]);
             const [balances, setBalances] = useState({});
             const [selectedPlayer, setSelectedPlayer] = useState(null);
@@ -699,6 +804,9 @@
             const importInputRef = useRef(null);
             const [isImportingPlayers, setIsImportingPlayers] = useState(false);
             const [importSummary, setImportSummary] = useState('');
+            const [playerImportRows, setPlayerImportRows] = useState(null);
+            const [playerPositionSelection, setPlayerPositionSelection] = useState('');
+            const [playerCustomPositionInput, setPlayerCustomPositionInput] = useState('');
 
             const refresh = async () => {
                 await waitForDb();
@@ -755,6 +863,13 @@
                 window.addEventListener('gaffer-firestore-update', handler);
                 return () => window.removeEventListener('gaffer-firestore-update', handler);
             }, []);
+
+            useEffect(() => {
+                if (!selectedPlayer) {
+                    setPlayerPositionSelection('');
+                    setPlayerCustomPositionInput('');
+                }
+            }, [selectedPlayer]);
 
 
             const openPlayerDetails = async (player) => {
@@ -868,77 +983,35 @@
                 return str;
             };
 
-            const importPlayersFromCsv = async (text) => {
-                const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
-                if (lines.length < 2) throw new Error('CSV must include headers and at least one row.');
-                const headers = splitCsvLine(lines[0]);
-                if (!headers.length) throw new Error('Invalid header row.');
-                const headerMap = {};
-                headers.forEach((hdr, index) => {
-                    const key = (hdr || '').toLowerCase().trim();
-                    if (CSV_HEADER_MAP[key]) headerMap[CSV_HEADER_MAP[key]] = index;
-                });
-                if (headerMap.fullName === undefined) throw new Error('Missing "Full Name" column.');
-
-                const existingPlayers = await db.players.toArray();
-                const nameIndex = {};
-                existingPlayers.forEach(player => {
-                    const key = sanitizeNameKey(`${player.firstName} ${player.lastName}`);
-                    if (key) nameIndex[key] = player;
-                });
-
-                let created = 0;
-                let updated = 0;
-
-                for (let i = 1; i < lines.length; i++) {
-                    const row = lines[i];
-                    if (!row) continue;
-                    const values = splitCsvLine(row);
-                    const record = {};
-                    Object.entries(headerMap).forEach(([field, idx]) => {
-                        record[field] = (values[idx] || '').trim();
-                    });
-                    const rawName = record.fullName;
-                    if (!rawName) continue;
-                    const nameParts = rawName.split(/\s+/).filter(Boolean);
-                    if (!nameParts.length) continue;
-                    const firstName = nameParts.shift();
-                    const lastName = nameParts.join(' ') || '(New)';
-                    const key = sanitizeNameKey(rawName);
-                    const existing = key ? nameIndex[key] : null;
-                    const positionsArr = inferPositionsFromText(record.positionText || '');
-                    const existingPosition = existing?.position || 'MID';
-                    const positionsText = positionsArr.length ? positionsArr.join(', ') : existing?.positions || '';
-                    const primaryPosition = positionsArr[0] || existingPosition;
-                    const preferredPosition = positionsArr[1] || existing?.preferredPosition || primaryPosition;
-                    const currentRaw = (record.currentPlayer || '').toLowerCase();
-                    const hasCurrent = headerMap.currentPlayer !== undefined && (record.currentPlayer || '').trim() !== '';
-                    const isActive = hasCurrent ? CURRENT_PLAYER_TRUE.has(currentRaw) : (existing?.isActive !== false);
-                    const payload = {
-                        firstName,
-                        lastName,
-                        position: primaryPosition,
-                        preferredPosition,
-                        phone: overrideIfValue(record.phone, existing?.phone || ''),
-                        age: record.age ? Number(record.age) : (existing?.age ?? null),
-                        dateOfBirth: overrideIfValue(record.dateOfBirth, existing?.dateOfBirth || ''),
-                        positions: positionsText,
-                        shirtNumber: overrideIfValue(record.shirtNumber, existing?.shirtNumber || ''),
-                        isActive
-                    };
-                    if (existing) {
-                        await db.players.update(existing.id, payload);
-                        nameIndex[key] = { ...existing, ...payload };
-                        updated++;
-                    } else {
-                        const id = await db.players.add(payload);
-                        nameIndex[key] = { id, ...payload };
-                        created++;
-                    }
-                }
-
+            const persistPlayerPositions = async (positions) => {
+                if (!selectedPlayer) return;
+                const normalized = Array.from(new Set(positions.map(token => normalizePositionToken(token)).filter(Boolean)));
+                await db.players.update(selectedPlayer.id, { positions: normalized.join(', ') });
+                setSelectedPlayer(prev => prev ? { ...prev, positions: normalized.join(', ') } : prev);
                 refresh();
-                return `Imported ${created} new player${created === 1 ? '' : 's'} · updated ${updated} record${updated === 1 ? '' : 's'}.`;
+            };
+
+            const addPositionToPlayer = async (code) => {
+                if (!code || !selectedPlayer) return;
+                const normalized = normalizePositionToken(code);
+                if (!normalized) return;
+                const current = collectPlayerPositions(selectedPlayer);
+                if (current.includes(normalized)) {
+                    setPlayerPositionSelection('');
+                    setPlayerCustomPositionInput('');
+                    return;
+                }
+                await persistPlayerPositions([...current, normalized]);
+                setPlayerPositionSelection('');
+                setPlayerCustomPositionInput('');
+            };
+
+            const removePositionFromPlayer = async (code) => {
+                if (!code || !selectedPlayer) return;
+                const normalized = normalizePositionToken(code);
+                if (!normalized) return;
+                const current = collectPlayerPositions(selectedPlayer).filter(pos => pos !== normalized);
+                await persistPlayerPositions(current);
             };
 
             const handlePlayerCsvFile = async (event) => {
@@ -946,10 +1019,11 @@
                 if (!file) return;
                 setIsImportingPlayers(true);
                 setImportSummary('');
+                setPlayerImportRows(null);
                 try {
                     const content = await file.text();
-                    const summary = await importPlayersFromCsv(content);
-                    setImportSummary(summary);
+                    const rows = parsePlayerImportRows(content, players);
+                    setPlayerImportRows(rows);
                 } catch (err) {
                     alert('Import failed: ' + err.message);
                 } finally {
@@ -958,6 +1032,110 @@
                 }
             };
 
+            const updatePlayerImportRow = (index, changes) => {
+                setPlayerImportRows(prev => {
+                    if (!prev) return prev;
+                    return prev.map((row, idx) => idx === index ? { ...row, ...changes } : row);
+                });
+            };
+
+            const addPositionToImportRow = (index, code) => {
+                if (!code) return;
+                const normalized = normalizePositionToken(code);
+                if (!normalized) return;
+                setPlayerImportRows(prev => {
+                    if (!prev) return prev;
+                    return prev.map((row, idx) => {
+                        if (idx !== index) return row;
+                        if (row.selectedPositions.includes(normalized)) {
+                            return { ...row, customPositionInput: '' };
+                        }
+                        return {
+                            ...row,
+                            selectedPositions: [...row.selectedPositions, normalized],
+                            customPositionInput: ''
+                        };
+                    });
+                });
+            };
+
+            const removePositionFromImportRow = (index, code) => {
+                if (!code) return;
+                const normalized = normalizePositionToken(code);
+                if (!normalized) return;
+                setPlayerImportRows(prev => {
+                    if (!prev) return prev;
+                    return prev.map((row, idx) => {
+                        if (idx !== index) return row;
+                        return { ...row, selectedPositions: row.selectedPositions.filter(pos => pos !== normalized) };
+                    });
+                });
+            };
+
+            const togglePlayerImportRowDrop = (index) => {
+                setPlayerImportRows(prev => {
+                    if (!prev) return prev;
+                    return prev.map((row, idx) => idx === index ? { ...row, drop: !row.drop } : row);
+                });
+            };
+
+            const cancelPlayerImport = () => {
+                setPlayerImportRows(null);
+            };
+
+            const confirmPlayerImport = async () => {
+                if (!playerImportRows) return;
+                const rows = playerImportRows.filter(row => !row.drop);
+                if (!rows.length) {
+                    setPlayerImportRows(null);
+                    return;
+                }
+                const missing = rows.filter(row => row.selectedPositions.length === 0);
+                if (missing.length) {
+                    alert('Each row must have at least one selected position.');
+                    return;
+                }
+                const existingPlayers = await db.players.toArray();
+                const nameIndex = {};
+                existingPlayers.forEach(player => {
+                    const key = sanitizeNameKey(`${player.firstName} ${player.lastName}`);
+                    if (key) nameIndex[key] = player;
+                });
+                let created = 0;
+                let updated = 0;
+                for (const row of rows) {
+                    const key = sanitizeNameKey(`${row.firstName} ${row.lastName}`);
+                    const existing = row.matchedPlayerId ? existingPlayers.find(p => String(p.id) === row.matchedPlayerId) : (key ? nameIndex[key] : null);
+                    const positionsText = row.selectedPositions.join(', ');
+                    const primaryPosition = row.selectedPositions[0] || existing?.position || 'MID';
+                    const preferredPosition = row.selectedPositions[1] || existing?.preferredPosition || primaryPosition;
+                    const currentRaw = (row.currentPlayer || '').toLowerCase();
+                    const hasCurrent = row.currentPlayer !== undefined && row.currentPlayer !== '';
+                    const isActive = hasCurrent ? CURRENT_PLAYER_TRUE.has(currentRaw) : (existing?.isActive !== false);
+                    const payload = {
+                        firstName: row.firstName,
+                        lastName: row.lastName,
+                        position: primaryPosition,
+                        preferredPosition,
+                        phone: overrideIfValue(row.record.phone, existing?.phone || ''),
+                        age: row.record.age ? Number(row.record.age) : (existing?.age ?? null),
+                        dateOfBirth: overrideIfValue(row.record.dateOfBirth, existing?.dateOfBirth || ''),
+                        positions: positionsText,
+                        shirtNumber: overrideIfValue(row.record.shirtNumber, existing?.shirtNumber || ''),
+                        isActive
+                    };
+                    if (existing) {
+                        await db.players.update(existing.id, payload);
+                        updated++;
+                    } else {
+                        await db.players.add(payload);
+                        created++;
+                    }
+                }
+                refresh();
+                setPlayerImportRows(null);
+                setImportSummary(`Imported ${created} new player${created === 1 ? '' : 's'} · updated ${updated} record${updated === 1 ? '' : 's'}.`);
+            };
             const topDebtors = useMemo(() => {
                 return [...players]
                     .map(p => ({ ...p, balance: balances[p.id] || 0 }))
@@ -965,6 +1143,7 @@
                     .sort((a,b) => a.balance - b.balance)
                     .slice(0, 5);
             }, [players, balances]);
+            const selectedPlayerPositions = selectedPlayer ? collectPlayerPositions(selectedPlayer) : [];
 
             const generateWallImage = () => {
                 const canvas = document.createElement('canvas');
@@ -1149,9 +1328,36 @@
                                     {selectedPlayer.phone && <div>Phone: {selectedPlayer.phone}</div>}
                                     {selectedPlayer.age && <div>Age: {selectedPlayer.age}</div>}
                                     {selectedPlayer.dateOfBirth && <div>Date of Birth: {selectedPlayer.dateOfBirth}</div>}
-                                    {(selectedPlayer.positions || selectedPlayer.position) && (
-                                        <div>Available Positions: {selectedPlayer.positions || selectedPlayer.position}</div>
-                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Available Positions</div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {selectedPlayerPositions.length ? selectedPlayerPositions.map(pos => {
+                                            const def = positionDefinitions.find(d => d.code === pos);
+                                            const label = def ? `${def.code} · ${def.label}` : pos;
+                                            return (
+                                                <span key={`player-pos-${selectedPlayer.id}-${pos}`} className="flex items-center gap-2 text-[11px] px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700">
+                                                    <span>{label}</span>
+                                                    <button onClick={() => removePositionFromPlayer(pos)} className="text-rose-600 font-bold">✕</button>
+                                                </span>
+                                            );
+                                        }) : (
+                                            <span className="text-[11px] text-slate-400">No additional positions recorded.</span>
+                                        )}
+                                    </div>
+                                    <div className="grid sm:grid-cols-3 gap-2">
+                                        <select className="bg-white border border-slate-200 rounded-lg p-2 text-sm" value={playerPositionSelection} onChange={e => setPlayerPositionSelection(e.target.value)}>
+                                            <option value="">Add position</option>
+                                            {positionDefinitions.map(def => (
+                                                <option key={`player-def-${def.code}`} value={def.code}>{def.code} · {def.label}</option>
+                                            ))}
+                                        </select>
+                                        <button onClick={() => addPositionToPlayer(playerPositionSelection)} className="bg-slate-900 text-white text-xs font-bold rounded-lg px-3 py-2">Add</button>
+                                        <div className="flex gap-2">
+                                            <input value={playerCustomPositionInput} onChange={e => setPlayerCustomPositionInput(e.target.value)} placeholder="Custom code" className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" />
+                                            <button onClick={() => addPositionToPlayer(playerCustomPositionInput)} className="bg-emerald-600 text-white text-xs font-bold rounded-lg px-3 py-2">Add</button>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className="grid grid-cols-3 gap-2">
@@ -1289,6 +1495,77 @@
                         </div>
                     </Modal>
                     <input type="file" ref={importInputRef} accept=".csv,text/csv" className="hidden" onChange={handlePlayerCsvFile} />
+                    <Modal isOpen={Boolean(playerImportRows && playerImportRows.length)} onClose={() => setPlayerImportRows(null)} title="Review player import">
+                        {playerImportRows ? (
+                            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+                                {playerImportRows.map((row, idx) => (
+                                    <div key={row.id} className={`p-3 rounded-xl border ${row.drop ? 'border-slate-200 bg-slate-50' : row.needsReview ? 'border-amber-200 bg-amber-50/60' : 'border-slate-100 bg-white'} space-y-2`}>
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div>
+                                                <div className="text-sm font-bold text-slate-900">{row.fullName}</div>
+                                                <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
+                                                    {row.record.phone && <span>Phone: {row.record.phone}</span>}
+                                                    {row.record.age && <span>Age: {row.record.age}</span>}
+                                                    {row.record.positionText && <span>Imported: {row.record.positionText}</span>}
+                                                    {row.record.shirtNumber && <span>Shirt #: {row.record.shirtNumber}</span>}
+                                                </div>
+                                            </div>
+                                            <button onClick={() => togglePlayerImportRowDrop(idx)} className={`text-[11px] font-bold px-3 py-1 rounded-full border ${row.drop ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                                {row.drop ? 'Ignored' : 'Ignore'}
+                                            </button>
+                                        </div>
+                                        <div className="text-[11px] text-slate-500">Match this row to a player and choose their available positions before importing.</div>
+                                        <div className="space-y-2">
+                                            <div className="flex flex-wrap gap-2">
+                                                {positionDefinitions.map(def => {
+                                                    const active = row.selectedPositions.includes(def.code);
+                                                    return (
+                                                        <button key={`${row.id}-pos-${def.code}`} onClick={() => active ? removePositionFromImportRow(idx, def.code) : addPositionToImportRow(idx, def.code)}
+                                                            className={`text-[11px] font-bold px-3 py-1 rounded-full border ${active ? 'bg-brand-600 text-white border-brand-600' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                                            {def.code} · {def.label}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <input value={row.customPositionInput || ''} onChange={e => updatePlayerImportRow(idx, { customPositionInput: e.target.value })} placeholder="Custom position" className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" />
+                                                <button onClick={() => addPositionToImportRow(idx, row.customPositionInput)} className="px-3 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold">Add</button>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2 text-[11px] text-slate-500">
+                                                {row.selectedPositions.map(pos => (
+                                                    <span key={`${row.id}-selected-${pos}`} className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">{pos}</span>
+                                                ))}
+                                            </div>
+                                            <div className="flex flex-col gap-2">
+                                                <select className="bg-white border border-slate-200 rounded-lg p-2 text-sm" value={row.matchedPlayerId || ''} onChange={e => updatePlayerImportRow(idx, { matchedPlayerId: e.target.value || null })}>
+                                                    <option value="">Assign player</option>
+                                                    {row.suggestions?.map((sugg, sIdx) => (
+                                                        <option key={`sugg-${idx}-${sIdx}`} value={String(sugg.player.id)}>
+                                                            {sugg.player.firstName} {sugg.player.lastName} ({Math.round(sugg.score * 100)}%)
+                                                        </option>
+                                                    ))}
+                                                    <optgroup label="All players">
+                                                        {players.map(player => (
+                                                            <option key={`all-${idx}-${player.id}`} value={String(player.id)}>{player.firstName} {player.lastName}</option>
+                                                        ))}
+                                                    </optgroup>
+                                                </select>
+                                                {row.suggestions && row.suggestions[0] && (
+                                                    <div className="text-[11px] text-slate-400">Nearest match: {row.suggestions[0].player.firstName} {row.suggestions[0].player.lastName} ({Math.round(row.suggestions[0].score * 100)}%)</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                                <div className="flex gap-2 sticky bottom-0 bg-white/80 backdrop-blur-sm pt-2">
+                                    <button onClick={cancelPlayerImport} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
+                                    <button onClick={confirmPlayerImport} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg">Import {playerImportRows.filter(row => !row.drop).length} rows</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-sm text-slate-500">Parsing import rows…</div>
+                        )}
+                    </Modal>
 
                 </div>
             );
@@ -3999,7 +4276,7 @@
                 </div>
             );
         };
-        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, hideHeader = false }) => {
+        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, hideHeader = false }) => {
             const [newCat, setNewCat] = useState('');
             const [newItemCat, setNewItemCat] = useState('');
             const importInputRef = useRef(null);
@@ -4011,6 +4288,14 @@
             const [legacyImporting, setLegacyImporting] = useState(false);
             const [legacyPreview, setLegacyPreview] = useState([]);
             const [fixtures, setFixtures] = useState([]);
+            const [newPositionCode, setNewPositionCode] = useState('');
+            const [newPositionLabel, setNewPositionLabel] = useState('');
+            const positionImportRef = useRef(null);
+            const [positionImporting, setPositionImporting] = useState(false);
+            const [positionReassignModal, setPositionReassignModal] = useState({ open: false, code: '', count: 0, players: [] });
+            const [positionReassignChoice, setPositionReassignChoice] = useState('');
+            const [positionReassignNew, setPositionReassignNew] = useState('');
+            const [positionReassignNewLabel, setPositionReassignNewLabel] = useState('');
 
             useEffect(() => {
                 const loadFixtures = async () => {
@@ -4051,6 +4336,119 @@
                 if(allTx.length) await db.transactions.bulkPut(allTx.map(t => ({ ...t, archivedAt: ts, seasonTag: '24/25' })));
                 localStorage.setItem('gaffer:lastArchive', ts);
                 alert('Season archived. New year ready.');
+            };
+
+            const handleExportPositions = () => {
+                const stamp = new Date().toISOString().split('T')[0];
+                const blob = new Blob([JSON.stringify(positionDefinitions, null, 2)], { type: 'application/json' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `gaffer-positions-${stamp}.json`;
+                link.click();
+            };
+
+            const handlePositionImport = async (file) => {
+                if(!file) return;
+                if(!confirm('Importing positions will replace the current list. Continue?')) {
+                    if(positionImportRef.current) positionImportRef.current.value = '';
+                    return;
+                }
+                setPositionImporting(true);
+                try {
+                    const text = await file.text();
+                    const parsed = JSON.parse(text);
+                    if(!Array.isArray(parsed)) throw new Error('Expected an array of position definitions.');
+                    const seen = new Set();
+                    const imported = [];
+                    parsed.forEach(item => {
+                        const code = (item.code || '').toUpperCase().trim();
+                        const label = (item.label || '').trim();
+                        if(!code || !label || seen.has(code)) return;
+                        seen.add(code);
+                        imported.push({ code, label });
+                    });
+                    if(!imported.length) throw new Error('No valid positions found.');
+                    setPositionDefinitions(imported);
+                } catch (err) {
+                    alert('Positions import failed: ' + err.message);
+                } finally {
+                    setPositionImporting(false);
+                    if(positionImportRef.current) positionImportRef.current.value = '';
+                }
+            };
+
+            const handleAddPositionDefinition = () => {
+                const code = (newPositionCode || '').toUpperCase().trim();
+                const label = (newPositionLabel || '').trim();
+                if(!code || !label) {
+                    alert('Enter both code and definition.');
+                    return;
+                }
+                if(positionDefinitions.some(def => def.code === code)) {
+                    alert('Position code already exists.');
+                    return;
+                }
+                setPositionDefinitions([...positionDefinitions, { code, label }]);
+                setNewPositionCode('');
+                setNewPositionLabel('');
+            };
+
+            const editPositionDefinition = (code) => {
+                const existing = positionDefinitions.find(def => def.code === code);
+                if(!existing) return;
+                const label = prompt('Edit definition', existing.label);
+                if(!label) return;
+                setPositionDefinitions(positionDefinitions.map(def => def.code === code ? { ...def, label: label.trim() } : def));
+            };
+
+            const prepareDeletePositionDefinition = async (code) => {
+                const players = await db.players.toArray();
+                const referencing = players.filter(player => collectPlayerPositions(player).includes(code));
+                if(referencing.length) {
+                    const fallback = positionDefinitions.find(def => def.code !== code)?.code || '';
+                setPositionReassignChoice(fallback);
+                setPositionReassignModal({ open: true, code, count: referencing.length, players: referencing });
+                setPositionReassignNew('');
+                setPositionReassignNewLabel('');
+                return;
+            }
+            setPositionDefinitions(positionDefinitions.filter(def => def.code !== code));
+            };
+
+            const applyPositionReassignment = async () => {
+                const { code, players } = positionReassignModal;
+                if(!code) return;
+                const fallback = positionReassignChoice === '__new__' ? (positionReassignNew || '').toUpperCase().trim() : positionReassignChoice;
+                if(!fallback) {
+                    alert('Provide a fallback position.');
+                    return;
+                }
+                const fallbackLabel = positionReassignChoice === '__new__'
+                    ? (positionReassignNewLabel || fallback)
+                    : (positionDefinitions.find(def => def.code === fallback)?.label || fallback);
+                let updatedDefinitions = positionDefinitions;
+                if(!updatedDefinitions.some(def => def.code === fallback)) {
+                    updatedDefinitions = [...updatedDefinitions, { code: fallback, label: fallbackLabel }];
+                    setPositionDefinitions(updatedDefinitions);
+                }
+                await Promise.all(players.map(player => {
+                    const current = collectPlayerPositions(player).filter(pos => pos !== code);
+                    if(fallback) current.push(fallback);
+                    const payload = { positions: current.join(', ') };
+                    if(player.position === code) payload.position = fallback;
+                    if(player.preferredPosition === code) payload.preferredPosition = fallback;
+                    return db.players.update(player.id, payload);
+                }));
+                setPositionDefinitions(updatedDefinitions.filter(def => def.code !== code));
+                setPositionReassignModal({ open: false, code: '', count: 0, players: [] });
+                setPositionReassignChoice('');
+                setPositionReassignNew('');
+                setPositionReassignNewLabel('');
+            };
+
+            const resetPositionDefinitions = () => {
+                if(!confirm('Reset positions to defaults? This replaces the current list.')) return;
+                setPositionDefinitions([...DEFAULT_POSITION_DEFINITIONS]);
             };
 
             const addCategory = () => {
@@ -4551,6 +4949,33 @@
                         </p>
                     </div>
 
+                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Position Definitions</div>
+                        <div className="flex flex-wrap gap-2">
+                            {positionDefinitions.map(def => (
+                                <div key={def.code} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
+                                    <span>{def.code} · {def.label}</span>
+                                    <button onClick={() => editPositionDefinition(def.code)} className="text-brand-600 underline">Edit</button>
+                                    <button onClick={() => prepareDeletePositionDefinition(def.code)} className="text-rose-600">✕</button>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Code (e.g. CM)" value={newPositionCode} onChange={e => setNewPositionCode(e.target.value)} />
+                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Definition" value={newPositionLabel} onChange={e => setNewPositionLabel(e.target.value)} />
+                        </div>
+                        <button onClick={handleAddPositionDefinition} className="bg-slate-900 text-white font-bold rounded-lg px-4 py-2">Add position</button>
+                        <div className="flex flex-wrap gap-2 items-center text-[11px] text-slate-500">
+                            <button onClick={handleExportPositions} className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 font-bold">Export definitions</button>
+                            <button onClick={() => positionImportRef.current?.click()} className={`px-3 py-2 rounded-lg font-bold ${positionImporting ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'}`} disabled={positionImporting}>
+                                {positionImporting ? 'Importing…' : 'Import definitions'}
+                            </button>
+                            <button onClick={resetPositionDefinitions} className="px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 font-bold">Reset to defaults</button>
+                        </div>
+                        <input type="file" accept="application/json" ref={positionImportRef} className="hidden" onChange={e => handlePositionImport(e.target.files?.[0])} />
+                        <div className="text-[11px] text-slate-400">Positions define the master codes you can assign to players. Delete carefully; linked players will be asked to reassign.</div>
+                    </div>
+
                     {/* Opponents and Venues moved to dedicated tab */}
                     <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Player Item Categories</div>
@@ -4754,6 +5179,7 @@
             const [venues, setVenues] = useState([]);
             const [referees, setReferees] = useState([]);
             const [refDefaults, setRefDefaults] = useState(loadRefDefaults());
+            const [positionDefinitions, setPositionDefinitions] = useState(loadPositionDefinitions());
             const [kitDetails, setKitDetails] = useState(loadKitDetails());
             const [kitQueue, setKitQueue] = useState(loadKitQueue());
             const [kitNumberLimit, setKitNumberLimit] = useState(loadKitNumberLimit());
@@ -4792,6 +5218,10 @@
                 persistKitDetails(kitDetails);
             }, [kitDetails]);
 
+            useEffect(() => {
+                persistPositionDefinitions(positionDefinitions);
+            }, [positionDefinitions]);
+
             return (
                 <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-brand-100 selection:text-brand-900 relative overflow-hidden">
                     <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0">
@@ -4803,14 +5233,45 @@
                         {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
                         {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
                         {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
-                        {activeTab === 'players' && <Players itemCategories={itemCategories} />}
+                        {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} />}
                         {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
                         {activeTab === 'kit' && <Kit kitDetails={kitDetails} setKitDetails={setKitDetails} kitQueue={kitQueue} setKitQueue={setKitQueue} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} onNavigate={setActiveTab} />}
                     </main>
                     
                     <Nav activeTab={activeTab} setTab={setActiveTab} />
                     <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="Settings">
-                        <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} />
+                        <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} />
+                    </Modal>
+
+                    <Modal isOpen={positionReassignModal.open} onClose={() => { setPositionReassignModal({ open:false, code:'', count:0, players: [] }); setPositionReassignChoice(''); setPositionReassignNew(''); setPositionReassignNewLabel(''); }} title="Reassign Position">
+                        <div className="space-y-3">
+                            <div className="text-sm text-slate-600">"{positionReassignModal.code}" is used by {positionReassignModal.count} player{positionReassignModal.count === 1 ? '' : 's'}. Choose a replacement to move them to before deleting the code.</div>
+                            {positionReassignModal.players.length > 0 && (
+                                <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
+                                    {positionReassignModal.players.slice(0, 5).map(player => (
+                                        <span key={`reassign-player-${player.id}`} className="px-2 py-1 rounded-full bg-slate-50 border border-slate-100">{player.firstName} {player.lastName}</span>
+                                    ))}
+                                    {positionReassignModal.count > 5 && <span className="px-2 py-1 rounded-full bg-slate-50 border border-slate-100">+{positionReassignModal.count - 5} more</span>}
+                                </div>
+                            )}
+                            <select className="w-full bg-white border border-slate-200 rounded-lg p-3 text-sm" value={positionReassignChoice} onChange={e => setPositionReassignChoice(e.target.value)}>
+                                <option value="">Select fallback position</option>
+                                {positionDefinitions.filter(def => def.code !== positionReassignModal.code).map(def => (
+                                    <option key={`fallback-${def.code}`} value={def.code}>{def.code} · {def.label}</option>
+                                ))}
+                                <option value="__new__">Create new position...</option>
+                            </select>
+                            {positionReassignChoice === '__new__' && (
+                                <div className="grid grid-cols-2 gap-2">
+                                    <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" placeholder="New code (e.g. RM)" value={positionReassignNew} onChange={e => setPositionReassignNew(e.target.value)} />
+                                    <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" placeholder="Label/definition" value={positionReassignNewLabel} onChange={e => setPositionReassignNewLabel(e.target.value)} />
+                                </div>
+                            )}
+                            <div className="flex gap-2">
+                                <button onClick={() => { setPositionReassignModal({ open:false, code:'', count:0, players: [] }); setPositionReassignChoice(''); setPositionReassignNew(''); setPositionReassignNewLabel(''); }} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
+                                <button onClick={applyPositionReassignment} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg disabled:opacity-60">Reassign & Delete</button>
+                            </div>
+                        </div>
                     </Modal>
                 </div>
             );
