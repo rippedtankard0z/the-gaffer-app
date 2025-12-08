@@ -1643,9 +1643,6 @@
                                             </span>
                                         )}
                                         {bal >= 0 && <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md">Paid</span>}
-                                        <button type="button" onClick={(e) => { e.stopPropagation(); handleDeletePlayer(p); }} className="text-[10px] font-bold px-2 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 focus-visible:outline-none">
-                                            Delete
-                                        </button>
                                         <Icon name="ChevronRight" size={16} className="text-slate-300" />
                                     </div>
                                 </button>
@@ -1661,14 +1658,6 @@
                                 value={newPlayer.firstName} onChange={e => setNewPlayer({...newPlayer, firstName: e.target.value})} />
                             <input required placeholder="Last Name" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                 value={newPlayer.lastName} onChange={e => setNewPlayer({...newPlayer, lastName: e.target.value})} />
-                            <div className="grid grid-cols-4 gap-2">
-                                {['GK', 'DEF', 'MID', 'FWD'].map(pos => (
-                                    <button type="button" key={pos} onClick={() => setNewPlayer({...newPlayer, position: pos})}
-                                        className={`p-2 rounded-lg text-sm font-bold border ${newPlayer.position === pos ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-slate-200 text-slate-600'}`}>{pos}</button>
-                                ))}
-                            </div>
-                            <input placeholder="Preferred Position" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
-                                value={newPlayer.preferredPosition} onChange={e => setNewPlayer({...newPlayer, preferredPosition: e.target.value})} />
                             <div className="grid grid-cols-2 gap-3">
                                 <input placeholder="Phone Number" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                     value={newPlayer.phone} onChange={e => setNewPlayer({...newPlayer, phone: e.target.value})} />
@@ -5742,4 +5731,3 @@
     </script>
 </body>
 </html>
- 
