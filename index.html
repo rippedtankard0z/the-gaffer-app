@@ -377,19 +377,10 @@
             return Number.isNaN(num) ? fallback : num;
         };
 
-        const KIT_ASSIGNMENTS_KEY = 'gaffer:kitAssignments';
         const KIT_QUEUE_KEY = 'gaffer:kitQueue';
         const KIT_NUMBER_LIMIT_KEY = 'gaffer:kitNumberLimit';
+        const KIT_DETAILS_KEY = 'gaffer:kitDetails';
         const DEFAULT_KIT_NUMBER_LIMIT = 50;
-
-        const loadKitAssignments = () => {
-            const data = readStorageJSON(KIT_ASSIGNMENTS_KEY, []);
-            return Array.isArray(data) ? data : [];
-        };
-
-        const persistKitAssignments = (list) => {
-            writeStorageJSON(KIT_ASSIGNMENTS_KEY, list);
-        };
 
         const loadKitQueue = () => {
             const data = readStorageJSON(KIT_QUEUE_KEY, []);
@@ -398,6 +389,78 @@
 
         const persistKitQueue = (queue) => {
             writeStorageJSON(KIT_QUEUE_KEY, queue);
+        };
+
+        const loadKitDetails = () => {
+            const data = readStorageJSON(KIT_DETAILS_KEY, []);
+            return Array.isArray(data) ? data : [];
+        };
+
+        const persistKitDetails = (details) => {
+            writeStorageJSON(KIT_DETAILS_KEY, details);
+        };
+
+        const KIT_DETAIL_HEADER_MAP = {
+            'player name': 'playerName',
+            'kit arrived': 'kitArrived',
+            'shirt size': 'shirtSize',
+            'short size': 'shortSize',
+            'writing on back of shirt': 'writingOnBack',
+            'paid?': 'paid',
+            'number free': 'numberFree',
+            'number assigned': 'numberAssigned'
+        };
+
+        const parseKitCsv = (text, players) => {
+            const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
+            if (lines.length < 2) throw new Error('Kit CSV needs a header row and at least one entry.');
+            const headers = splitCsvLine(lines[0]);
+            const headerMap = {};
+            headers.forEach((hdr, idx) => {
+                const key = (hdr || '').toLowerCase().trim();
+                if (!key) return;
+                if (key === 'number requested') {
+                    if (headerMap.numberRequested === undefined) headerMap.numberRequested = idx;
+                    else if (headerMap.numberRequestedAlt === undefined) headerMap.numberRequestedAlt = idx;
+                    return;
+                }
+                if (KIT_DETAIL_HEADER_MAP[key]) {
+                    headerMap[KIT_DETAIL_HEADER_MAP[key]] = idx;
+                }
+            });
+            if (headerMap.playerName === undefined) throw new Error('Kit data must include "Player Name" column.');
+
+            const entries = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = splitCsvLine(lines[i]);
+                const rawName = (values[headerMap.playerName] || '').trim();
+                if (!rawName) continue;
+                const fields = {
+                    kitArrived: (values[headerMap.kitArrived] || '').trim(),
+                    shirtSize: (values[headerMap.shirtSize] || '').trim(),
+                    numberRequested: (values[headerMap.numberRequested] || '').trim(),
+                    shortSize: (values[headerMap.shortSize] || '').trim(),
+                    writingOnBack: (values[headerMap.writingOnBack] || '').trim(),
+                    paid: (values[headerMap.paid] || '').trim(),
+                    numberFree: (values[headerMap.numberFree] || '').trim(),
+                    numberRequestedAlt: (values[headerMap.numberRequestedAlt] || '').trim(),
+                    numberAssigned: (values[headerMap.numberAssigned] || '').trim()
+                };
+                const suggestions = suggestPlayers(rawName, players, 4);
+                const best = suggestions[0];
+                const matchedPlayerId = best && best.score >= 0.65 ? String(best.player.id) : null;
+                entries.push({
+                    id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2,6)}`,
+                    playerName: rawName,
+                    matchedPlayerId,
+                    suggestions,
+                    needsReview: !matchedPlayerId,
+                    fields,
+                    drop: false
+                });
+            }
+            if (!entries.length) throw new Error('No kit entries detected after parsing the file.');
+            return entries;
         };
 
         const loadKitNumberLimit = () => {
@@ -3049,20 +3112,23 @@
             );
         };
         // --- DASHBOARD MODULE ---
-        const Dashboard = ({ onNavigate, kitAssignments = [], kitQueue = [], kitNumberLimit = DEFAULT_KIT_NUMBER_LIMIT, onOpenSettings = () => {} }) => {
+        const Dashboard = ({ onNavigate, kitDetails = [], kitQueue = [], kitNumberLimit = DEFAULT_KIT_NUMBER_LIMIT, onOpenSettings = () => {} }) => {
             const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [], outstanding: { receivable: 0, payable: 0 } });
             const [nextFixture, setNextFixture] = useState(null);
             const [lastResult, setLastResult] = useState(null);
             const kitOverview = useMemo(() => {
                 const limit = Math.max(1, Number(kitNumberLimit) || DEFAULT_KIT_NUMBER_LIMIT);
-                const available = Math.max(0, limit - kitAssignments.length);
+                const assignedNumbers = new Set(kitDetails
+                    .map(detail => Number(detail.numberAssigned))
+                    .filter(num => !Number.isNaN(num) && num > 0));
+                const available = Math.max(0, limit - assignedNumbers.size);
                 return {
-                    holders: kitAssignments.length,
+                    holders: kitDetails.length,
                     queue: kitQueue.length,
                     range: `1-${limit}`,
                     available
                 };
-            }, [kitAssignments, kitQueue, kitNumberLimit]);
+            }, [kitDetails, kitQueue, kitNumberLimit]);
 
             useEffect(() => {
                 const load = async () => {
@@ -3583,8 +3649,8 @@
         };
 
         const Kit = ({
-            kitAssignments = [],
-            setKitAssignments,
+            kitDetails = [],
+            setKitDetails,
             kitQueue = [],
             setKitQueue,
             kitNumberLimit,
@@ -3592,10 +3658,11 @@
             onNavigate = () => {}
         }) => {
             const [players, setPlayers] = useState([]);
-            const [selectedPlayerId, setSelectedPlayerId] = useState('');
-            const [selectedNumber, setSelectedNumber] = useState('');
-            const [notes, setNotes] = useState('');
             const [queueCandidate, setQueueCandidate] = useState('');
+            const [kitImportRows, setKitImportRows] = useState(null);
+            const [kitImportMessage, setKitImportMessage] = useState('');
+            const [isImportingKit, setIsImportingKit] = useState(false);
+            const importInputRef = useRef(null);
 
             useEffect(() => {
                 let mounted = true;
@@ -3604,7 +3671,6 @@
                     const list = await db.players.orderBy('firstName').toArray();
                     if (!mounted) return;
                     setPlayers(list);
-                    setSelectedPlayerId(prev => prev || (list[0] ? String(list[0].id) : ''));
                 };
                 loadPlayers();
                 const handler = (e) => {
@@ -3627,67 +3693,124 @@
                 }, {});
             }, [players]);
 
-            const sortedAssignments = useMemo(() => {
-                return [...kitAssignments].sort((a, b) => {
-                    const na = Number(a.number || 0);
-                    const nb = Number(b.number || 0);
-                    return na - nb;
+            const kitEntries = useMemo(() => {
+                return [...kitDetails].sort((a, b) => {
+                    const nameA = (a.playerName || '').toLowerCase();
+                    const nameB = (b.playerName || '').toLowerCase();
+                    return nameA.localeCompare(nameB);
                 });
-            }, [kitAssignments]);
+            }, [kitDetails]);
+
+            const assignedNumbers = useMemo(() => {
+                return new Set(
+                    kitDetails
+                        .map(detail => Number(detail.numberAssigned))
+                        .filter(num => !Number.isNaN(num) && num > 0)
+                );
+            }, [kitDetails]);
 
             const availableNumbers = useMemo(() => {
                 const limit = Math.max(1, Number(kitNumberLimit) || DEFAULT_KIT_NUMBER_LIMIT);
-                const taken = new Set(kitAssignments.map(a => String(a.number)).filter(Boolean));
                 const list = [];
                 for (let i = 1; i <= limit; i++) {
-                    if (!taken.has(String(i))) list.push(i);
+                    if (!assignedNumbers.has(i)) list.push(i);
                 }
                 return list;
-            }, [kitAssignments, kitNumberLimit]);
+            }, [assignedNumbers, kitNumberLimit]);
 
-            useEffect(() => {
-                if (!selectedNumber && availableNumbers.length) {
-                    setSelectedNumber(String(availableNumbers[0]));
-                }
-            }, [availableNumbers, selectedNumber]);
+            const queueOptions = useMemo(() => {
+                return players.filter(player => !kitQueue.includes(String(player.id)));
+            }, [players, kitQueue]);
 
-            const assignKit = () => {
-                if (!selectedPlayerId) {
-                    alert('Select a player to assign.');
-                    return;
-                }
-                const normalized = String(selectedNumber).trim();
-                if (!normalized) {
-                    alert('Enter a kit number.');
-                    return;
-                }
-                if (!/^\d+$/.test(normalized)) {
-                    alert('Kit number must be numeric.');
-                    return;
-                }
-                const conflict = kitAssignments.find(a => String(a.number) === normalized && a.playerId !== selectedPlayerId);
-                if (conflict) {
-                    alert('That number is already assigned.');
-                    return;
-                }
-                const existing = kitAssignments.find(a => a.playerId === selectedPlayerId);
-                const next = kitAssignments.filter(a => a.playerId !== selectedPlayerId);
-                next.push({
-                    id: existing ? existing.id : Date.now().toString(),
-                    playerId: selectedPlayerId,
-                    number: normalized,
-                    notes: notes.trim()
+            const queuePlayers = useMemo(() => {
+                return kitQueue.map(id => {
+                    const player = playerLookup[id];
+                    return player ? { ...player, id } : { id, firstName: 'Unknown', lastName: '' };
                 });
-                setKitAssignments(next);
-                setNotes('');
-                setSelectedNumber('');
+            }, [kitQueue, playerLookup]);
+
+            const handleKitCsvFile = async (event) => {
+                const file = event.target?.files?.[0];
+                if (!file) return;
+                setIsImportingKit(true);
+                setKitImportMessage('');
+                try {
+                    const text = await file.text();
+                    const rows = parseKitCsv(text, players);
+                    setKitImportRows(rows);
+                } catch (err) {
+                    alert('Kit import failed: ' + err.message);
+                } finally {
+                    setIsImportingKit(false);
+                    if (event.target) event.target.value = '';
+                }
             };
 
-            const removeAssignment = (id) => {
-                setKitAssignments(kitAssignments.filter(a => a.id !== id));
+            const updateImportRow = (index, changes) => {
+                setKitImportRows(prev => {
+                    if (!prev) return prev;
+                    return prev.map((row, idx) => {
+                        if (idx !== index) return row;
+                        const next = { ...row, ...changes };
+                        if (changes.matchedPlayerId !== undefined) {
+                            next.needsReview = !changes.matchedPlayerId;
+                        }
+                        if (next.drop) {
+                            next.needsReview = false;
+                        }
+                        return next;
+                    });
+                });
             };
 
-            const queueOptions = players.filter(player => !kitQueue.includes(String(player.id)));
+            const toggleImportRowDrop = (index) => {
+                setKitImportRows(prev => {
+                    if (!prev) return prev;
+                    return prev.map((row, idx) => {
+                        if (idx !== index) return row;
+                        const drop = !row.drop;
+                        return { ...row, drop, needsReview: drop ? false : !row.matchedPlayerId };
+                    });
+                });
+            };
+
+            const confirmKitImport = () => {
+                if (!kitImportRows) return;
+                const rows = kitImportRows.filter(row => !row.drop);
+                if (!rows.length) {
+                    setKitImportRows(null);
+                    return;
+                }
+                const missing = rows.filter(row => !row.matchedPlayerId);
+                if (missing.length) {
+                    alert('Assign a player to each row before importing.');
+                    return;
+                }
+                const replacedIds = new Set(rows.map(row => row.matchedPlayerId));
+                const remaining = kitDetails.filter(detail => !detail.playerId || !replacedIds.has(detail.playerId));
+                const newRecords = rows.map(row => {
+                    const player = playerLookup[row.matchedPlayerId];
+                    const resolvedName = player ? `${player.firstName} ${player.lastName}` : row.playerName;
+                    return {
+                        id: player ? `kit-${player.id}` : row.id,
+                        playerId: row.matchedPlayerId ? String(row.matchedPlayerId) : null,
+                        playerName: resolvedName,
+                        kitArrived: row.fields.kitArrived,
+                        shirtSize: row.fields.shirtSize,
+                        numberRequested: row.fields.numberRequested,
+                        shortSize: row.fields.shortSize,
+                        writingOnBack: row.fields.writingOnBack,
+                        paid: row.fields.paid,
+                        numberFree: row.fields.numberFree,
+                        numberRequestedAlt: row.fields.numberRequestedAlt,
+                        numberAssigned: row.fields.numberAssigned
+                    };
+                });
+                setKitDetails([...remaining, ...newRecords]);
+                setKitImportMessage(`Imported ${newRecords.length} kit record${newRecords.length === 1 ? '' : 's'}.`);
+                setKitImportRows(null);
+            };
+
             const addToQueue = () => {
                 if (!queueCandidate) {
                     alert('Choose a player to add to the next order.');
@@ -3710,64 +3833,57 @@
                 onNavigate('players');
             };
 
-            const queuePlayers = kitQueue.map(id => {
-                const player = playerLookup[id];
-                return player ? { ...player, id } : { id, firstName: 'Unknown', lastName: '' };
-            });
-
             const rangeLabel = `1-${Math.max(1, Number(kitNumberLimit) || DEFAULT_KIT_NUMBER_LIMIT)}`;
 
             return (
                 <div className="space-y-6 pb-28 animate-fade-in">
-                    <header className="px-1">
+                    <header className="px-1 space-y-1">
                         <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Kit</h1>
-                        <p className="text-slate-500 text-sm font-medium">Track who has gear and who needs it</p>
-                        <div className="text-[11px] text-slate-400 mt-2">Assign numbers, capture notes, and queue players for the next delivery.</div>
+                        <p className="text-slate-500 text-sm font-medium">List who has gear, what's free, and who's up next.</p>
+                        <div className="flex flex-wrap gap-2">
+                            <button onClick={() => importInputRef.current?.click()} className={`px-3 py-2 text-xs font-bold rounded-xl ${isImportingKit ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'}`} disabled={isImportingKit}>
+                                {isImportingKit ? 'Importing…' : 'Upload kit CSV'}
+                            </button>
+                            <span className="text-[11px] text-slate-400">Expect columns: Player Name, Kit arrived, Shirt Size, Number Requested, Short Size, Writing On Back Of Shirt, Paid?, Number Free, Number Requested, Number Assigned.</span>
+                        </div>
+                        {kitImportMessage && <p className="text-[11px] text-slate-500">{kitImportMessage}</p>}
                     </header>
 
                     <div className="space-y-4">
-                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-soft space-y-4">
+                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-soft space-y-3">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Assigned Kits</div>
-                                    <div className="text-[11px] text-slate-500">Tap a name to jump to the player card.</div>
+                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Players with kit</div>
+                                    <div className="text-[11px] text-slate-500">Tap a name to open the player card.</div>
                                 </div>
                                 <div className="text-[11px] px-2 py-1 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
-                                    {sortedAssignments.length} holder{sortedAssignments.length === 1 ? '' : 's'}
+                                    {kitEntries.length} holder{kitEntries.length === 1 ? '' : 's'}
                                 </div>
-                            </div>
-                            <div className="space-y-3">
-                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                                    <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={selectedPlayerId} onChange={e => setSelectedPlayerId(e.target.value)}>
-                                        <option value="">Select player</option>
-                                        {players.map(p => (
-                                            <option key={p.id} value={String(p.id)}>{p.firstName} {p.lastName}</option>
-                                        ))}
-                                    </select>
-                                    <input type="number" min="1" step="1" placeholder="Kit number" className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={selectedNumber} onChange={e => setSelectedNumber(e.target.value)} />
-                                </div>
-                                <textarea className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" rows={2} placeholder="Notes (optional)" value={notes} onChange={e => setNotes(e.target.value)} />
-                                <button onClick={assignKit} className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl text-sm">Save assignment</button>
                             </div>
                             <div className="space-y-2">
-                                {sortedAssignments.length ? sortedAssignments.map(assign => {
-                                    const player = playerLookup[String(assign.playerId)];
-                                    const label = player ? `${player.firstName} ${player.lastName}` : 'Player removed';
+                                {kitEntries.length ? kitEntries.map(detail => {
+                                    const playerLabel = detail.playerId ? `${(playerLookup[detail.playerId]?.firstName || '')} ${(playerLookup[detail.playerId]?.lastName || '')}`.trim() : detail.playerName;
+                                    const displayName = playerLabel || detail.playerName || 'Unknown player';
                                     return (
-                                        <div key={assign.id} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
-                                            <div>
-                                                <button onClick={() => player && openPlayer(String(player.id))} className="text-sm font-bold text-slate-900 hover:underline">
-                                                    {label}
-                                                </button>
-                                                <div className="text-[11px] text-slate-500">
-                                                    Number #{assign.number}{assign.notes ? ` · ${assign.notes}` : ''}
+                                        <button key={detail.id} onClick={() => detail.playerId && openPlayer(detail.playerId)} className="w-full text-left p-3 rounded-xl border border-slate-100 bg-slate-50 hover:border-brand-200 transition-colors">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div>
+                                                    <div className="text-sm font-bold text-slate-900">{displayName}</div>
+                                                    <div className="text-[11px] text-slate-500">Kit: {detail.kitArrived || 'Pending'} · Paid: {detail.paid || 'N/A'}</div>
+                                                </div>
+                                                <div className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                                    #{detail.numberAssigned || '—'}
                                                 </div>
                                             </div>
-                                            <button onClick={() => removeAssignment(assign.id)} className="text-[11px] font-bold text-rose-600 px-3 py-1 rounded-full border border-rose-200 bg-rose-50">Remove</button>
-                                        </div>
+                                            <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap gap-2">
+                                                {detail.shirtSize && <span>Shirt size: {detail.shirtSize}</span>}
+                                                {detail.shortSize && <span>Short size: {detail.shortSize}</span>}
+                                                {detail.writingOnBack && <span>Back name: {detail.writingOnBack}</span>}
+                                            </div>
+                                        </button>
                                     );
                                 }) : (
-                                    <div className="text-sm text-slate-400 text-center">No kits assigned yet.</div>
+                                    <div className="text-sm text-slate-400 text-center">No kit records yet. Upload using the button above.</div>
                                 )}
                             </div>
                         </div>
@@ -3793,7 +3909,7 @@
                                     </span>
                                 )}
                                 {!availableNumbers.length && (
-                                    <span className="text-xs font-bold text-slate-500">All numbers assigned</span>
+                                    <span className="text-xs font-bold text-slate-500">No free numbers</span>
                                 )}
                             </div>
                         </div>
@@ -3802,7 +3918,7 @@
                             <div className="flex items-center justify-between">
                                 <div>
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Next Order Queue</div>
-                                    <div className="text-[11px] text-slate-500">Add players who need gear in the next shipment.</div>
+                                    <div className="text-[11px] text-slate-500">Add players who still need kit.</div>
                                 </div>
                                 <div className="text-[11px] px-2 py-1 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
                                     {queuePlayers.filter(p => p.firstName).length} tracked
@@ -3829,6 +3945,57 @@
                             </div>
                         </div>
                     </div>
+
+                    <input type="file" ref={importInputRef} accept=".csv,text/csv" className="hidden" onChange={handleKitCsvFile} />
+
+                    <Modal isOpen={Boolean(kitImportRows && kitImportRows.length)} onClose={() => setKitImportRows(null)} title="Review kit import">
+                        {kitImportRows ? (
+                            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+                                {kitImportRows.map((row, idx) => (
+                                    <div key={row.id} className={`p-3 rounded-xl border ${row.drop ? 'border-slate-200 bg-slate-50' : row.needsReview ? 'border-amber-200 bg-amber-50/60' : 'border-slate-100 bg-white'} space-y-2`}>
+                                        <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 gap-2">
+                                            <input className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" value={row.playerName} onChange={e => updateImportRow(idx, { playerName: e.target.value })} placeholder="Name from sheet" />
+                                            <select className="w-40 bg-white border border-slate-200 rounded-lg p-2 text-sm" value={row.matchedPlayerId || ''} onChange={e => updateImportRow(idx, { matchedPlayerId: e.target.value || null })}>
+                                                <option value="">Assign player</option>
+                                                {row.suggestions?.map((sugg, i) => (
+                                                    <option key={`sugg-${idx}-${i}`} value={String(sugg.player.id)}>
+                                                        {sugg.player.firstName} {sugg.player.lastName} ({Math.round(sugg.score * 100)}%)
+                                                    </option>
+                                                ))}
+                                                <optgroup label="All players">
+                                                    {players.map(p => (
+                                                        <option key={`all-${p.id}`} value={String(p.id)}>{p.firstName} {p.lastName}</option>
+                                                    ))}
+                                                </optgroup>
+                                            </select>
+                                            <label className="text-[11px] text-slate-500 flex items-center gap-2">
+                                                <input type="checkbox" checked={row.drop} onChange={() => toggleImportRowDrop(idx)} />
+                                                Ignore
+                                            </label>
+                                        </div>
+                                        <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
+                                            {row.fields.kitArrived && <span>Kit: {row.fields.kitArrived}</span>}
+                                            {row.fields.shirtSize && <span>Shirt: {row.fields.shirtSize}</span>}
+                                            {row.fields.shortSize && <span>Shorts: {row.fields.shortSize}</span>}
+                                            {row.fields.writingOnBack && <span>Back: {row.fields.writingOnBack}</span>}
+                                            {row.fields.numberAssigned && <span>Assigned: {row.fields.numberAssigned}</span>}
+                                            {row.fields.numberRequested && <span>Requested: {row.fields.numberRequested}</span>}
+                                            {row.fields.paid && <span>Paid: {row.fields.paid}</span>}
+                                        </div>
+                                        {row.suggestions && row.suggestions[0] && !row.drop && (
+                                            <div className="text-[11px] text-slate-400">Nearest: {row.suggestions[0].player.firstName} {row.suggestions[0].player.lastName} ({Math.round(row.suggestions[0].score * 100)}%)</div>
+                                        )}
+                                    </div>
+                                ))}
+                                <div className="flex gap-2 sticky bottom-0 bg-white/80 backdrop-blur-sm pt-2">
+                                    <button onClick={cancelKitImport} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
+                                    <button onClick={confirmKitImport} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg">Import {kitImportRows.filter(r => !r.drop).length} rows</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-sm text-slate-500">Parsing kit import...</div>
+                        )}
+                    </Modal>
                 </div>
             );
         };
@@ -4587,7 +4754,7 @@
             const [venues, setVenues] = useState([]);
             const [referees, setReferees] = useState([]);
             const [refDefaults, setRefDefaults] = useState(loadRefDefaults());
-            const [kitAssignments, setKitAssignments] = useState(loadKitAssignments());
+            const [kitDetails, setKitDetails] = useState(loadKitDetails());
             const [kitQueue, setKitQueue] = useState(loadKitQueue());
             const [kitNumberLimit, setKitNumberLimit] = useState(loadKitNumberLimit());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -4614,16 +4781,16 @@
             }, []);
 
             useEffect(() => {
-                persistKitAssignments(kitAssignments);
-            }, [kitAssignments]);
-
-            useEffect(() => {
                 persistKitQueue(kitQueue);
             }, [kitQueue]);
 
             useEffect(() => {
                 persistKitNumberLimit(kitNumberLimit);
             }, [kitNumberLimit]);
+
+            useEffect(() => {
+                persistKitDetails(kitDetails);
+            }, [kitDetails]);
 
             return (
                 <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-brand-100 selection:text-brand-900 relative overflow-hidden">
@@ -4633,12 +4800,12 @@
                     </div>
 
                     <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
-                        {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitAssignments={kitAssignments} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
+                        {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
                         {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
                         {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
                         {activeTab === 'players' && <Players itemCategories={itemCategories} />}
                         {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
-                        {activeTab === 'kit' && <Kit kitAssignments={kitAssignments} setKitAssignments={setKitAssignments} kitQueue={kitQueue} setKitQueue={setKitQueue} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} onNavigate={setActiveTab} />}
+                        {activeTab === 'kit' && <Kit kitDetails={kitDetails} setKitDetails={setKitDetails} kitQueue={kitQueue} setKitQueue={setKitQueue} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} onNavigate={setActiveTab} />}
                     </main>
                     
                     <Nav activeTab={activeTab} setTab={setActiveTab} />
