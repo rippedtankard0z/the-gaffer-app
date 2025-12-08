@@ -4560,8 +4560,7 @@
                 const players = await db.players.toArray();
                 const referencing = players.filter(player => collectPlayerPositions(player).includes(code));
                 if (referencing.length) {
-                    const fallback = positionDefinitions.find(def => def.code !== code)?.code || '';
-                    setPositionReassignChoice(fallback);
+                    setPositionReassignChoice('none');
                     setPositionReassignModal({ open: true, code, count: referencing.length, players: referencing });
                     setPositionReassignNew('');
                     setPositionReassignNewLabel('');
@@ -4573,8 +4572,11 @@
             const applyPositionReassignment = async () => {
                 const { code, players } = positionReassignModal;
                 if(!code) return;
-                const fallback = positionReassignChoice === '__new__' ? (positionReassignNew || '').toUpperCase().trim() : positionReassignChoice;
-                if(!fallback) {
+                const isNone = positionReassignChoice === 'none';
+                const fallback = positionReassignChoice === '__new__'
+                    ? (positionReassignNew || '').toUpperCase().trim()
+                    : (isNone ? '' : positionReassignChoice);
+                if(!isNone && !fallback) {
                     alert('Provide a fallback position.');
                     return;
                 }
@@ -4582,7 +4584,7 @@
                     ? (positionReassignNewLabel || fallback)
                     : (positionDefinitions.find(def => def.code === fallback)?.label || fallback);
                 let updatedDefinitions = positionDefinitions;
-                if(!updatedDefinitions.some(def => def.code === fallback)) {
+                if(!isNone && !updatedDefinitions.some(def => def.code === fallback)) {
                     updatedDefinitions = [...updatedDefinitions, { code: fallback, label: fallbackLabel }];
                     setPositionDefinitions(updatedDefinitions);
                 }
@@ -4590,8 +4592,8 @@
                     const current = collectPlayerPositions(player).filter(pos => pos !== code);
                     if(fallback) current.push(fallback);
                     const payload = { positions: current.join(', ') };
-                    if(player.position === code) payload.position = fallback;
-                    if(player.preferredPosition === code) payload.preferredPosition = fallback;
+                    if(player.position === code) payload.position = fallback || null;
+                    if(player.preferredPosition === code) payload.preferredPosition = fallback || null;
                     return db.players.update(player.id, payload);
                 }));
                 setPositionDefinitions(updatedDefinitions.filter(def => def.code !== code));
@@ -5326,6 +5328,7 @@
                             <div className="text-sm text-slate-600">"{positionReassignModal.code}" is used by {positionReassignModal.count} player(s). Choose a fallback code or create a new one.</div>
                             <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={positionReassignChoice} onChange={e => setPositionReassignChoice(e.target.value)}>
                                 <option value="">Select fallback</option>
+                                <option value="none">None (remove code)</option>
                                 {positionDefinitions.filter(def => def.code !== positionReassignModal.code).map(def => (
                                     <option key={def.code} value={def.code}>{def.code} · {def.label}</option>
                                 ))}
