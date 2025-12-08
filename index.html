@@ -810,6 +810,7 @@
             const [sortPlayersBy, setSortPlayersBy] = useState('name');
             const [duplicatePairs, setDuplicatePairs] = useState([]);
             const [isDupModalOpen, setIsDupModalOpen] = useState(false);
+            const [duplicateDebug, setDuplicateDebug] = useState(null);
 
             const refresh = async () => {
                 await waitForDb();
@@ -1185,18 +1186,13 @@
                 return arr.sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
             }, [players, sortPlayersBy, balances]);
 
-            const findDuplicatePlayers = () => {
-                if (!players || players.length < 2) {
-                    alert('Load players first – no records to scan.');
-                    return;
-                }
-
+            const computeDuplicatePairs = (playerList) => {
                 const pairs = [];
                 const seenPairs = new Set();
 
                 // First pass: strict exact name match (sanitized)
                 const nameIndex = {};
-                players.forEach(p => {
+                playerList.forEach(p => {
                     const key = sanitizeNameKey(`${p.firstName} ${p.lastName}`);
                     if (!key) return;
                     if (nameIndex[key]) {
@@ -1213,9 +1209,9 @@
                 });
 
                 // Second pass: fuzzy similarity
-                for (let i = 0; i < players.length; i++) {
-                    for (let j = i + 1; j < players.length; j++) {
-                        const a = players[i], b = players[j];
+                for (let i = 0; i < playerList.length; i++) {
+                    for (let j = i + 1; j < playerList.length; j++) {
+                        const a = playerList[i], b = playerList[j];
                         const score = stringSimilarity(`${a.firstName} ${a.lastName}`, `${b.firstName} ${b.lastName}`);
                         if (score >= 0.86) {
                             const idKey = [a.id, b.id].sort().join('-');
@@ -1226,12 +1222,51 @@
                         }
                     }
                 }
+                return pairs;
+            };
 
-                setDuplicatePairs(pairs);
-                setIsDupModalOpen(true);
-                if (!pairs.length) {
-                    alert('No potential duplicates detected.');
+            const findDuplicatePlayers = () => {
+                if (!players || players.length < 2) {
+                    alert('Load players first – no records to scan.');
+                    return;
                 }
+
+                const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
+                try {
+                    const pairs = computeDuplicatePairs(players);
+                    const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
+                    setDuplicatePairs(pairs);
+                    setDuplicateDebug({
+                        playerCount: players.length,
+                        pairCount: pairs.length,
+                        elapsedMs: Math.round(elapsed),
+                        sample: pairs.slice(0, 3).map(p => ({
+                            a: `${p.a.firstName} ${p.a.lastName}`,
+                            b: `${p.b.firstName} ${p.b.lastName}`,
+                            score: Math.round(p.score * 100)
+                        }))
+                    });
+                    setIsDupModalOpen(true);
+                    if (!pairs.length) {
+                        alert('No potential duplicates detected.');
+                    }
+                } catch (err) {
+                    console.error('Duplicate scan failed', err);
+                    alert('Duplicate scan failed: ' + err.message);
+                }
+            };
+
+            const runDuplicateSelfTest = () => {
+                const samplePlayers = [
+                    { id: 1, firstName: 'John', lastName: 'Smith' },
+                    { id: 2, firstName: 'Jon', lastName: 'Smith' },
+                    { id: 3, firstName: 'Alice', lastName: 'Lee' },
+                    { id: 4, firstName: 'Alice', lastName: 'Li' },
+                    { id: 5, firstName: 'Bob', lastName: 'Brown' }
+                ];
+                const samplePairs = computeDuplicatePairs(samplePlayers);
+                console.log('Duplicate self-test sample', { samplePlayers, samplePairs });
+                alert(`Self-test complete. Found ${samplePairs.length} pair(s). See console for details.`);
             };
 
             const deletePlayerAndRelations = async (player) => {
@@ -1327,6 +1362,9 @@
                             </button>
                             <button onClick={findDuplicatePlayers} className="text-xs font-bold bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg border border-amber-100">
                                 Check duplicates
+                            </button>
+                            <button onClick={runDuplicateSelfTest} className="text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100">
+                                Debug scan
                             </button>
                             <button onClick={() => {
                                 const msg = players.map((p,i)=>`${i+1}. ${p.firstName} ${p.lastName}`).join('\n');
@@ -3014,6 +3052,22 @@
                     <Modal isOpen={isDupModalOpen} onClose={() => setIsDupModalOpen(false)} title="Potential duplicate players">
                         <div className="space-y-2 max-h-[60vh] overflow-y-auto">
                             {duplicatePairs.length === 0 && <div className="text-sm text-slate-500">No close matches found.</div>}
+                            {duplicateDebug && (
+                                <div className="p-2 rounded-lg border border-slate-200 bg-slate-50 text-[11px] text-slate-600">
+                                    <div className="font-bold text-slate-800 mb-1">Scan debug</div>
+                                    <div>Players scanned: {duplicateDebug.playerCount}</div>
+                                    <div>Pairs found: {duplicateDebug.pairCount}</div>
+                                    <div>Elapsed: {duplicateDebug.elapsedMs}ms</div>
+                                    {duplicateDebug.sample?.length ? (
+                                        <div className="mt-1">
+                                            Sample:
+                                            {duplicateDebug.sample.map((s, i) => (
+                                                <div key={i} className="text-slate-700">- {s.a} ↔ {s.b} ({s.score}%)</div>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            )}
                             {duplicatePairs.map((pair, idx) => (
                                 <div key={`dup-${idx}`} className="p-2 rounded-lg border border-slate-200 bg-slate-50 text-sm space-y-2">
                                     <div className="font-bold text-slate-900">{pair.a.firstName} {pair.a.lastName}</div>
