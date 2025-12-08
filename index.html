@@ -1200,6 +1200,19 @@
                 setIsDupModalOpen(true);
             };
 
+            const deletePlayerAndRelations = async (player) => {
+                if (!player) return;
+                const ok = confirm(`Delete ${player.firstName} ${player.lastName} and all linked games/payments? This cannot be undone.`);
+                if (!ok) return;
+                await db.participations.where('playerId').equals(player.id).delete();
+                await db.transactions.where('playerId').equals(player.id).delete();
+                await db.players.delete(player.id);
+                if (selectedPlayer && selectedPlayer.id === player.id) setSelectedPlayer(null);
+                setPlayers(prev => prev.filter(p => p.id !== player.id));
+                setDuplicatePairs(prev => prev.filter(pair => pair.a.id !== player.id && pair.b.id !== player.id));
+                refresh();
+            };
+
             const generateWallImage = () => {
                 const canvas = document.createElement('canvas');
                 canvas.width = 900;
@@ -2968,10 +2981,15 @@
                         <div className="space-y-2 max-h-[60vh] overflow-y-auto">
                             {duplicatePairs.length === 0 && <div className="text-sm text-slate-500">No close matches found.</div>}
                             {duplicatePairs.map((pair, idx) => (
-                                <div key={`dup-${idx}`} className="p-2 rounded-lg border border-slate-200 bg-slate-50 text-sm">
+                                <div key={`dup-${idx}`} className="p-2 rounded-lg border border-slate-200 bg-slate-50 text-sm space-y-2">
                                     <div className="font-bold text-slate-900">{pair.a.firstName} {pair.a.lastName}</div>
                                     <div className="font-bold text-slate-900">{pair.b.firstName} {pair.b.lastName}</div>
                                     <div className="text-[11px] text-slate-500">Similarity: {Math.round(pair.score * 100)}%</div>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => deletePlayerAndRelations(pair.a)} className="flex-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg px-3 py-2 text-[11px] font-bold">Delete {pair.a.firstName}</button>
+                                        <button onClick={() => deletePlayerAndRelations(pair.b)} className="flex-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg px-3 py-2 text-[11px] font-bold">Delete {pair.b.firstName}</button>
+                                    </div>
+                                    <div className="text-[10px] text-amber-700">We’ll remove linked games and payments for that player only.</div>
                                 </div>
                             ))}
                         </div>
