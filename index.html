@@ -4556,17 +4556,18 @@
             };
 
             const prepareDeletePositionDefinition = async (code) => {
+                await waitForDb();
                 const players = await db.players.toArray();
                 const referencing = players.filter(player => collectPlayerPositions(player).includes(code));
-                if(referencing.length) {
+                if (referencing.length) {
                     const fallback = positionDefinitions.find(def => def.code !== code)?.code || '';
-                setPositionReassignChoice(fallback);
-                setPositionReassignModal({ open: true, code, count: referencing.length, players: referencing });
-                setPositionReassignNew('');
-                setPositionReassignNewLabel('');
-                return;
-            }
-            setPositionDefinitions(positionDefinitions.filter(def => def.code !== code));
+                    setPositionReassignChoice(fallback);
+                    setPositionReassignModal({ open: true, code, count: referencing.length, players: referencing });
+                    setPositionReassignNew('');
+                    setPositionReassignNewLabel('');
+                    return;
+                }
+                setPositionDefinitions(prev => prev.filter(def => def.code !== code));
             };
 
             const applyPositionReassignment = async () => {
@@ -5316,6 +5317,30 @@
                             <div className="flex gap-2">
                                 <button onClick={() => setReassignModal({ open:false, cat:'', isItem:false, count:0 })} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
                                 <button onClick={applyReassign} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg">Reassign & Remove</button>
+                            </div>
+                        </div>
+                    </Modal>
+
+                    <Modal isOpen={positionReassignModal.open} onClose={() => setPositionReassignModal({ open: false, code: '', count: 0, players: [] })} title="Reassign Position Code">
+                        <div className="space-y-3">
+                            <div className="text-sm text-slate-600">"{positionReassignModal.code}" is used by {positionReassignModal.count} player(s). Choose a fallback code or create a new one.</div>
+                            <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={positionReassignChoice} onChange={e => setPositionReassignChoice(e.target.value)}>
+                                <option value="">Select fallback</option>
+                                {positionDefinitions.filter(def => def.code !== positionReassignModal.code).map(def => (
+                                    <option key={def.code} value={def.code}>{def.code} · {def.label}</option>
+                                ))}
+                                <option value="__new__">Create new...</option>
+                            </select>
+                            {positionReassignChoice === '__new__' && (
+                                <div className="grid grid-cols-2 gap-2">
+                                    <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="New code (e.g. RW)" value={positionReassignNew} onChange={e => setPositionReassignNew(e.target.value)} />
+                                    <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="New label" value={positionReassignNewLabel} onChange={e => setPositionReassignNewLabel(e.target.value)} />
+                                </div>
+                            )}
+                            <div className="text-[11px] text-slate-500">Players affected: {positionReassignModal.players.slice(0,6).map(p => `${p.firstName} ${p.lastName}`).join(', ')}{positionReassignModal.players.length > 6 ? '…' : ''}</div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setPositionReassignModal({ open: false, code: '', count: 0, players: [] })} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
+                                <button onClick={applyPositionReassignment} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg">Reassign & Remove</button>
                             </div>
                         </div>
                     </Modal>
