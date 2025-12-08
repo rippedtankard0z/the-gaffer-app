@@ -1358,8 +1358,6 @@
 
             const deletePlayerAndRelations = async (player) => {
                 if (!player) return;
-                const ok = confirm(`Delete ${player.firstName} ${player.lastName} and all linked games/payments? This cannot be undone.`);
-                if (!ok) return;
                 await db.participations.where('playerId').equals(player.id).delete();
                 await db.transactions.where('playerId').equals(player.id).delete();
                 await db.players.delete(player.id);
