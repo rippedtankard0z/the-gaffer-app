@@ -3,7 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>The Gaffer | British Exiles</title>
+    <script>
+        window.GAFFER_BUILD_VERSION = '2024.12.06-01';
+    </script>
     
     <!-- React & DOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -293,6 +299,9 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
+        const APP_VERSION = window.GAFFER_BUILD_VERSION || 'dev';
+        const VERSION_STORAGE_KEY = 'gaffer:lastBuildVersion';
+        console.info('[Gaffer] Loaded build version:', APP_VERSION);
 
         // Defensive fallback so other tabs never crash if a duplicate modal variable leaks outside Players.
         if (typeof isDupModalOpen === 'undefined') {
@@ -5660,6 +5669,7 @@
             const [kitNumberLimit, setKitNumberLimit] = useState(loadKitNumberLimit());
             const [kitSizeOptions, setKitSizeOptions] = useState(loadKitSizeOptions());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [isVersionMismatch, setIsVersionMismatch] = useState(false);
 
             useEffect(() => {
                 const load = async () => {
@@ -5702,12 +5712,46 @@
                 persistPositionDefinitions(positionDefinitions);
             }, [positionDefinitions]);
 
+            useEffect(() => {
+                try {
+                    const stored = localStorage.getItem(VERSION_STORAGE_KEY);
+                    if (stored && stored !== APP_VERSION) {
+                        setIsVersionMismatch(true);
+                    }
+                    localStorage.setItem(VERSION_STORAGE_KEY, APP_VERSION);
+                } catch (err) {
+                    console.warn('Unable to record build version', err);
+                }
+            }, []);
+
+            const handleVersionReload = () => {
+                try {
+                    localStorage.setItem(VERSION_STORAGE_KEY, APP_VERSION);
+                } catch (err) {
+                    console.warn('Unable to persist build version before reload', err);
+                }
+                window.location.reload();
+            };
+
             return (
                 <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-brand-100 selection:text-brand-900 relative overflow-hidden">
                     <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0">
                          <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] bg-blue-100/50 rounded-full blur-[120px]"></div>
                          <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-emerald-100/40 rounded-full blur-[120px]"></div>
                     </div>
+
+                    {isVersionMismatch && (
+                        <div className="max-w-md mx-auto mt-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-[11px] relative z-10 space-y-2">
+                            <div className="text-xs font-bold text-amber-900 tracking-wide">New build detected</div>
+                            <p>
+                                Version {APP_VERSION} is live. Hard refresh (Cmd/Ctrl + Shift + R or hold Shift + click reload)
+                                if you still see stale UI.
+                            </p>
+                            <button onClick={handleVersionReload} className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-white/90 border border-amber-200 text-[11px] font-bold text-amber-800 shadow-sm">
+                                Reload now
+                            </button>
+                        </div>
+                    )}
 
                     <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
                         {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
@@ -5716,6 +5760,7 @@
                         {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} setKitDetails={setKitDetails} kitSizeOptions={kitSizeOptions} />}
                         {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
                         {activeTab === 'kit' && <Kit kitDetails={kitDetails} setKitDetails={setKitDetails} kitQueue={kitQueue} setKitQueue={setKitQueue} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} onNavigate={setActiveTab} />}
+                        <div className="pt-6 text-center text-[10px] text-slate-400">Build {APP_VERSION}</div>
                     </main>
                     
                     <Nav activeTab={activeTab} setTab={setActiveTab} />
