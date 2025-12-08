@@ -863,6 +863,7 @@
             const [players, setPlayers] = useState([]);
             const [balances, setBalances] = useState({});
             const [selectedPlayer, setSelectedPlayer] = useState(null);
+            const [selectedPlayerKit, setSelectedPlayerKit] = useState(null);
             const [fixtures, setFixtures] = useState([]);
             const [participations, setParticipations] = useState([]);
             const [playerTx, setPlayerTx] = useState([]);
@@ -956,6 +957,7 @@
                 if (!selectedPlayer) {
                     setPlayerPositionSelection('');
                     setPlayerCustomPositionInput('');
+                    setSelectedPlayerKit(null);
                 }
             }, [selectedPlayer]);
 
@@ -963,6 +965,8 @@
             const openPlayerDetails = async (player) => {
                 const txs = await db.transactions.where('playerId').equals(player.id).reverse().sortBy('date');
                 setPlayerTx(txs);
+                const kitEntry = loadKitDetails().find(detail => String(detail.playerId) === String(player.id));
+                setSelectedPlayerKit(kitEntry || null);
                 setSelectedPlayer(player);
             };
 
@@ -1440,6 +1444,18 @@
                 refresh();
             };
 
+            const handleDeletePlayer = async (player) => {
+                const deleted = await confirmDeletePlayer(player);
+                if (deleted) setIsEditOpen(false);
+            };
+
+            const confirmDeletePlayer = async (player) => {
+                if (!player) return false;
+                if (!confirm(`Delete ${player.firstName} ${player.lastName} and all linked games/payments?`)) return false;
+                await deletePlayerAndRelations(player);
+                return true;
+            };
+
             const generateWallImage = () => {
                 const canvas = document.createElement('canvas');
                 canvas.width = 900;
@@ -1580,9 +1596,6 @@
                                             </span>
                                         )}
                                         {bal >= 0 && <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md">Paid</span>}
-                                        <button onClick={(e) => { e.stopPropagation(); deletePlayerAndRelations(p); }} className="text-[10px] font-bold px-2 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 focus-visible:outline-red-500">
-                                            Delete
-                                        </button>
                                         <Icon name="ChevronRight" size={16} className="text-slate-300" />
                                     </div>
                                 </button>
@@ -1634,12 +1647,30 @@
                                         <div className="text-sm font-bold text-slate-900">{selectedPlayer.firstName} {selectedPlayer.lastName}</div>
                                         <div className="text-[11px] text-slate-500">Pos {selectedPlayer.position} · Pref {selectedPlayer.preferredPosition || selectedPlayer.position}</div>
                                     </div>
-                                    <button onClick={() => startEdit(selectedPlayer)} className="text-xs font-bold text-brand-600 bg-brand-50 px-3 py-1 rounded-lg border border-brand-100">Edit</button>
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={() => startEdit(selectedPlayer)} className="text-xs font-bold text-brand-600 bg-brand-50 px-3 py-1 rounded-lg border border-brand-100">Edit</button>
+                                        <button type="button" onClick={() => handleDeletePlayer(selectedPlayer)} className="text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1 rounded-lg border border-rose-100 hover:bg-rose-100 focus-visible:outline-rose-500">Delete</button>
+                                    </div>
                                 </div>
                                 <div className="space-y-1 text-[11px] text-slate-500">
                                     {selectedPlayer.phone && <div>Phone: {selectedPlayer.phone}</div>}
-                                    {selectedPlayer.age && <div>Age: {selectedPlayer.age}</div>}
-                                    {selectedPlayer.dateOfBirth && <div>Date of Birth: {selectedPlayer.dateOfBirth}</div>}
+                                    {(selectedPlayer.age || selectedPlayer.dateOfBirth) && (
+                                        <div>
+                                            {selectedPlayer.age && <>Age: {selectedPlayer.age}</>}
+                                            {selectedPlayer.dateOfBirth && (
+                                                <>
+                                                    {selectedPlayer.age && <span className="px-1">·</span>}
+                                                    DOB: {selectedPlayer.dateOfBirth}
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
+                                    {selectedPlayerKit && (
+                                        <div className="flex flex-wrap gap-2">
+                                            {selectedPlayerKit.shirtSize && <span>Shirt size: {selectedPlayerKit.shirtSize}</span>}
+                                            {selectedPlayerKit.shortSize && <span>Short size: {selectedPlayerKit.shortSize}</span>}
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="space-y-2">
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Available Positions</div>
@@ -3208,57 +3239,6 @@
                     )}
                 </Modal>
 
-                    <Modal isOpen={isDupScanning} onClose={() => {}} title="Checking duplicates">
-                        <div className="space-y-3">
-                            <div className="text-sm text-slate-600">Scanning player names and adding matches to the review list.</div>
-                            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                                <div className="flex items-center justify-between text-xs text-slate-600">
-                                    <span>{dupScanProgress.phase || 'Starting...'}</span>
-                                    <span>{dupScanProgress.total ? `${Math.min(100, Math.round((dupScanProgress.checked / dupScanProgress.total) * 100))}%` : '0%'}</span>
-                                </div>
-                                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                    <div className="h-full bg-brand-600 transition-all" style={{ width: `${dupScanProgress.total ? Math.min(100, Math.round((dupScanProgress.checked / dupScanProgress.total) * 100)) : 0}%` }}></div>
-                                </div>
-                                <div className="text-[11px] text-slate-500">Checked {dupScanProgress.checked} of {dupScanProgress.total || '…'} · Found {dupScanProgress.found}</div>
-                                <div className="text-[11px] text-brand-700 font-semibold">{dupScanProgress.lastFound ? `Last pair: ${dupScanProgress.lastFound}` : 'Finding matches...'}</div>
-                            </div>
-                            <div className="text-[11px] text-slate-500">Results pop up when the scan finishes.</div>
-                        </div>
-                    </Modal>
-
-                    <Modal isOpen={isDupModalOpen} onClose={() => setIsDupModalOpen(false)} title="Potential duplicate players">
-                        <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-                            {duplicatePairs.length === 0 && <div className="text-sm text-slate-500">No close matches found.</div>}
-                            {duplicateDebug && (
-                                <div className="p-2 rounded-lg border border-slate-200 bg-slate-50 text-[11px] text-slate-600">
-                                    <div className="font-bold text-slate-800 mb-1">Scan debug</div>
-                                    <div>Players scanned: {duplicateDebug.playerCount}</div>
-                                    <div>Pairs found: {duplicateDebug.pairCount}</div>
-                                    <div>Elapsed: {duplicateDebug.elapsedMs}ms</div>
-                                    {duplicateDebug.sample?.length ? (
-                                        <div className="mt-1">
-                                            Sample:
-                                            {duplicateDebug.sample.map((s, i) => (
-                                                <div key={i} className="text-slate-700">- {s.a} ↔ {s.b} ({s.score}%)</div>
-                                            ))}
-                                        </div>
-                                    ) : null}
-                                </div>
-                            )}
-                            {duplicatePairs.map((pair, idx) => (
-                                <div key={`dup-${idx}`} className="p-2 rounded-lg border border-slate-200 bg-slate-50 text-sm space-y-2">
-                                    <div className="font-bold text-slate-900">{pair.a.firstName} {pair.a.lastName}</div>
-                                    <div className="font-bold text-slate-900">{pair.b.firstName} {pair.b.lastName}</div>
-                                    <div className="text-[11px] text-slate-500">Similarity: {Math.round(pair.score * 100)}%</div>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => deletePlayerAndRelations(pair.a)} className="flex-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg px-3 py-2 text-[11px] font-bold">Delete {pair.a.firstName}</button>
-                                        <button onClick={() => deletePlayerAndRelations(pair.b)} className="flex-1 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg px-3 py-2 text-[11px] font-bold">Delete {pair.b.firstName}</button>
-                                    </div>
-                                    <div className="text-[10px] text-amber-700">We’ll remove linked games and payments for that player only.</div>
-                                </div>
-                            ))}
-                        </div>
-                    </Modal>
                 </div>
             );
         };
@@ -4448,6 +4428,10 @@
                 });
                 setKitDetails([...remaining, ...newRecords]);
                 setKitImportMessage(`Imported ${newRecords.length} kit record${newRecords.length === 1 ? '' : 's'}.`);
+                setKitImportRows(null);
+            };
+
+            const cancelKitImport = () => {
                 setKitImportRows(null);
             };
 
