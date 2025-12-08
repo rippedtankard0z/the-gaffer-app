@@ -4305,6 +4305,28 @@
                 };
                 loadFixtures();
             }, []);
+            useEffect(() => {
+                const syncPositionsFromPlayers = async () => {
+                    await waitForDb();
+                    const players = await db.players.toArray();
+                    const existing = new Set(positionDefinitions.map(def => def.code));
+                    const extras = new Set();
+                    players.forEach(player => {
+                        collectPlayerPositions(player).forEach(code => {
+                            if (code && !existing.has(code)) extras.add(code);
+                        });
+                    });
+                    if (extras.size) {
+                        const additions = Array.from(extras).map(code => ({ code, label: 'Imported from players' }));
+                        setPositionDefinitions(prev => {
+                            const current = new Set(prev.map(def => def.code));
+                            const toAdd = additions.filter(add => !current.has(add.code));
+                            return toAdd.length ? [...prev, ...toAdd] : prev;
+                        });
+                    }
+                };
+                syncPositionsFromPlayers();
+            }, [positionDefinitions, setPositionDefinitions]);
             const [importTarget, setImportTarget] = useState(null);
             const importSingleRef = useRef(null);
             const [reassignModal, setReassignModal] = useState({ open: false, cat: '', isItem: false, count: 0 });
