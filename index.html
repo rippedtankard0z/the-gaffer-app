@@ -531,6 +531,83 @@
 
         // --- 4. Feature Modules ---
 
+        const POSITION_ALIASES = {
+            GK: ['GK', 'GKGOALKEEPER', 'GOALKEEPER'],
+            CB: ['CB', 'CENTREBACK', 'CENTRALCENTERBACK', 'CENTRE-BACK'],
+            LB: ['LB', 'LEFTBACK'],
+            RB: ['RB', 'RIGHTBACK'],
+            LWB: ['LWB', 'LEFTWINGBACK'],
+            RWB: ['RWB', 'RIGHTWINGBACK'],
+            SW: ['SW', 'SWEEPER'],
+            CM: ['CM', 'CENTRALMIDFIELDER'],
+            CDM: ['CDM', 'CENTRALDEFENSIVEMIDFIELDER', 'DM'],
+            CAM: ['CAM', 'CENTRALATTACKINGMIDFIELDER', 'AM'],
+            LM: ['LM', 'LEFTMIDFIELDER'],
+            RM: ['RM', 'RIGHTMIDFIELDER'],
+            LW: ['LW', 'LEFTWINGER'],
+            RW: ['RW', 'RIGHTWINGER'],
+            CF: ['CF', 'CENTREFORWARD', 'CENTRE-FORWARD'],
+            ST: ['ST', 'STRIKER'],
+            SS: ['SS', 'SECONDSTRIKER', 'SUPPORTSTRIKER']
+        };
+
+        const normalizePositionToken = (token) => {
+            const cleaned = (token || '').toString().replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+            if (!cleaned) return '';
+            for (const [code, aliases] of Object.entries(POSITION_ALIASES)) {
+                if (aliases.includes(cleaned)) return code;
+            }
+            return cleaned;
+        };
+
+        const inferPositionsFromText = (value) => {
+            if (!value) return [];
+            const tokens = value.split(/[,\/;|]+/).map(v => v.trim()).filter(Boolean);
+            const seen = new Set();
+            return tokens.map(token => normalizePositionToken(token)).filter(pos => {
+                if (!pos) return false;
+                if (seen.has(pos)) return false;
+                seen.add(pos);
+                return pos;
+            });
+        };
+
+        const splitCsvLine = (line) => {
+            const parts = [];
+            let current = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === '"' && line[i - 1] !== '\\') {
+                    inQuotes = !inQuotes;
+                    continue;
+                }
+                if (char === ',' && !inQuotes) {
+                    parts.push(current.trim());
+                    current = '';
+                    continue;
+                }
+                current += char;
+            }
+            if (current.length) parts.push(current.trim());
+            return parts.map(p => p.replace(/^"|"$/g, '').trim());
+        };
+
+        const CURRENT_PLAYER_TRUE = new Set(['yes', 'y', 'true', '1', 'current', 'active']);
+        const CSV_HEADER_MAP = {
+            'full name': 'fullName',
+            'phone number': 'phone',
+            'age (if supplied)': 'age',
+            'age': 'age',
+            'position': 'positionText',
+            'date of birth (if supplied)': 'dateOfBirth',
+            'date of birth': 'dateOfBirth',
+            'shirt number': 'shirtNumber',
+            'current player or not': 'currentPlayer'
+        };
+
+        const sanitizeNameKey = (name) => (name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
         // --- PLAYERS MODULE ---
         const Players = ({ itemCategories }) => {
             const [players, setPlayers] = useState([]);
@@ -543,9 +620,22 @@
             const [isEditOpen, setIsEditOpen] = useState(false);
             const [editPlayer, setEditPlayer] = useState(null);
             const [isWallOpen, setIsWallOpen] = useState(false);
-            const [newPlayer, setNewPlayer] = useState({ firstName: '', lastName: '', position: 'MID', preferredPosition: 'MID' });
+            const [newPlayer, setNewPlayer] = useState({
+                firstName: '',
+                lastName: '',
+                position: 'MID',
+                preferredPosition: 'MID',
+                phone: '',
+                age: '',
+                dateOfBirth: '',
+                positions: '',
+                shirtNumber: ''
+            });
             const [playerStats, setPlayerStats] = useState({});
             const [newCharge, setNewCharge] = useState({ item: itemCategories[0] || 'Other', amount: '' });
+            const importInputRef = useRef(null);
+            const [isImportingPlayers, setIsImportingPlayers] = useState(false);
+            const [importSummary, setImportSummary] = useState('');
 
             const refresh = async () => {
                 await waitForDb();
@@ -634,8 +724,22 @@
 
             const handleAdd = async (e) => {
                 e.preventDefault();
-                await db.players.add({ ...newPlayer, isActive: true });
-                setNewPlayer({ firstName: '', lastName: '', position: 'MID', preferredPosition: 'MID' });
+                await db.players.add({ 
+                    ...newPlayer, 
+                    age: newPlayer.age ? Number(newPlayer.age) : null,
+                    isActive: true 
+                });
+                setNewPlayer({
+                    firstName: '',
+                    lastName: '',
+                    position: 'MID',
+                    preferredPosition: 'MID',
+                    phone: '',
+                    age: '',
+                    dateOfBirth: '',
+                    positions: '',
+                    shirtNumber: ''
+                });
                 setIsAddOpen(false);
                 refresh();
             };
@@ -645,6 +749,11 @@
                     ...player, 
                     position: player.position || 'MID', 
                     preferredPosition: player.preferredPosition || player.position || 'MID',
+                    phone: player.phone || '',
+                    age: player.age || '',
+                    dateOfBirth: player.dateOfBirth || '',
+                    positions: player.positions || '',
+                    shirtNumber: player.shirtNumber || '',
                     isActive: player.isActive !== false 
                 });
                 setIsEditOpen(true);
@@ -658,6 +767,11 @@
                     lastName: editPlayer.lastName, 
                     position: editPlayer.position, 
                     preferredPosition: editPlayer.preferredPosition,
+                    phone: editPlayer.phone,
+                    age: editPlayer.age ? Number(editPlayer.age) : null,
+                    dateOfBirth: editPlayer.dateOfBirth,
+                    positions: editPlayer.positions,
+                    shirtNumber: editPlayer.shirtNumber,
                     isActive: editPlayer.isActive 
                 });
                 setIsEditOpen(false);
@@ -682,6 +796,103 @@
                 setNewCharge({ item: itemCategories[0] || 'Other', amount: '' });
                 openPlayerDetails(selectedPlayer);
                 refresh();
+            };
+
+            const overrideIfValue = (raw, existing) => {
+                if (raw === undefined || raw === null) return existing;
+                const str = raw.toString().trim();
+                if (str === '') return existing;
+                return str;
+            };
+
+            const importPlayersFromCsv = async (text) => {
+                const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
+                if (lines.length < 2) throw new Error('CSV must include headers and at least one row.');
+                const headers = splitCsvLine(lines[0]);
+                if (!headers.length) throw new Error('Invalid header row.');
+                const headerMap = {};
+                headers.forEach((hdr, index) => {
+                    const key = (hdr || '').toLowerCase().trim();
+                    if (CSV_HEADER_MAP[key]) headerMap[CSV_HEADER_MAP[key]] = index;
+                });
+                if (headerMap.fullName === undefined) throw new Error('Missing "Full Name" column.');
+
+                const existingPlayers = await db.players.toArray();
+                const nameIndex = {};
+                existingPlayers.forEach(player => {
+                    const key = sanitizeNameKey(`${player.firstName} ${player.lastName}`);
+                    if (key) nameIndex[key] = player;
+                });
+
+                let created = 0;
+                let updated = 0;
+
+                for (let i = 1; i < lines.length; i++) {
+                    const row = lines[i];
+                    if (!row) continue;
+                    const values = splitCsvLine(row);
+                    const record = {};
+                    Object.entries(headerMap).forEach(([field, idx]) => {
+                        record[field] = (values[idx] || '').trim();
+                    });
+                    const rawName = record.fullName;
+                    if (!rawName) continue;
+                    const nameParts = rawName.split(/\s+/).filter(Boolean);
+                    if (!nameParts.length) continue;
+                    const firstName = nameParts.shift();
+                    const lastName = nameParts.join(' ') || '(New)';
+                    const key = sanitizeNameKey(rawName);
+                    const existing = key ? nameIndex[key] : null;
+                    const positionsArr = inferPositionsFromText(record.positionText || '');
+                    const existingPosition = existing?.position || 'MID';
+                    const positionsText = positionsArr.length ? positionsArr.join(', ') : existing?.positions || '';
+                    const primaryPosition = positionsArr[0] || existingPosition;
+                    const preferredPosition = positionsArr[1] || existing?.preferredPosition || primaryPosition;
+                    const currentRaw = (record.currentPlayer || '').toLowerCase();
+                    const hasCurrent = headerMap.currentPlayer !== undefined && (record.currentPlayer || '').trim() !== '';
+                    const isActive = hasCurrent ? CURRENT_PLAYER_TRUE.has(currentRaw) : (existing?.isActive !== false);
+                    const payload = {
+                        firstName,
+                        lastName,
+                        position: primaryPosition,
+                        preferredPosition,
+                        phone: overrideIfValue(record.phone, existing?.phone || ''),
+                        age: record.age ? Number(record.age) : (existing?.age ?? null),
+                        dateOfBirth: overrideIfValue(record.dateOfBirth, existing?.dateOfBirth || ''),
+                        positions: positionsText,
+                        shirtNumber: overrideIfValue(record.shirtNumber, existing?.shirtNumber || ''),
+                        isActive
+                    };
+                    if (existing) {
+                        await db.players.update(existing.id, payload);
+                        nameIndex[key] = { ...existing, ...payload };
+                        updated++;
+                    } else {
+                        const id = await db.players.add(payload);
+                        nameIndex[key] = { id, ...payload };
+                        created++;
+                    }
+                }
+
+                refresh();
+                return `Imported ${created} new player${created === 1 ? '' : 's'} · updated ${updated} record${updated === 1 ? '' : 's'}.`;
+            };
+
+            const handlePlayerCsvFile = async (event) => {
+                const file = event.target?.files?.[0];
+                if (!file) return;
+                setIsImportingPlayers(true);
+                setImportSummary('');
+                try {
+                    const content = await file.text();
+                    const summary = await importPlayersFromCsv(content);
+                    setImportSummary(summary);
+                } catch (err) {
+                    alert('Import failed: ' + err.message);
+                } finally {
+                    setIsImportingPlayers(false);
+                    if (importInputRef.current) importInputRef.current.value = '';
+                }
             };
 
             const topDebtors = useMemo(() => {
@@ -767,6 +978,9 @@
                             <button onClick={() => setIsWallOpen(true)} className="text-xs font-bold bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg border border-rose-100 flex items-center gap-1">
                                 <Icon name="AlertTriangle" size={14} /> Wall of Shame
                             </button>
+                            <button onClick={() => importInputRef.current?.click()} disabled={isImportingPlayers} className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${isImportingPlayers ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-slate-900 text-white border-slate-900'}`}>
+                                {isImportingPlayers ? 'Importing…' : 'Import players CSV'}
+                            </button>
                             <button onClick={() => {
                                 const msg = players.map((p,i)=>`${i+1}. ${p.firstName} ${p.lastName}`).join('\n');
                                 if(navigator.clipboard){
@@ -784,11 +998,15 @@
                                 Copy Squad
                             </button>
                         </div>
+                        {importSummary && (
+                            <p className="text-[11px] text-slate-500 mt-1">{importSummary}</p>
+                        )}
                     </header>
 
                     <div className="bg-white rounded-2xl shadow-soft border border-slate-100 overflow-hidden divide-y divide-slate-50">
                         {players.map((p) => {
                             const bal = balances[p.id] || 0;
+                            const availPositions = p.positions || [p.position, p.preferredPosition || p.position].filter(Boolean).join(', ');
                             return (
                                 <button key={p.id} onClick={() => openPlayerDetails(p)} className="w-full text-left p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
                                     <div className="flex items-center gap-3">
@@ -797,7 +1015,7 @@
                                         </div>
                                         <div>
                                             <div className="font-bold text-slate-900 text-sm">{p.firstName} {p.lastName}</div>
-                                            <div className="text-[11px] text-slate-500">Pos {p.position} · Pref {p.preferredPosition || p.position}</div>
+                                            <div className="text-[11px] text-slate-500">Available {availPositions || p.position}</div>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -833,6 +1051,20 @@
                             </div>
                             <input placeholder="Preferred Position" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                 value={newPlayer.preferredPosition} onChange={e => setNewPlayer({...newPlayer, preferredPosition: e.target.value})} />
+                            <div className="grid grid-cols-2 gap-3">
+                                <input placeholder="Phone Number" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                    value={newPlayer.phone} onChange={e => setNewPlayer({...newPlayer, phone: e.target.value})} />
+                                <input placeholder="Age" type="number" min="0" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                    value={newPlayer.age} onChange={e => setNewPlayer({...newPlayer, age: e.target.value})} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <input placeholder="Date of Birth" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                    value={newPlayer.dateOfBirth} onChange={e => setNewPlayer({...newPlayer, dateOfBirth: e.target.value})} />
+                                <input placeholder="Positions (comma separated)" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                    value={newPlayer.positions} onChange={e => setNewPlayer({...newPlayer, positions: e.target.value})} />
+                            </div>
+                            <input placeholder="Shirt Number" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                value={newPlayer.shirtNumber} onChange={e => setNewPlayer({...newPlayer, shirtNumber: e.target.value})} />
                             <button type="submit" className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl mt-4">Sign Player</button>
                         </form>
                     </Modal>
@@ -849,6 +1081,14 @@
                                         <div className="text-[11px] text-slate-500">Pos {selectedPlayer.position} · Pref {selectedPlayer.preferredPosition || selectedPlayer.position}</div>
                                     </div>
                                     <button onClick={() => startEdit(selectedPlayer)} className="text-xs font-bold text-brand-600 bg-brand-50 px-3 py-1 rounded-lg border border-brand-100">Edit</button>
+                                </div>
+                                <div className="space-y-1 text-[11px] text-slate-500">
+                                    {selectedPlayer.phone && <div>Phone: {selectedPlayer.phone}</div>}
+                                    {selectedPlayer.age && <div>Age: {selectedPlayer.age}</div>}
+                                    {selectedPlayer.dateOfBirth && <div>Date of Birth: {selectedPlayer.dateOfBirth}</div>}
+                                    {(selectedPlayer.positions || selectedPlayer.position) && (
+                                        <div>Available Positions: {selectedPlayer.positions || selectedPlayer.position}</div>
+                                    )}
                                 </div>
 
                                 <div className="grid grid-cols-3 gap-2">
@@ -944,6 +1184,20 @@
                                 </div>
                                 <input placeholder="Preferred Position" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                     value={editPlayer.preferredPosition} onChange={e => setEditPlayer({ ...editPlayer, preferredPosition: e.target.value })} />
+                                <div className="grid grid-cols-2 gap-3">
+                                    <input placeholder="Phone Number" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                        value={editPlayer.phone} onChange={e => setEditPlayer({ ...editPlayer, phone: e.target.value })} />
+                                    <input placeholder="Age" type="number" min="0" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                        value={editPlayer.age} onChange={e => setEditPlayer({ ...editPlayer, age: e.target.value })} />
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <input placeholder="Date of Birth" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                        value={editPlayer.dateOfBirth} onChange={e => setEditPlayer({ ...editPlayer, dateOfBirth: e.target.value })} />
+                                    <input placeholder="Positions (comma separated)" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                        value={editPlayer.positions} onChange={e => setEditPlayer({ ...editPlayer, positions: e.target.value })} />
+                                </div>
+                                <input placeholder="Shirt Number" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                    value={editPlayer.shirtNumber} onChange={e => setEditPlayer({ ...editPlayer, shirtNumber: e.target.value })} />
                                 <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
                                     <input type="checkbox" checked={editPlayer.isActive} onChange={e => setEditPlayer({ ...editPlayer, isActive: e.target.checked })} />
                                     Active
@@ -971,6 +1225,7 @@
                             </button>
                         </div>
                     </Modal>
+                    <input type="file" ref={importInputRef} accept=".csv,text/csv" className="hidden" onChange={handlePlayerCsvFile} />
 
                 </div>
             );
