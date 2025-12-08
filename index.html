@@ -1298,6 +1298,8 @@
                 setIsDupScanning(true);
                 setDupScanProgress({ phase: 'Preparing', checked: 0, total: players.length, found: 0, lastFound: '' });
                 try {
+                    // Yield so the progress modal paints before the heavy loop starts.
+                    await new Promise(res => setTimeout(res, 0));
                     const pairs = await scanDuplicatesAsync(players, (progress) => setDupScanProgress(progress));
                     const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
                     setDuplicatePairs(pairs);
