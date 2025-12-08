@@ -1509,6 +1509,9 @@
                                             </span>
                                         )}
                                         {bal >= 0 && <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md">Paid</span>}
+                                        <button onClick={(e) => { e.stopPropagation(); deletePlayerAndRelations(p); }} className="text-[10px] font-bold px-2 py-1 rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 focus-visible:outline-red-500">
+                                            Delete
+                                        </button>
                                         <Icon name="ChevronRight" size={16} className="text-slate-300" />
                                     </div>
                                 </button>
