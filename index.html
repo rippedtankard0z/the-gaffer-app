@@ -290,6 +290,11 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
+        // Defensive fallback so other tabs never crash if a duplicate modal variable leaks outside Players.
+        if (typeof isDupModalOpen === 'undefined') {
+            var isDupModalOpen = false;
+        }
+
         // --- 1. Database & Domain Models (Firestore) ---
         if (!window.db) {
             throw new Error('Firebase is not initialized. Set window.GAFFER_FIREBASE_CONFIG with real project keys before loading this page.');
@@ -811,6 +816,8 @@
             const [duplicatePairs, setDuplicatePairs] = useState([]);
             const [isDupModalOpen, setIsDupModalOpen] = useState(false);
             const [duplicateDebug, setDuplicateDebug] = useState(null);
+            const [isDupScanning, setIsDupScanning] = useState(false);
+            const [dupScanProgress, setDupScanProgress] = useState({ phase: '', checked: 0, total: 0, found: 0, lastFound: '' });
 
             const refresh = async () => {
                 await waitForDb();
@@ -1186,6 +1193,62 @@
                 return arr.sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
             }, [players, sortPlayersBy, balances]);
 
+            // Asynchronous duplicate scanner with progress callbacks for UI feedback
+            const scanDuplicatesAsync = async (playerList, onProgress) => {
+                const pairs = [];
+                const seenPairs = new Set();
+
+                const totalPlayers = playerList.length;
+                onProgress?.({ phase: 'Exact name match', checked: 0, total: totalPlayers, found: pairs.length, lastFound: '' });
+                const nameIndex = {};
+                for (let i = 0; i < playerList.length; i++) {
+                    const p = playerList[i];
+                    const key = sanitizeNameKey(`${p.firstName} ${p.lastName}`);
+                    if (key) {
+                        if (nameIndex[key]) {
+                            const a = nameIndex[key];
+                            const b = p;
+                            const idKey = [a.id, b.id].sort().join('-');
+                            if (!seenPairs.has(idKey)) {
+                                seenPairs.add(idKey);
+                                pairs.push({ a, b, score: 1 });
+                                onProgress?.({ phase: 'Exact name match', checked: i + 1, total: totalPlayers, found: pairs.length, lastFound: `${a.firstName} ${a.lastName} ↔ ${b.firstName} ${b.lastName}` });
+                            }
+                        } else {
+                            nameIndex[key] = p;
+                        }
+                    }
+                    if (i % 50 === 0) await new Promise(res => setTimeout(res, 0));
+                    onProgress?.({ phase: 'Exact name match', checked: i + 1, total: totalPlayers, found: pairs.length, lastFound: '' });
+                }
+
+                const totalComparisons = (playerList.length * (playerList.length - 1)) / 2;
+                let compared = 0;
+                onProgress?.({ phase: 'Fuzzy similarity', checked: 0, total: totalComparisons, found: pairs.length, lastFound: '' });
+                for (let i = 0; i < playerList.length; i++) {
+                    const a = playerList[i];
+                    for (let j = i + 1; j < playerList.length; j++) {
+                        const b = playerList[j];
+                        const score = stringSimilarity(`${a.firstName} ${a.lastName}`, `${b.firstName} ${b.lastName}`);
+                        if (score >= 0.86) {
+                            const idKey = [a.id, b.id].sort().join('-');
+                            if (!seenPairs.has(idKey)) {
+                                seenPairs.add(idKey);
+                                pairs.push({ a, b, score });
+                                onProgress?.({ phase: 'Fuzzy similarity', checked: compared, total: totalComparisons, found: pairs.length, lastFound: `${a.firstName} ${a.lastName} ↔ ${b.firstName} ${b.lastName}` });
+                            }
+                        }
+                        compared++;
+                        if (compared % 300 === 0) await new Promise(res => setTimeout(res, 0));
+                        if (compared % 200 === 0) {
+                            onProgress?.({ phase: 'Fuzzy similarity', checked: compared, total: totalComparisons, found: pairs.length, lastFound: '' });
+                        }
+                    }
+                }
+                onProgress?.({ phase: 'Done', checked: totalComparisons, total: totalComparisons, found: pairs.length, lastFound: '' });
+                return pairs;
+            };
+
             const computeDuplicatePairs = (playerList) => {
                 const pairs = [];
                 const seenPairs = new Set();
@@ -1225,15 +1288,17 @@
                 return pairs;
             };
 
-            const findDuplicatePlayers = () => {
+            const findDuplicatePlayers = async () => {
                 if (!players || players.length < 2) {
                     alert('Load players first – no records to scan.');
                     return;
                 }
 
                 const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
+                setIsDupScanning(true);
+                setDupScanProgress({ phase: 'Preparing', checked: 0, total: players.length, found: 0, lastFound: '' });
                 try {
-                    const pairs = computeDuplicatePairs(players);
+                    const pairs = await scanDuplicatesAsync(players, (progress) => setDupScanProgress(progress));
                     const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
                     setDuplicatePairs(pairs);
                     setDuplicateDebug({
@@ -1253,6 +1318,8 @@
                 } catch (err) {
                     console.error('Duplicate scan failed', err);
                     alert('Duplicate scan failed: ' + err.message);
+                } finally {
+                    setIsDupScanning(false);
                 }
             };
 
@@ -3039,14 +3106,32 @@
                                     Edit any entries above. Rows in amber are uncertain; we pre-filled the nearest match so you can fix mistakes before importing.
                                 </div>
 
-                                <div className="flex gap-3 mt-2 pt-2 border-t border-slate-100">
-                                    <button onClick={() => setParsedData(null)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-colors">Back</button>
-                                    <button onClick={confirmMagic} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-emerald-500/20">
-                                        Import All
-                                    </button>
-                                </div>
+                            <div className="flex gap-3 mt-2 pt-2 border-t border-slate-100">
+                                <button onClick={() => setParsedData(null)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-colors">Back</button>
+                                <button onClick={confirmMagic} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-emerald-500/20">
+                                    Import All
+                                </button>
                             </div>
-                        )}
+                        </div>
+                    )}
+                </Modal>
+
+                    <Modal isOpen={isDupScanning} onClose={() => {}} title="Checking duplicates">
+                        <div className="space-y-3">
+                            <div className="text-sm text-slate-600">Scanning player names and adding matches to the review list.</div>
+                            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                                <div className="flex items-center justify-between text-xs text-slate-600">
+                                    <span>{dupScanProgress.phase || 'Starting...'}</span>
+                                    <span>{dupScanProgress.total ? `${Math.min(100, Math.round((dupScanProgress.checked / dupScanProgress.total) * 100))}%` : '0%'}</span>
+                                </div>
+                                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-brand-600 transition-all" style={{ width: `${dupScanProgress.total ? Math.min(100, Math.round((dupScanProgress.checked / dupScanProgress.total) * 100)) : 0}%` }}></div>
+                                </div>
+                                <div className="text-[11px] text-slate-500">Checked {dupScanProgress.checked} of {dupScanProgress.total || '…'} · Found {dupScanProgress.found}</div>
+                                <div className="text-[11px] text-brand-700 font-semibold">{dupScanProgress.lastFound ? `Last pair: ${dupScanProgress.lastFound}` : 'Finding matches...'}</div>
+                            </div>
+                            <div className="text-[11px] text-slate-500">Results pop up when the scan finishes.</div>
+                        </div>
                     </Modal>
 
                     <Modal isOpen={isDupModalOpen} onClose={() => setIsDupModalOpen(false)} title="Potential duplicate players">
