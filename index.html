@@ -785,6 +785,79 @@
             return parsed;
         };
 
+        const formatDateForInput = (value) => {
+            if (!value) return '';
+            if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+            const parsed = new Date(value);
+            if (Number.isNaN(parsed.getTime())) return '';
+            return parsed.toISOString().split('T')[0];
+        };
+
+        const normalizePositionString = (value) => {
+            if (!value) return [];
+            return Array.from(new Set(value.split(',')
+                .map(token => token.trim().toUpperCase())
+                .filter(Boolean)));
+        };
+
+        const positionStringFromArray = (list) => {
+            if (!list || !list.length) return '';
+            return list.join(', ');
+        };
+
+        const PositionSelector = ({ label, value, onChange, positionDefinitions }) => {
+            const [customInput, setCustomInput] = useState('');
+            const selected = useMemo(() => normalizePositionString(value), [value]);
+
+            const toggleCode = (code) => {
+                const next = selected.includes(code)
+                    ? selected.filter(item => item !== code)
+                    : [...selected, code];
+                onChange(positionStringFromArray(next));
+            };
+
+            const addCustom = () => {
+                const trimmed = (customInput || '').trim().toUpperCase();
+                if (!trimmed) return;
+                if (selected.includes(trimmed)) {
+                    setCustomInput('');
+                    return;
+                }
+                const next = [...selected, trimmed];
+                onChange(positionStringFromArray(next));
+                setCustomInput('');
+            };
+
+            const handleCustomKeyDown = (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addCustom();
+                }
+            };
+
+            return (
+                <div className="space-y-2">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">{label}</div>
+                    <div className="flex flex-wrap gap-2">
+                        {positionDefinitions.map(def => {
+                            const code = def.code;
+                            const active = selected.includes(code);
+                            return (
+                                <button type="button" key={code} onClick={() => toggleCode(code)}
+                                    className={`text-xs font-bold px-3 py-1.5 rounded-full border ${active ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                    {code}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <div className="flex gap-2">
+                        <input className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Add custom position code" value={customInput} onChange={e => setCustomInput(e.target.value)} onKeyDown={handleCustomKeyDown} />
+                        <button type="button" onClick={addCustom} className="bg-slate-900 text-white font-bold rounded-lg px-4 py-3 text-sm">Add</button>
+                    </div>
+                </div>
+            );
+        };
+
         // --- PLAYERS MODULE ---
         const Players = ({ itemCategories, positionDefinitions }) => {
             const [players, setPlayers] = useState([]);
@@ -951,7 +1024,7 @@
                     preferredPosition: player.preferredPosition || player.position || 'MID',
                     phone: player.phone || '',
                     age: player.age || '',
-                    dateOfBirth: player.dateOfBirth || '',
+                    dateOfBirth: formatDateForInput(player.dateOfBirth || ''),
                     positions: player.positions || '',
                     shirtNumber: player.shirtNumber || '',
                     isActive: player.isActive !== false 
@@ -1539,11 +1612,10 @@
                                 <input placeholder="Age" type="number" min="0" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                     value={newPlayer.age} onChange={e => setNewPlayer({...newPlayer, age: e.target.value})} />
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <input placeholder="Date of Birth" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                            <div className="grid grid-cols-1 gap-3">
+                                <input type="date" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                     value={newPlayer.dateOfBirth} onChange={e => setNewPlayer({...newPlayer, dateOfBirth: e.target.value})} />
-                                <input placeholder="Positions (comma separated)" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
-                                    value={newPlayer.positions} onChange={e => setNewPlayer({...newPlayer, positions: e.target.value})} />
+                                <PositionSelector label="Positions" value={newPlayer.positions} onChange={(positions) => setNewPlayer({ ...newPlayer, positions })} positionDefinitions={positionDefinitions} />
                             </div>
                             <input placeholder="Shirt Number" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                 value={newPlayer.shirtNumber} onChange={e => setNewPlayer({...newPlayer, shirtNumber: e.target.value})} />
@@ -1699,11 +1771,10 @@
                                     <input placeholder="Age" type="number" min="0" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                         value={editPlayer.age} onChange={e => setEditPlayer({ ...editPlayer, age: e.target.value })} />
                                 </div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <input placeholder="Date of Birth" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
-                                        value={editPlayer.dateOfBirth} onChange={e => setEditPlayer({ ...editPlayer, dateOfBirth: e.target.value })} />
-                                    <input placeholder="Positions (comma separated)" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
-                                        value={editPlayer.positions} onChange={e => setEditPlayer({ ...editPlayer, positions: e.target.value })} />
+                                <div className="grid grid-cols-1 gap-3">
+                                    <input type="date" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                        value={editPlayer.dateOfBirth || ''} onChange={e => setEditPlayer({ ...editPlayer, dateOfBirth: e.target.value })} />
+                                    <PositionSelector label="Positions" value={editPlayer.positions || ''} onChange={(positions) => setEditPlayer({ ...editPlayer, positions })} positionDefinitions={positionDefinitions} />
                                 </div>
                                 <input placeholder="Shirt Number" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                     value={editPlayer.shirtNumber} onChange={e => setEditPlayer({ ...editPlayer, shirtNumber: e.target.value })} />
