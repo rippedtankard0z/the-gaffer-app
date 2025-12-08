@@ -5242,37 +5242,6 @@
                     <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="Settings">
                         <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} />
                     </Modal>
-
-                    <Modal isOpen={positionReassignModal.open} onClose={() => { setPositionReassignModal({ open:false, code:'', count:0, players: [] }); setPositionReassignChoice(''); setPositionReassignNew(''); setPositionReassignNewLabel(''); }} title="Reassign Position">
-                        <div className="space-y-3">
-                            <div className="text-sm text-slate-600">"{positionReassignModal.code}" is used by {positionReassignModal.count} player{positionReassignModal.count === 1 ? '' : 's'}. Choose a replacement to move them to before deleting the code.</div>
-                            {positionReassignModal.players.length > 0 && (
-                                <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
-                                    {positionReassignModal.players.slice(0, 5).map(player => (
-                                        <span key={`reassign-player-${player.id}`} className="px-2 py-1 rounded-full bg-slate-50 border border-slate-100">{player.firstName} {player.lastName}</span>
-                                    ))}
-                                    {positionReassignModal.count > 5 && <span className="px-2 py-1 rounded-full bg-slate-50 border border-slate-100">+{positionReassignModal.count - 5} more</span>}
-                                </div>
-                            )}
-                            <select className="w-full bg-white border border-slate-200 rounded-lg p-3 text-sm" value={positionReassignChoice} onChange={e => setPositionReassignChoice(e.target.value)}>
-                                <option value="">Select fallback position</option>
-                                {positionDefinitions.filter(def => def.code !== positionReassignModal.code).map(def => (
-                                    <option key={`fallback-${def.code}`} value={def.code}>{def.code} · {def.label}</option>
-                                ))}
-                                <option value="__new__">Create new position...</option>
-                            </select>
-                            {positionReassignChoice === '__new__' && (
-                                <div className="grid grid-cols-2 gap-2">
-                                    <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" placeholder="New code (e.g. RM)" value={positionReassignNew} onChange={e => setPositionReassignNew(e.target.value)} />
-                                    <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" placeholder="Label/definition" value={positionReassignNewLabel} onChange={e => setPositionReassignNewLabel(e.target.value)} />
-                                </div>
-                            )}
-                            <div className="flex gap-2">
-                                <button onClick={() => { setPositionReassignModal({ open:false, code:'', count:0, players: [] }); setPositionReassignChoice(''); setPositionReassignNew(''); setPositionReassignNewLabel(''); }} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
-                                <button onClick={applyPositionReassignment} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg disabled:opacity-60">Reassign & Delete</button>
-                            </div>
-                        </div>
-                    </Modal>
                 </div>
             );
         };
