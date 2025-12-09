@@ -1006,24 +1006,25 @@
             };
 
             const handlePay = async (tx) => {
-                if (hasExistingPayment(tx)) { alert('Already paid.'); return; }
-                if (!confirm("Mark this specific item as paid?")) return;
-                await db.transactions.add({
-                    date: new Date().toISOString(),
-                    category: tx.category || 'MATCH_FEE',
-                    type: 'INCOME',
-                    description: `Payment for ${tx.description}`,
-                    amount: Math.abs(tx.amount), 
-                    flow: 'receivable',
-                    playerId: selectedPlayer.id,
-                    fixtureId: tx.fixtureId,
-                    isReconciled: true
-                });
-                openPlayerDetails(selectedPlayer);
-                refresh();
-            } finally {
-                finishImportProgress();
-            }
+                try {
+                    if (hasExistingPayment(tx)) { alert('Already paid.'); return; }
+                    if (!confirm("Mark this specific item as paid?")) return;
+                    await db.transactions.add({
+                        date: new Date().toISOString(),
+                        category: tx.category || 'MATCH_FEE',
+                        type: 'INCOME',
+                        description: `Payment for ${tx.description}`,
+                        amount: Math.abs(tx.amount), 
+                        flow: 'receivable',
+                        playerId: selectedPlayer.id,
+                        fixtureId: tx.fixtureId,
+                        isReconciled: true
+                    });
+                    openPlayerDetails(selectedPlayer);
+                    refresh();
+                } finally {
+                    finishImportProgress();
+                }
             };
 
             const handleAdd = async (e) => {
