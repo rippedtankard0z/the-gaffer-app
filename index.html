@@ -75,7 +75,9 @@
                 participations: [],
                 opponents: [],
                 venues: [],
-                referees: []
+                referees: [],
+                kitDetails: [],
+                kitQueue: []
             };
 
             const ready = (async () => {
@@ -217,7 +219,9 @@
                 participations: createTable('participations'),
                 opponents: createTable('opponents'),
                 venues: createTable('venues'),
-                referees: createTable('referees')
+                referees: createTable('referees'),
+                kitDetails: createTable('kitDetails'),
+                kitQueue: createTable('kitQueue')
             };
         } catch (err) {
             console.error('Firebase init failed. Provide a valid GAFFER_FIREBASE_CONFIG to continue.', err);
@@ -298,7 +302,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo, useRef } = React;
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
         const APP_VERSION = window.GAFFER_BUILD_VERSION || 'dev';
         const VERSION_STORAGE_KEY = 'gaffer:lastBuildVersion';
         console.info('[Gaffer] Loaded build version:', APP_VERSION);
@@ -398,9 +402,7 @@
             return Number.isNaN(num) ? fallback : num;
         };
 
-        const KIT_QUEUE_KEY = 'gaffer:kitQueue';
         const KIT_NUMBER_LIMIT_KEY = 'gaffer:kitNumberLimit';
-        const KIT_DETAILS_KEY = 'gaffer:kitDetails';
         const POSITION_DEFS_KEY = 'gaffer:positionDefinitions';
         const DEFAULT_KIT_NUMBER_LIMIT = 50;
         const DEFAULT_POSITION_DEFINITIONS = [
@@ -423,23 +425,6 @@
             { code: 'SS', label: 'Second Striker / Support Striker' }
         ];
 
-        const loadKitQueue = () => {
-            const data = readStorageJSON(KIT_QUEUE_KEY, []);
-            return Array.isArray(data) ? data : [];
-        };
-
-        const persistKitQueue = (queue) => {
-            writeStorageJSON(KIT_QUEUE_KEY, queue);
-        };
-
-        const loadKitDetails = () => {
-            const data = readStorageJSON(KIT_DETAILS_KEY, []);
-            return Array.isArray(data) ? data : [];
-        };
-
-        const persistKitDetails = (details) => {
-            writeStorageJSON(KIT_DETAILS_KEY, details);
-        };
         const KIT_SIZE_OPTIONS_KEY = 'gaffer:kitSizeOptions';
         const DEFAULT_KIT_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
         const loadKitSizeOptions = () => {
@@ -880,7 +865,7 @@
         };
 
         // --- PLAYERS MODULE ---
-        const Players = ({ itemCategories, positionDefinitions, kitDetails = [], setKitDetails, kitSizeOptions = [] }) => {
+        const Players = ({ itemCategories, positionDefinitions, kitDetails = [], saveKitDetail, kitSizeOptions = [] }) => {
             const [players, setPlayers] = useState([]);
             const [balances, setBalances] = useState({});
             const [selectedPlayer, setSelectedPlayer] = useState(null);
@@ -912,9 +897,9 @@
             const [playerPositionSelection, setPlayerPositionSelection] = useState('');
             const [playerCustomPositionInput, setPlayerCustomPositionInput] = useState('');
             const [sortPlayersBy, setSortPlayersBy] = useState('name');
+            const [sortDirection, setSortDirection] = useState('asc');
             const [duplicatePairs, setDuplicatePairs] = useState([]);
             const [isDupModalOpen, setIsDupModalOpen] = useState(false);
-            const [duplicateDebug, setDuplicateDebug] = useState(null);
             const [isDupScanning, setIsDupScanning] = useState(false);
             const [dupScanProgress, setDupScanProgress] = useState({ phase: '', checked: 0, total: 0, found: 0, lastFound: '' });
             const selectedPlayerKit = useMemo(() => {
@@ -1043,33 +1028,24 @@
                 refresh();
             };
 
-            const upsertPlayerKitSizes = (player, patch) => {
-                if (!player || !setKitDetails) return;
-                setKitDetails(prev => {
-                    const playerId = String(player.id);
-                    const existingIndex = prev.findIndex(detail => detail?.playerId && String(detail.playerId) === playerId);
-                    const trimmed = {
-                        shirtSize: (patch.shirtSize || '').trim(),
-                        shortSize: (patch.shortSize || '').trim()
-                    };
-                    if (existingIndex < 0 && !trimmed.shirtSize && !trimmed.shortSize) {
-                        return prev;
-                    }
-                    const base = existingIndex >= 0 ? prev[existingIndex] : null;
-                    const updated = {
-                        ...(base || {}),
-                        ...trimmed,
-                        playerId,
-                        playerName: `${player.firstName} ${player.lastName}`.trim(),
-                        id: base?.id || `kit-${playerId}`
-                    };
-                    if (existingIndex >= 0) {
-                        const next = [...prev];
-                        next[existingIndex] = updated;
-                        return next;
-                    }
-                    return [...prev, updated];
-                });
+            const upsertPlayerKitSizes = async (player, patch) => {
+                if (!player || !saveKitDetail) return;
+                const playerId = String(player.id);
+                const existing = kitDetails.find(detail => detail?.playerId && String(detail.playerId) === playerId);
+                const trimmed = {
+                    shirtSize: (patch.shirtSize || '').trim(),
+                    shortSize: (patch.shortSize || '').trim()
+                };
+                if (!existing && !trimmed.shirtSize && !trimmed.shortSize) {
+                    return;
+                }
+                const payload = {
+                    ...(existing || {}),
+                    ...trimmed,
+                    playerId,
+                    playerName: `${player.firstName} ${player.lastName}`.trim()
+                };
+                await saveKitDetail(payload);
             };
 
             const startEdit = (player) => {
@@ -1106,7 +1082,7 @@
                     shirtNumber: editPlayer.shirtNumber,
                     isActive: editPlayer.isActive 
                 });
-                upsertPlayerKitSizes(editPlayer, editPlayerKit);
+                await upsertPlayerKitSizes(editPlayer, editPlayerKit);
                 setIsEditOpen(false);
                 setSelectedPlayer(prev => prev && prev.id === editPlayer.id ? { ...prev, ...editPlayer } : prev);
                 refresh();
@@ -1301,16 +1277,16 @@
             const selectedPlayerPositions = selectedPlayer ? collectPlayerPositions(selectedPlayer) : [];
             const sortedPlayers = useMemo(() => {
                 const arr = [...players];
+                let sorted;
                 if (sortPlayersBy === 'shirt') {
-                    return arr.sort((a, b) => {
+                    sorted = arr.sort((a, b) => {
                         const an = parseInt(a.shirtNumber, 10) || 0;
                         const bn = parseInt(b.shirtNumber, 10) || 0;
                         if (an === bn) return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
                         return an - bn;
                     });
-                }
-                if (sortPlayersBy === 'paid') {
-                    return arr.sort((a, b) => {
+                } else if (sortPlayersBy === 'paid') {
+                    sorted = arr.sort((a, b) => {
                         const balA = balances[a.id] || 0;
                         const balB = balances[b.id] || 0;
                         const paidA = balA >= 0 ? 1 : 0;
@@ -1318,17 +1294,18 @@
                         if (paidA !== paidB) return paidB - paidA;
                         return balB - balA;
                     });
-                }
-                if (sortPlayersBy === 'active') {
-                    return arr.sort((a, b) => {
+                } else if (sortPlayersBy === 'active') {
+                    sorted = arr.sort((a, b) => {
                         const actA = a.isActive === false ? 0 : 1;
                         const actB = b.isActive === false ? 0 : 1;
                         if (actA !== actB) return actB - actA;
                         return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
                     });
+                } else {
+                    sorted = arr.sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
                 }
-                return arr.sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
-            }, [players, sortPlayersBy, balances]);
+                return sortDirection === 'desc' ? [...sorted].reverse() : sorted;
+            }, [players, sortPlayersBy, balances, sortDirection]);
 
             // Asynchronous duplicate scanner with progress callbacks for UI feedback
             const scanDuplicatesAsync = async (playerList, onProgress) => {
@@ -1459,34 +1436,10 @@
 
                 const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
                 setDuplicatePairs(pairs);
-                setDuplicateDebug({
-                    playerCount: players.length,
-                    pairCount: pairs.length,
-                    elapsedMs: Math.round(elapsed),
-                    fallback: Boolean(fallbackError),
-                    sample: pairs.slice(0, 3).map(p => ({
-                        a: `${p.a.firstName} ${p.a.lastName}`,
-                        b: `${p.b.firstName} ${p.b.lastName}`,
-                        score: Math.round(p.score * 100)
-                    }))
-                });
                 setIsDupModalOpen(true);
                 if (!pairs.length) {
                     alert('No potential duplicates detected.');
                 }
-            };
-
-            const runDuplicateSelfTest = () => {
-                const samplePlayers = [
-                    { id: 1, firstName: 'John', lastName: 'Smith' },
-                    { id: 2, firstName: 'Jon', lastName: 'Smith' },
-                    { id: 3, firstName: 'Alice', lastName: 'Lee' },
-                    { id: 4, firstName: 'Alice', lastName: 'Li' },
-                    { id: 5, firstName: 'Bob', lastName: 'Brown' }
-                ];
-                const samplePairs = computeDuplicatePairs(samplePlayers);
-                console.log('Duplicate self-test sample', { samplePlayers, samplePairs });
-                alert(`Self-test complete. Found ${samplePairs.length} pair(s). See console for details.`);
             };
 
             const deletePlayerAndRelations = async (player) => {
@@ -1593,9 +1546,6 @@
                             <button onClick={findDuplicatePlayers} className="text-xs font-bold bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg border border-amber-100">
                                 Check duplicates
                             </button>
-                            <button onClick={runDuplicateSelfTest} className="text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100">
-                                Debug scan
-                            </button>
                             <button onClick={() => {
                                 const msg = players.map((p,i)=>`${i+1}. ${p.firstName} ${p.lastName}`).join('\n');
                                 if(navigator.clipboard){
@@ -1624,6 +1574,10 @@
                                 <option value="paid">Paid status</option>
                                 <option value="active">Active status</option>
                             </select>
+                            <button type="button" onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')} className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-600">
+                                <Icon name={sortDirection === 'asc' ? 'ArrowUp' : 'ArrowDown'} size={12} />
+                                {sortDirection === 'asc' ? 'Asc' : 'Desc'}
+                            </button>
                         </div>
                     </header>
 
@@ -4406,15 +4360,20 @@
 
         const Kit = ({
             kitDetails = [],
-            setKitDetails,
+            onImportKitDetails,
             kitQueue = [],
-            setKitQueue,
+            onAddQueueEntry,
+            onRemoveQueueEntry,
             kitNumberLimit,
             setKitNumberLimit,
+            kitSizeOptions = [],
             onNavigate = () => {}
         }) => {
             const [players, setPlayers] = useState([]);
             const [queueCandidate, setQueueCandidate] = useState('');
+            const [queueItem, setQueueItem] = useState('');
+            const [queueSize, setQueueSize] = useState('');
+            const [isSavingQueue, setIsSavingQueue] = useState(false);
             const [kitImportRows, setKitImportRows] = useState(null);
             const [kitImportMessage, setKitImportMessage] = useState('');
             const [isImportingKit, setIsImportingKit] = useState(false);
@@ -4474,14 +4433,23 @@
                 return list;
             }, [assignedNumbers, kitNumberLimit]);
 
+            const queuedPlayerIds = useMemo(() => {
+                return new Set((kitQueue || []).map(entry => String(entry.playerId)));
+            }, [kitQueue]);
+
             const queueOptions = useMemo(() => {
-                return players.filter(player => !kitQueue.includes(String(player.id)));
-            }, [players, kitQueue]);
+                return players.filter(player => !queuedPlayerIds.has(String(player.id)));
+            }, [players, queuedPlayerIds]);
 
             const queuePlayers = useMemo(() => {
-                return kitQueue.map(id => {
-                    const player = playerLookup[id];
-                    return player ? { ...player, id } : { id, firstName: 'Unknown', lastName: '' };
+                return (kitQueue || []).slice().sort((a, b) => {
+                    return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+                }).map(entry => {
+                    const player = playerLookup[String(entry.playerId)] || { firstName: 'Unknown', lastName: '' };
+                    return {
+                        entry,
+                        player
+                    };
                 });
             }, [kitQueue, playerLookup]);
 
@@ -4530,7 +4498,7 @@
                 });
             };
 
-            const confirmKitImport = () => {
+            const confirmKitImport = async () => {
                 if (!kitImportRows) return;
                 const rows = kitImportRows.filter(row => !row.drop);
                 if (!rows.length) {
@@ -4542,8 +4510,6 @@
                     alert('Assign a player to each row before importing.');
                     return;
                 }
-                const replacedIds = new Set(rows.map(row => row.matchedPlayerId));
-                const remaining = kitDetails.filter(detail => !detail.playerId || !replacedIds.has(detail.playerId));
                 const newRecords = rows.map(row => {
                     const player = playerLookup[row.matchedPlayerId];
                     const resolvedName = player ? `${player.firstName} ${player.lastName}` : row.playerName;
@@ -4562,27 +4528,49 @@
                         numberAssigned: row.fields.numberAssigned
                     };
                 });
-                setKitDetails([...remaining, ...newRecords]);
-                setKitImportMessage(`Imported ${newRecords.length} kit record${newRecords.length === 1 ? '' : 's'}.`);
-                setKitImportRows(null);
+                try {
+                    await onImportKitDetails?.(newRecords);
+                    setKitImportMessage(`Imported ${newRecords.length} kit record${newRecords.length === 1 ? '' : 's'}.`);
+                    setKitImportRows(null);
+                } catch (err) {
+                    alert('Failed to sync kit records: ' + err.message);
+                }
             };
 
             const cancelKitImport = () => {
                 setKitImportRows(null);
             };
             
-            const addToQueue = () => {
+            const addToQueue = async () => {
                 if (!queueCandidate) {
                     alert('Choose a player to add to the next order.');
                     return;
                 }
-                if (kitQueue.includes(queueCandidate)) return;
-                setKitQueue([...kitQueue, queueCandidate]);
-                setQueueCandidate('');
+                if (queuedPlayerIds.has(queueCandidate) || !onAddQueueEntry) return;
+                try {
+                    setIsSavingQueue(true);
+                    await onAddQueueEntry({
+                        playerId: queueCandidate,
+                        requestedItem: queueItem,
+                        requestedSize: queueSize
+                    });
+                    setQueueCandidate('');
+                    setQueueItem('');
+                    setQueueSize('');
+                } catch (err) {
+                    alert('Unable to save queue entry: ' + err.message);
+                } finally {
+                    setIsSavingQueue(false);
+                }
             };
 
-            const removeFromQueue = (playerId) => {
-                setKitQueue(kitQueue.filter(id => id !== playerId));
+            const removeFromQueue = async (entryId) => {
+                if (!entryId || !onRemoveQueueEntry) return;
+                try {
+                    await onRemoveQueueEntry(entryId);
+                } catch (err) {
+                    alert('Unable to remove queue entry: ' + err.message);
+                }
             };
 
             const openPlayer = (playerId) => {
@@ -4681,23 +4669,37 @@
                                     <div className="text-[11px] text-slate-500">Add players who still need kit.</div>
                                 </div>
                                 <div className="text-[11px] px-2 py-1 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
-                                    {queuePlayers.filter(p => p.firstName).length} tracked
+                                    {queuePlayers.filter(p => p.player.firstName).length} tracked
                                 </div>
                             </div>
-                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                 <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueCandidate} onChange={e => setQueueCandidate(e.target.value)}>
                                     <option value="">Select player</option>
                                     {queueOptions.map(p => <option key={p.id} value={String(p.id)}>{p.firstName} {p.lastName}</option>)}
                                 </select>
-                                <button onClick={addToQueue} className="bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm">Add to queue</button>
+                                <input className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" placeholder="Requested item (e.g. Home kit)" value={queueItem} onChange={e => setQueueItem(e.target.value)} />
+                                <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueSize} onChange={e => setQueueSize(e.target.value)}>
+                                    <option value="">Size (optional)</option>
+                                    {kitSizeOptions.map(size => (
+                                        <option key={`queue-size-${size}`} value={size}>{size}</option>
+                                    ))}
+                                </select>
+                                <button onClick={addToQueue} disabled={isSavingQueue} className={`bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm ${isSavingQueue ? 'opacity-70' : ''}`}>
+                                    {isSavingQueue ? 'Adding…' : 'Add to queue'}
+                                </button>
                             </div>
                             <div className="space-y-2">
-                                {queuePlayers.length ? queuePlayers.map(player => (
-                                    <div key={player.id} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
-                                        <button onClick={() => player.firstName && openPlayer(String(player.id))} className="text-sm font-bold text-slate-900 text-left hover:underline">
-                                            {player.firstName} {player.lastName}
-                                        </button>
-                                        <button onClick={() => removeFromQueue(player.id)} className="text-[11px] font-bold text-rose-600 px-3 py-1 rounded-full border border-rose-200 bg-rose-50">Remove</button>
+                                {queuePlayers.length ? queuePlayers.map(({ entry, player }) => (
+                                    <div key={entry.id || `queue-${entry.playerId}`} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                        <div className="flex-1">
+                                            <button onClick={() => player.firstName && openPlayer(String(entry.playerId))} className="text-sm font-bold text-slate-900 text-left hover:underline">
+                                                {player.firstName} {player.lastName}
+                                            </button>
+                                            <div className="text-[11px] text-slate-500">
+                                                {(entry.requestedItem || 'Item TBD')}{entry.requestedSize ? ` · ${entry.requestedSize}` : ''}
+                                            </div>
+                                        </div>
+                                        <button onClick={() => removeFromQueue(entry.id || entry.playerId)} className="text-[11px] font-bold text-rose-600 px-3 py-1 rounded-full border border-rose-200 bg-rose-50">Remove</button>
                                     </div>
                                 )) : (
                                     <div className="text-sm text-slate-400 text-center">Queue is empty.</div>
@@ -5769,8 +5771,8 @@
             const [referees, setReferees] = useState([]);
             const [refDefaults, setRefDefaults] = useState(loadRefDefaults());
             const [positionDefinitions, setPositionDefinitions] = useState(loadPositionDefinitions());
-            const [kitDetails, setKitDetails] = useState(loadKitDetails());
-            const [kitQueue, setKitQueue] = useState(loadKitQueue());
+            const [kitDetails, setKitDetails] = useState([]);
+            const [kitQueue, setKitQueue] = useState([]);
             const [kitNumberLimit, setKitNumberLimit] = useState(loadKitNumberLimit());
             const [kitSizeOptions, setKitSizeOptions] = useState(loadKitSizeOptions());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -5797,17 +5799,97 @@
                 return () => window.removeEventListener('gaffer-firestore-update', handler);
             }, []);
 
+            const refreshKitDetails = useCallback(async () => {
+                await waitForDb();
+                const list = await db.kitDetails.toArray();
+                setKitDetails(list);
+            }, []);
+
             useEffect(() => {
-                persistKitQueue(kitQueue);
-            }, [kitQueue]);
+                refreshKitDetails();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (e.detail.name === 'kitDetails') {
+                        refreshKitDetails();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, [refreshKitDetails]);
+
+            const refreshKitQueue = useCallback(async () => {
+                await waitForDb();
+                const list = await db.kitQueue.toArray();
+                setKitQueue(list);
+            }, []);
+
+            useEffect(() => {
+                refreshKitQueue();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (e.detail.name === 'kitQueue') {
+                        refreshKitQueue();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, [refreshKitQueue]);
+
+            const saveKitDetail = useCallback(async (detail) => {
+                if (!detail) return;
+                await waitForDb();
+                const payload = { ...detail };
+                if (payload.playerId !== undefined && payload.playerId !== null) {
+                    payload.playerId = String(payload.playerId);
+                }
+                if (payload.id) {
+                    await db.kitDetails.bulkPut([{ ...payload }]);
+                    return;
+                }
+                let existing = null;
+                if (payload.playerId) {
+                    existing = await db.kitDetails.where({ playerId: payload.playerId }).first();
+                }
+                if (existing) {
+                    await db.kitDetails.update(existing.id, { ...existing, ...payload, id: existing.id });
+                } else {
+                    await db.kitDetails.add(payload);
+                }
+            }, []);
+
+            const importKitDetails = useCallback(async (records = []) => {
+                for (const record of records) {
+                    await saveKitDetail(record);
+                }
+            }, [saveKitDetail]);
+
+            const addKitQueueEntry = useCallback(async ({ playerId, requestedItem, requestedSize }) => {
+                if (!playerId) return;
+                await waitForDb();
+                const normalized = String(playerId);
+                const existing = await db.kitQueue.where({ playerId: normalized }).first();
+                const payload = {
+                    playerId: normalized,
+                    requestedItem: (requestedItem || '').trim(),
+                    requestedSize: (requestedSize || '').trim(),
+                    createdAt: existing?.createdAt || new Date().toISOString()
+                };
+                if (existing) {
+                    await db.kitQueue.update(existing.id, { ...existing, ...payload, id: existing.id });
+                } else {
+                    await db.kitQueue.add(payload);
+                }
+            }, []);
+
+            const removeKitQueueEntry = useCallback(async (entryId) => {
+                if (!entryId) return;
+                await waitForDb();
+                await db.kitQueue.delete(entryId);
+            }, []);
 
             useEffect(() => {
                 persistKitNumberLimit(kitNumberLimit);
             }, [kitNumberLimit]);
-
-            useEffect(() => {
-                persistKitDetails(kitDetails);
-            }, [kitDetails]);
 
             useEffect(() => {
                 persistKitSizeOptions(kitSizeOptions);
@@ -5862,9 +5944,9 @@
                         {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
                         {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
                         {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
-                        {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} setKitDetails={setKitDetails} kitSizeOptions={kitSizeOptions} />}
+                        {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} saveKitDetail={saveKitDetail} kitSizeOptions={kitSizeOptions} />}
                         {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
-                        {activeTab === 'kit' && <Kit kitDetails={kitDetails} setKitDetails={setKitDetails} kitQueue={kitQueue} setKitQueue={setKitQueue} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} onNavigate={setActiveTab} />}
+                        {activeTab === 'kit' && <Kit kitDetails={kitDetails} onImportKitDetails={importKitDetails} kitQueue={kitQueue} onAddQueueEntry={addKitQueueEntry} onRemoveQueueEntry={removeKitQueueEntry} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} kitSizeOptions={kitSizeOptions} onNavigate={setActiveTab} />}
                         <div className="pt-6 text-center text-[10px] text-slate-400">Build {APP_VERSION}</div>
                     </main>
                     
