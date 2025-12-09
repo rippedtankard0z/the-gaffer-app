@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0">
     <title>The Gaffer | British Exiles</title>
     <script>
-        window.GAFFER_BUILD_VERSION = '2024.12.06-06';
+        window.GAFFER_BUILD_VERSION = '2024.12.06-07';
     </script>
     
     <!-- React & DOM -->
@@ -3691,15 +3691,23 @@
                             </div>
                         </div>
                         <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                            {transactions.slice(0,10).map(tx => (
-                                <div key={tx.id} className="flex justify-between items-center p-2 rounded-xl border border-slate-100 bg-slate-50">
-                                    <div>
-                                        <div className="text-[12px] font-bold text-slate-900">{tx.description}</div>
-                                        <div className="text-[10px] text-slate-500">{tx.category} · {new Date(tx.date).toLocaleDateString()}</div>
+                            {transactions.slice(0,10).map(tx => {
+                                const player = tx.playerId ? playerLookup[tx.playerId] : null;
+                                const playerName = player ? `${player.firstName} ${player.lastName}` : '';
+                                const feeLabel = tx.category === 'MATCH_FEE'
+                                    ? (tx.amount > 0 ? 'Payment received' : 'Match fee charged')
+                                    : (tx.category || 'Uncategorized');
+                                const contextLabel = playerName || tx.payee || feeLabel;
+                                return (
+                                    <div key={tx.id} className="flex justify-between items-center p-2 rounded-xl border border-slate-100 bg-slate-50">
+                                        <div>
+                                            <div className="text-[12px] font-bold text-slate-900">{tx.description}</div>
+                                            <div className="text-[10px] text-slate-500">{contextLabel} · {new Date(tx.date).toLocaleDateString()}</div>
+                                        </div>
+                                        <div className={`font-bold text-xs ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{tx.amount > 0 ? '+' : ''}{formatCurrency(Math.abs(tx.amount))}</div>
                                     </div>
-                                    <div className={`font-bold text-xs ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{tx.amount > 0 ? '+' : ''}{formatCurrency(Math.abs(tx.amount))}</div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
 
@@ -4371,13 +4379,21 @@
         }) => {
             const [players, setPlayers] = useState([]);
             const [queueCandidate, setQueueCandidate] = useState('');
-            const [queueItem, setQueueItem] = useState('');
-            const [queueSize, setQueueSize] = useState('');
+            const [queueItemType, setQueueItemType] = useState('SHIRT');
+            const [queueShirtSize, setQueueShirtSize] = useState('');
+            const [queueShortSize, setQueueShortSize] = useState('');
+            const [queueNumber, setQueueNumber] = useState('');
+            const [queueNameOnBack, setQueueNameOnBack] = useState('');
             const [isSavingQueue, setIsSavingQueue] = useState(false);
             const [kitImportRows, setKitImportRows] = useState(null);
             const [kitImportMessage, setKitImportMessage] = useState('');
             const [isImportingKit, setIsImportingKit] = useState(false);
             const importInputRef = useRef(null);
+            const queueItemOptions = useMemo(() => ([
+                { value: 'SHIRT', label: 'Shirt' },
+                { value: 'SHORTS', label: 'Shorts' },
+                { value: 'FULL_KIT', label: 'Full Kit' }
+            ]), []);
 
             useEffect(() => {
                 let mounted = true;
@@ -4547,16 +4563,51 @@
                     return;
                 }
                 if (queuedPlayerIds.has(queueCandidate) || !onAddQueueEntry) return;
+
+                const trimmedShirtSize = (queueShirtSize || '').trim();
+                const trimmedShortSize = (queueShortSize || '').trim();
+                const trimmedNumber = (queueNumber || '').trim();
+                const trimmedName = (queueNameOnBack || '').trim();
+                const wantsFullTop = queueItemType === 'SHIRT' || queueItemType === 'FULL_KIT';
+
+                if (wantsFullTop) {
+                    if (!trimmedShirtSize) {
+                        alert('Select a shirt size first.');
+                        return;
+                    }
+                    if (!trimmedShortSize) {
+                        alert('Select a short size first.');
+                        return;
+                    }
+                    if (!trimmedNumber) {
+                        alert('Enter the preferred number for the shirt.');
+                        return;
+                    }
+                    if (!trimmedName) {
+                        alert('Enter the name to print on the back.');
+                        return;
+                    }
+                } else if (!trimmedShortSize) {
+                    alert('Select a short size first.');
+                    return;
+                }
+
                 try {
                     setIsSavingQueue(true);
                     await onAddQueueEntry({
                         playerId: queueCandidate,
-                        requestedItem: queueItem,
-                        requestedSize: queueSize
+                        requestedItem: queueItemType,
+                        requestedShirtSize: wantsFullTop ? trimmedShirtSize : '',
+                        requestedShortSize: trimmedShortSize,
+                        requestedNumber: wantsFullTop ? trimmedNumber : '',
+                        requestedName: wantsFullTop ? trimmedName : ''
                     });
                     setQueueCandidate('');
-                    setQueueItem('');
-                    setQueueSize('');
+                    setQueueItemType('SHIRT');
+                    setQueueShirtSize('');
+                    setQueueShortSize('');
+                    setQueueNumber('');
+                    setQueueNameOnBack('');
                 } catch (err) {
                     alert('Unable to save queue entry: ' + err.message);
                 } finally {
@@ -4672,36 +4723,84 @@
                                     {queuePlayers.filter(p => p.player.firstName).length} tracked
                                 </div>
                             </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueCandidate} onChange={e => setQueueCandidate(e.target.value)}>
-                                    <option value="">Select player</option>
-                                    {queueOptions.map(p => <option key={p.id} value={String(p.id)}>{p.firstName} {p.lastName}</option>)}
-                                </select>
-                                <input className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" placeholder="Requested item (e.g. Home kit)" value={queueItem} onChange={e => setQueueItem(e.target.value)} />
-                                <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueSize} onChange={e => setQueueSize(e.target.value)}>
-                                    <option value="">Size (optional)</option>
-                                    {kitSizeOptions.map(size => (
-                                        <option key={`queue-size-${size}`} value={size}>{size}</option>
-                                    ))}
-                                </select>
-                                <button onClick={addToQueue} disabled={isSavingQueue} className={`bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm ${isSavingQueue ? 'opacity-70' : ''}`}>
+                            <div className="space-y-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueCandidate} onChange={e => setQueueCandidate(e.target.value)}>
+                                        <option value="">Select player</option>
+                                        {queueOptions.map(p => <option key={p.id} value={String(p.id)}>{p.firstName} {p.lastName}</option>)}
+                                    </select>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Requested item</span>
+                                        <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueItemType} onChange={e => setQueueItemType(e.target.value)}>
+                                            {queueItemOptions.map(opt => (
+                                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                                {(queueItemType === 'SHIRT' || queueItemType === 'FULL_KIT') && (
+                                    <div className="space-y-2">
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Shirt / full kit details</div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                            <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueShirtSize} onChange={e => setQueueShirtSize(e.target.value)}>
+                                                <option value="">Shirt size</option>
+                                                {kitSizeOptions.map(size => (
+                                                    <option key={`queue-shirt-${size}`} value={size}>{size}</option>
+                                                ))}
+                                            </select>
+                                            <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueShortSize} onChange={e => setQueueShortSize(e.target.value)}>
+                                                <option value="">Short size</option>
+                                                {kitSizeOptions.map(size => (
+                                                    <option key={`queue-short-${size}`} value={size}>{size}</option>
+                                                ))}
+                                            </select>
+                                            <input className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" placeholder="Number requested" value={queueNumber} onChange={e => setQueueNumber(e.target.value)} />
+                                            <input className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" placeholder="Name on back" value={queueNameOnBack} onChange={e => setQueueNameOnBack(e.target.value)} />
+                                        </div>
+                                    </div>
+                                )}
+                                {queueItemType === 'SHORTS' && (
+                                    <div className="space-y-1">
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Shorts details</div>
+                                        <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueShortSize} onChange={e => setQueueShortSize(e.target.value)}>
+                                            <option value="">Short size</option>
+                                            {kitSizeOptions.map(size => (
+                                                <option key={`queue-only-short-${size}`} value={size}>{size}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                                <button onClick={addToQueue} disabled={isSavingQueue} className={`bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm w-full ${isSavingQueue ? 'opacity-70' : ''}`}>
                                     {isSavingQueue ? 'Adding…' : 'Add to queue'}
                                 </button>
                             </div>
                             <div className="space-y-2">
-                                {queuePlayers.length ? queuePlayers.map(({ entry, player }) => (
-                                    <div key={entry.id || `queue-${entry.playerId}`} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
-                                        <div className="flex-1">
-                                            <button onClick={() => player.firstName && openPlayer(String(entry.playerId))} className="text-sm font-bold text-slate-900 text-left hover:underline">
-                                                {player.firstName} {player.lastName}
-                                            </button>
-                                            <div className="text-[11px] text-slate-500">
-                                                {(entry.requestedItem || 'Item TBD')}{entry.requestedSize ? ` · ${entry.requestedSize}` : ''}
+                                {queuePlayers.length ? queuePlayers.map(({ entry, player }) => {
+                                    const itemLabel = queueItemOptions.find(opt => opt.value === entry.requestedItem)?.label
+                                        || entry.requestedItem
+                                        || 'Item TBD';
+                                    const shirtSize = entry.requestedShirtSize || '';
+                                    const shortSize = entry.requestedShortSize || entry.requestedSize || '';
+                                    const preferredNumber = entry.requestedNumber || '';
+                                    const nameOnBack = entry.requestedName || '';
+                                    return (
+                                        <div key={entry.id || `queue-${entry.playerId}`} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                            <div className="flex-1">
+                                                <button onClick={() => player.firstName && openPlayer(String(entry.playerId))} className="text-sm font-bold text-slate-900 text-left hover:underline">
+                                                    {player.firstName} {player.lastName}
+                                                </button>
+                                                <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
+                                                    <span className="font-semibold text-slate-700">{itemLabel}</span>
+                                                    {shirtSize && <span>Shirt: {shirtSize}</span>}
+                                                    {shortSize && <span>Shorts: {shortSize}</span>}
+                                                    {preferredNumber && <span>No. {preferredNumber}</span>}
+                                                    {nameOnBack && <span>Name: {nameOnBack}</span>}
+                                                </div>
                                             </div>
+                                            <button onClick={() => removeFromQueue(entry.id || entry.playerId)} className="text-[11px] font-bold text-rose-600 px-3 py-1 rounded-full border border-rose-200 bg-rose-50">Remove</button>
                                         </div>
-                                        <button onClick={() => removeFromQueue(entry.id || entry.playerId)} className="text-[11px] font-bold text-rose-600 px-3 py-1 rounded-full border border-rose-200 bg-rose-50">Remove</button>
-                                    </div>
-                                )) : (
+                                    );
+                                }) : (
                                     <div className="text-sm text-slate-400 text-center">Queue is empty.</div>
                                 )}
                             </div>
@@ -5237,6 +5336,8 @@
                     case 'players': data = await db.players.toArray(); break;
                     case 'fixtures': data = await db.fixtures.toArray(); break;
                     case 'referees': data = await db.referees.toArray(); break;
+                    case 'kitDetails': data = await db.kitDetails.toArray(); break;
+                    case 'kitQueue': data = await db.kitQueue.toArray(); break;
                     case 'itemCategories': data = itemCategories; break;
                     case 'categories': data = categories; break;
                     case 'seasonCategories': data = seasonCategories; break;
@@ -5285,6 +5386,18 @@
                     await db.referees.clear();
                     if(Array.isArray(data) && data.length) await db.referees.bulkAdd(data);
                     setReferees(await db.referees.toArray());
+                } else if(key === 'kitDetails') {
+                    if(!confirm('Replace kit detail records with this file?')) return;
+                    await db.kitDetails.clear();
+                    if(Array.isArray(data) && data.length) await db.kitDetails.bulkPut(data);
+                    alert('Kit detail records imported.');
+                    return;
+                } else if(key === 'kitQueue') {
+                    if(!confirm('Replace kit queue with this file?')) return;
+                    await db.kitQueue.clear();
+                    if(Array.isArray(data) && data.length) await db.kitQueue.bulkPut(data);
+                    alert('Kit queue imported.');
+                    return;
                 } else if(key === 'itemCategories') {
                     if(!confirm('Replace player item categories with this file?')) return;
                     const arr = Array.isArray(data) ? data : [];
@@ -5373,6 +5486,8 @@
                     opponents: await db.opponents.toArray(),
                     venues: await db.venues.toArray(),
                     referees: await db.referees.toArray(),
+                    kitDetails: await db.kitDetails.toArray(),
+                    kitQueue: await db.kitQueue.toArray(),
                     categories,
                     itemCategories,
                     seasonCategories,
@@ -5401,6 +5516,8 @@
                     await db.opponents.clear();
                     await db.venues.clear();
                     await db.referees.clear();
+                    await db.kitDetails.clear();
+                    await db.kitQueue.clear();
                     if(data.players?.length) await db.players.bulkAdd(data.players);
                     if(data.fixtures?.length) await db.fixtures.bulkAdd(data.fixtures);
                     if(data.transactions?.length) {
@@ -5411,6 +5528,8 @@
                     if(data.opponents?.length) await db.opponents.bulkAdd(data.opponents);
                     if(data.venues?.length) await db.venues.bulkAdd(data.venues);
                     if(data.referees?.length) await db.referees.bulkAdd(data.referees);
+                    if(data.kitDetails?.length) await db.kitDetails.bulkPut(data.kitDetails);
+                    if(data.kitQueue?.length) await db.kitQueue.bulkPut(data.kitQueue);
                     const nextCats = Array.isArray(data.categories) ? data.categories : [];
                     setCategories(nextCats);
                     persistCategories(nextCats);
@@ -5600,6 +5719,8 @@
                             <button onClick={() => exportEntity('players')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Players</button>
                             <button onClick={() => exportEntity('fixtures')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Games</button>
                             <button onClick={() => exportEntity('referees')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Referees</button>
+                            <button onClick={() => exportEntity('kitDetails')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Kit Details</button>
+                            <button onClick={() => exportEntity('kitQueue')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Kit Queue</button>
                             <button onClick={() => exportEntity('itemCategories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Player Items</button>
                             <button onClick={() => exportEntity('categories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Cost Categories</button>
                             <button onClick={() => exportEntity('seasonCategories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Seasons</button>
@@ -5863,15 +5984,39 @@
                 }
             }, [saveKitDetail]);
 
-            const addKitQueueEntry = useCallback(async ({ playerId, requestedItem, requestedSize }) => {
-                if (!playerId) return;
+            const addKitQueueEntry = useCallback(async ({ playerId, requestedItem, requestedNumber, requestedName, requestedShirtSize, requestedShortSize }) => {
+                const normalizedPlayerId = (playerId === undefined || playerId === null) ? '' : String(playerId).trim();
+                if (!normalizedPlayerId) {
+                    throw new Error('Pick a player before adding to the queue.');
+                }
+                const itemType = (requestedItem || '').toUpperCase();
+                const allowedItems = new Set(['SHIRT', 'SHORTS', 'FULL_KIT']);
+                if (!allowedItems.has(itemType)) {
+                    throw new Error('Select a valid kit item.');
+                }
+                const trimmedShirtSize = (requestedShirtSize || '').trim();
+                const trimmedShortSize = (requestedShortSize || '').trim();
+                const trimmedNumber = (requestedNumber || '').trim();
+                const trimmedName = (requestedName || '').trim();
+                const needsTop = itemType === 'SHIRT' || itemType === 'FULL_KIT';
+                if (needsTop) {
+                    if (!trimmedShirtSize) throw new Error('Shirt size is required for shirts or full kits.');
+                    if (!trimmedShortSize) throw new Error('Short size is required for shirts or full kits.');
+                    if (!trimmedNumber) throw new Error('A preferred number is required for shirts or full kits.');
+                    if (!trimmedName) throw new Error('A name on the back is required for shirts or full kits.');
+                } else {
+                    if (!trimmedShortSize) throw new Error('Short size is required for shorts orders.');
+                }
+
                 await waitForDb();
-                const normalized = String(playerId);
-                const existing = await db.kitQueue.where({ playerId: normalized }).first();
+                const existing = await db.kitQueue.where({ playerId: normalizedPlayerId }).first();
                 const payload = {
-                    playerId: normalized,
-                    requestedItem: (requestedItem || '').trim(),
-                    requestedSize: (requestedSize || '').trim(),
+                    playerId: normalizedPlayerId,
+                    requestedItem: itemType,
+                    requestedNumber: needsTop ? trimmedNumber : '',
+                    requestedName: needsTop ? trimmedName : '',
+                    requestedShirtSize: needsTop ? trimmedShirtSize : '',
+                    requestedShortSize: trimmedShortSize,
                     createdAt: existing?.createdAt || new Date().toISOString()
                 };
                 if (existing) {
