@@ -2709,7 +2709,11 @@
                     feeForFixture = parsedData.feeAmount || existingTarget.feeAmount || 20;
                     await db.fixtures.update(finalFixtureId, { feeAmount: feeForFixture });
                     await db.participations.where('fixtureId').equals(finalFixtureId).delete();
-                    const existingMatchFees = await db.transactions.where('fixtureId').equals(finalFixtureId).filter(tx => (tx.category || '').toUpperCase() === 'MATCH_FEE').toArray();
+                    const existingMatchFees = await db.transactions
+                        .where('fixtureId')
+                        .equals(finalFixtureId)
+                        .and(tx => (tx.category || '').toUpperCase() === 'MATCH_FEE')
+                        .toArray();
                     if(existingMatchFees.length) {
                         await db.transactions.bulkDelete(existingMatchFees.map(tx => tx.id));
                     }
