@@ -365,6 +365,26 @@
 
         const deriveFlow = (type) => type === 'INCOME' ? 'receivable' : 'payable';
 
+        const formatCategoryLabel = (category) => {
+            if (!category) return '';
+            return String(category)
+                .replace(/_/g, ' ')
+                .split(' ')
+                .map(word => word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : '')
+                .join(' ')
+                .trim();
+        };
+
+        const formatCategoryLabel = (category) => {
+            if (!category) return '';
+            return String(category)
+                .replace(/_/g, ' ')
+                .split(' ')
+                .map(word => word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : '')
+                .join(' ')
+                .trim();
+        };
+
         const formatCurrency = (value, options = {}) => {
             const amount = Number(value || 0);
             try {
@@ -372,6 +392,48 @@
             } catch (e) {
                 return `S$${amount.toFixed(options.minimumFractionDigits || 0)}`;
             }
+        };
+
+        const formatCategoryLabel = (category = '') => {
+            if (!category) return '';
+            return category
+                .toString()
+                .split(/[\s_]+/)
+                .map(part => part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : '')
+                .join(' ')
+                .trim();
+        };
+
+        const formatCategoryLabel = (category = '') => {
+            if (!category) return '';
+            return category
+                .toString()
+                .split(/[\s_]+/)
+                .map(part => part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : '')
+                .join(' ')
+                .trim();
+        };
+
+        // Turn categories like MATCH_FEE into "Match Fee" for UI/WhatsApp output.
+        const formatCategoryLabel = (value = '') => {
+            if (!value) return '';
+            return value.toString()
+                .replace(/_/g, ' ')
+                .split(/\s+/)
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ')
+                .trim();
+        };
+
+        const formatCategoryLabel = (value = '') => {
+            if (!value) return '';
+            return value
+                .toString()
+                .replace(/_/g, ' ')
+                .split(/\s+/)
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ')
+                .trim();
         };
 
         const transactionHasCoveringPayment = (charge, txList = []) => {
@@ -615,6 +677,11 @@
             if (parts.length !== 3) return new Date().toISOString();
             try { return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString(); } 
             catch (e) { return new Date().toISOString(); }
+        };
+
+        const formatCategoryLabel = (category) => {
+            if (!category) return '';
+            return category === 'MATCH_FEE' ? 'Match Fee' : category;
         };
 
         const Icon = ({ name, size = 20, className }) => {
@@ -1103,9 +1170,9 @@
                             const dateLabel = fixture.date ? new Date(fixture.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
                             label = `vs ${fixture.opponent || 'TBC'}${dateLabel ? ` (${dateLabel})` : ''}`;
                         } else {
-                            label = tx.description || tx.category || 'Charge';
+                            label = tx.description || formatCategoryLabel(tx.category) || 'Charge';
                         }
-                        const tag = tx.category && (!fixture || (tx.description && tx.description !== tx.category)) ? ` [${tx.category}]` : '';
+                        const tag = tx.category && (!fixture || (tx.description && tx.description !== tx.category)) ? ` [${formatCategoryLabel(tx.category)}]` : '';
                         lines.push(` • ${label}${tag} – ${formatCurrency(Math.abs(tx.amount), { maximumFractionDigits: 0 })}`);
                     });
                     lines.push('');
@@ -5122,6 +5189,7 @@
             const [positionReassignNew, setPositionReassignNew] = useState('');
             const [positionReassignNewLabel, setPositionReassignNewLabel] = useState('');
             const [isImportAllBusy, setIsImportAllBusy] = useState(false);
+            const [isImportAllDone, setIsImportAllDone] = useState(false);
             const [importAllStatus, setImportAllStatus] = useState('Preparing files…');
             const { startImportProgress, finishImportProgress } = useImportProgress();
 
@@ -5601,6 +5669,18 @@
             };
 
             const importEntityData = async (key, data) => {
+                const runListWithProgress = async (label, list, action) => {
+                    if(!Array.isArray(list) || !list.length) return 0;
+                    const total = list.length;
+                    for(let i = 0; i < total; i++) {
+                        setImportAllStatus(`${label} (${i + 1} of ${total})`);
+                        // Run sequentially so status can be updated per record.
+                        // eslint-disable-next-line no-await-in-loop
+                        await action(list[i], i, total);
+                    }
+                    return total;
+                };
+
                 if(key === 'opponents') {
                     if(!confirm('Replace opponents with this file?')) return;
                     await db.opponents.clear();
@@ -5664,6 +5744,7 @@
                 } else if(key === 'all') {
                     if(!confirm('Import ALL data and replace current?')) return;
                     setIsImportAllBusy(true);
+                    setIsImportAllDone(false);
                     setImportAllStatus('Clearing old data…');
                     try {
                         await db.fixtures.clear();
@@ -5673,19 +5754,13 @@
                         await db.opponents.clear();
                         await db.venues.clear();
                         await db.referees.clear();
-                        setImportAllStatus('Restoring squad & fixtures…');
-                        if(data.players?.length) await db.players.bulkAdd(data.players);
-                        if(data.fixtures?.length) await db.fixtures.bulkAdd(data.fixtures);
-                        if(data.transactions?.length) {
-                            setImportAllStatus('Rebuilding ledger entries…');
-                            const normalizedTx = data.transactions.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) }));
-                            await db.transactions.bulkAdd(normalizedTx);
-                        }
-                        setImportAllStatus('Linking participations…');
-                        if(data.participations?.length) await db.participations.bulkAdd(data.participations);
-                        if(data.opponents?.length) await db.opponents.bulkAdd(data.opponents);
-                        if(data.venues?.length) await db.venues.bulkAdd(data.venues);
-                        if(data.referees?.length) await db.referees.bulkAdd(data.referees);
+                        const playerCount = await runListWithProgress('Restoring squad', data.players, rec => db.players.add(rec));
+                        const fixtureCount = await runListWithProgress('Restoring fixtures', data.fixtures, rec => db.fixtures.add(rec));
+                        const txCount = await runListWithProgress('Rebuilding ledger entries', data.transactions?.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) })), rec => db.transactions.add(rec));
+                        const participationCount = await runListWithProgress('Linking participations', data.participations, rec => db.participations.add(rec));
+                        await runListWithProgress('Restoring opponents', data.opponents, rec => db.opponents.add(rec));
+                        await runListWithProgress('Restoring venues', data.venues, rec => db.venues.add(rec));
+                        await runListWithProgress('Restoring referees', data.referees, rec => db.referees.add(rec));
                         setImportAllStatus('Applying saved settings…');
                         const nextCatsAll = Array.isArray(data.categories) ? data.categories : [];
                         setCategories(nextCatsAll);
@@ -5700,10 +5775,16 @@
                         setOpponents(await db.opponents.toArray());
                         setVenues(await db.venues.toArray());
                         setReferees(await db.referees.toArray());
-                        alert('Import complete.');
+                        const summaryParts = [
+                            playerCount ? `${playerCount} players` : '',
+                            fixtureCount ? `${fixtureCount} games` : '',
+                            txCount ? `${txCount} ledger rows` : '',
+                            participationCount ? `${participationCount} participations` : ''
+                        ].filter(Boolean);
+                        setImportAllStatus(`Import complete.${summaryParts.length ? ` Imported ${summaryParts.join(', ')}.` : ''}`);
+                        setIsImportAllDone(true);
                     } finally {
                         setIsImportAllBusy(false);
-                        setImportAllStatus('Preparing files…');
                     }
                     return;
                 }
@@ -6002,8 +6083,8 @@
                             <button onClick={() => { setImportTarget('itemCategories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Player Items</button>
                             <button onClick={() => { setImportTarget('categories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Cost Categories</button>
                             <button onClick={() => { setImportTarget('seasonCategories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Seasons</button>
-                            <button onClick={() => { setImportTarget('all'); importSingleRef.current?.click(); }} disabled={isImportAllBusy} className={`bg-rose-600 text-white rounded-lg px-3 py-2 text-sm font-bold md:col-span-2 ${isImportAllBusy ? 'opacity-60 cursor-not-allowed' : ''}`}>
-                                {isImportAllBusy ? 'Importing…' : 'Import ALL'}
+                            <button onClick={() => { setImportTarget('all'); importSingleRef.current?.click(); }} disabled={isImportAllBusy || isImportAllDone} className={`bg-rose-600 text-white rounded-lg px-3 py-2 text-sm font-bold md:col-span-2 ${(isImportAllBusy || isImportAllDone) ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                                {isImportAllBusy ? 'Importing…' : (isImportAllDone ? 'Completed' : 'Import ALL')}
                             </button>
                         </div>
                         <input type="file" accept="application/json" ref={importSingleRef} className="hidden" onChange={handleSingleImportFile} />
@@ -6130,13 +6211,22 @@
                         </div>
                     </Modal>
 
-                    {isImportAllBusy && (
+                    {(isImportAllBusy || isImportAllDone) && (
                         <div className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
-                            <div className="bg-white w-72 rounded-2xl shadow-2xl border border-slate-100 p-6 text-center space-y-3 animate-slide-up">
-                                <div className="mx-auto h-12 w-12 rounded-full border-4 border-slate-200 border-t-brand-600 animate-spin"></div>
-                                <div className="text-sm font-display font-bold text-slate-900">Hang tight…</div>
+                            <div className="bg-white w-80 rounded-2xl shadow-2xl border border-slate-100 p-6 text-center space-y-3 animate-slide-up">
+                                {isImportAllDone ? (
+                                    <div className="mx-auto h-12 w-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl font-bold">✓</div>
+                                ) : (
+                                    <div className="mx-auto h-12 w-12 rounded-full border-4 border-slate-200 border-t-brand-600 animate-spin"></div>
+                                )}
+                                <div className="text-sm font-display font-bold text-slate-900">{isImportAllDone ? 'Import complete' : 'Hang tight…'}</div>
                                 <p className="text-xs text-slate-500">{importAllStatus}</p>
                                 <p className="text-[11px] text-slate-400">Large imports can take a few seconds. Avoid closing this window.</p>
+                                {isImportAllDone && (
+                                    <div className="pt-1">
+                                        <button onClick={() => { setIsImportAllDone(false); setImportAllStatus('Preparing files…'); }} className="w-full bg-slate-900 text-white font-bold py-2 rounded-lg">OK</button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
