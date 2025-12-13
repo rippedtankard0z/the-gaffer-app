@@ -4792,20 +4792,6 @@
             const cancelKitImport = () => {
                 setKitImportRows(null);
             };
-            
-                if (!confirm(`Remove kit assignment for ${detail.playerName || 'this player'}?`)) return;
-                startImportProgress('Removing kit record…');
-                try {
-                    await waitForDb();
-                    await db.kitDetails.delete(detail.id);
-                    setKitImportMessage(`Removed kit entry for ${detail.playerName || 'player'}.`);
-                } catch (err) {
-                    alert('Could not remove kit record: ' + (err?.message || 'Unexpected error'));
-                } finally {
-                    finishImportProgress();
-                }
-            }, [finishImportProgress, startImportProgress]);
-            
             const addToQueue = async () => {
                 if (!queueCandidate) {
                     alert('Choose a player to add to the next order.');
