@@ -972,6 +972,7 @@
             const [isDupModalOpen, setIsDupModalOpen] = useState(false);
             const [isDupScanning, setIsDupScanning] = useState(false);
             const [dupScanProgress, setDupScanProgress] = useState({ phase: '', checked: 0, total: 0, found: 0, lastFound: '' });
+            const [isReleasingKit, setIsReleasingKit] = useState(false);
             const selectedPlayerKit = useMemo(() => {
                 if (!selectedPlayer) return null;
                 return kitDetails.find(detail => detail?.playerId && String(detail.playerId) === String(selectedPlayer.id)) || null;
@@ -980,49 +981,30 @@
             const releasePlayerKit = useCallback(async (player) => {
                 if (!player) return;
                 const kitRecord = kitDetails.find(detail => detail?.playerId && String(detail.playerId) === String(player.id));
-                if (!kitRecord) return;
+                if (!kitRecord) {
+                    alert('No kit record found for this player.');
+                    return;
+                }
                 if (!confirm(`Release ${player.firstName} ${player.lastName}'s kit (this frees up ${kitRecord.numberAssigned || 'their'} number)?`)) {
                     return;
                 }
+                setIsReleasingKit(true);
                 startImportProgress('Releasing kit…');
                 try {
                     await db.kitDetails.delete(kitRecord.id);
+                    alert(`Kit released for ${player.firstName} ${player.lastName}.`);
                     if (selectedPlayer && selectedPlayer.id === player.id) {
-                        setSelectedPlayer(prev => prev ? { ...prev } : prev);
+                        setSelectedPlayer(prev => (prev ? { ...prev } : prev));
                     }
                     refresh();
                 } catch (err) {
                     console.error('Failed to release kit', err);
                     alert('Unable to release kit: ' + (err?.message || 'unexpected error'));
                 } finally {
+                    setIsReleasingKit(false);
                     finishImportProgress();
                 }
             }, [kitDetails, selectedPlayer, startImportProgress, finishImportProgress]);
-
-            const releasePlayerKit = useCallback(async () => {
-                if (!selectedPlayer || !selectedPlayerKit) return;
-                if (!confirm(`Release ${selectedPlayer.firstName} ${selectedPlayer.lastName}'s kit and free up their number?`)) return;
-                const cleared = {
-                    ...selectedPlayerKit,
-                    playerId: '',
-                    playerName: '',
-                    shirtSize: '',
-                    shortSize: '',
-                    numberAssigned: '',
-                    kitArrived: '',
-                    numberRequested: '',
-                    numberRequestedAlt: '',
-                    writingOnBack: '',
-                    paid: '',
-                    numberFree: ''
-                };
-                try {
-                    await saveKitDetail(cleared);
-                    alert('Kit released. Number is now available on the Kit tab.');
-                } catch (err) {
-                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error.'));
-                }
-            }, [selectedPlayer, selectedPlayerKit, saveKitDetail]);
 
             const refresh = async () => {
                 await waitForDb();
@@ -1216,61 +1198,6 @@
                 await saveKitDetail(payload);
             };
 
-            const releasePlayerKit = useCallback(async () => {
-                if (!selectedPlayer || !selectedPlayerKit) return;
-                if (!confirm(`Release ${selectedPlayer.firstName} ${selectedPlayer.lastName}'s kit and free up the number?`)) return;
-                startImportProgress('Releasing kit record…');
-                try {
-                    await db.kitDetails.delete(selectedPlayerKit.id);
-                    alert('Kit released. Number is now available for reassignment.');
-                } catch (err) {
-                    console.error('Kit release failed', err);
-                    alert('Unable to release kit: ' + (err?.message || 'Unknown error'));
-                } finally {
-                    finishImportProgress();
-                }
-            }, [selectedPlayer, selectedPlayerKit, startImportProgress, finishImportProgress]);
-            const releasePlayerKit = async () => {
-                if (!selectedPlayer || !selectedPlayerKit) return;
-                if (!confirm(`Release kit for ${selectedPlayer.firstName} ${selectedPlayer.lastName}? This frees the assigned number.`)) return;
-                startImportProgress('Releasing kit…');
-                try {
-                    await db.kitDetails.delete(selectedPlayerKit.id);
-                } catch (err) {
-                    console.error('Release kit failed', err);
-                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
-                } finally {
-                    finishImportProgress();
-                }
-            };
-
-            const releasePlayerKit = async () => {
-                if (!selectedPlayerKit || !saveKitDetail) return;
-                if (!confirm('Release this kit so the number becomes available again?')) return;
-                startImportProgress('Releasing kit…');
-                try {
-                    await saveKitDetail({
-                        ...selectedPlayerKit,
-                        numberAssigned: '',
-                        isActive: false,
-                        releasedAt: new Date().toISOString()
-                    });
-                    alert('Kit released. Number is now available.');
-                    refresh();
-                } catch (err) {
-                    alert('Unable to release kit: ' + (err?.message || 'Unknown error'));
-                } finally {
-                    finishImportProgress();
-                }
-            };
-
-            const releasePlayerKit = async () => {
-                if (!selectedPlayerKit) return;
-                if (!confirm(`Release kit for ${selectedPlayer?.firstName} ${selectedPlayer?.lastName}?`)) return;
-                await db.kitDetails.delete(selectedPlayerKit.id);
-                setSelectedPlayer(prev => prev ? { ...prev } : prev);
-            };
-
             const startEdit = (player) => {
                 setEditPlayer({ 
                     ...player, 
@@ -1309,39 +1236,6 @@
                 setIsEditOpen(false);
                 setSelectedPlayer(prev => prev && prev.id === editPlayer.id ? { ...prev, ...editPlayer } : prev);
                 refresh();
-            };
-
-            const releasePlayerKit = async () => {
-                if (!selectedPlayer || !selectedPlayerKit?.id) return;
-                if (!confirm(`Release kit for ${selectedPlayer.firstName} ${selectedPlayer.lastName}?`)) return;
-                startImportProgress('Releasing kit…');
-                try {
-                    await db.kitDetails.delete(selectedPlayerKit.id);
-                    alert('Kit released. Number is now available for reassigning.');
-                } catch (err) {
-                    console.error('Failed to release kit', err);
-                    alert('Unable to release kit: ' + (err?.message || 'unexpected error'));
-                } finally {
-                    finishImportProgress();
-                }
-            };
-
-            const releasePlayerKit = async (player) => {
-                if (!player) return;
-                const playerId = String(player.id);
-                const existing = kitDetails.find(detail => detail?.playerId && String(detail.playerId) === playerId);
-                if (!existing) return;
-                if (!confirm(`Release kit for ${player.firstName} ${player.lastName} ${existing.numberAssigned ? `(#${existing.numberAssigned})` : ''}?`)) return;
-                setIsReleasingKit(true);
-                try {
-                    await db.kitDetails.delete(existing.id);
-                    alert(`${player.firstName} ${player.lastName}'s kit has been released.`);
-                } catch (err) {
-                    console.error('Failed to release kit', err);
-                    alert('Unable to release kit: ' + (err?.message || 'unknown error'));
-                } finally {
-                    setIsReleasingKit(false);
-                }
             };
 
             const addCharge = async () => {
@@ -4678,7 +4572,6 @@
             const [kitImportRows, setKitImportRows] = useState(null);
             const [kitImportMessage, setKitImportMessage] = useState('');
             const [isImportingKit, setIsImportingKit] = useState(false);
-            const [releasingKitId, setReleasingKitId] = useState(null);
             const { startImportProgress, finishImportProgress } = useImportProgress();
             const importInputRef = useRef(null);
             const queueItemOptions = useMemo(() => ([
@@ -4687,21 +4580,23 @@
                 { value: 'FULL_KIT', label: 'Full Kit' }
             ]), []);
 
-            const releaseKitDetail = async (detail) => {
+            const releaseKitDetail = useCallback(async (detail) => {
                 if (!detail?.id) return;
-                const target = detail.playerName || 'this player';
-                if (!confirm(`Release kit for ${target} and free up the number?`)) return;
-                startImportProgress('Releasing kit...');
+                const playerLabel = detail.playerName || 'this player';
+                const numberLabel = detail.numberAssigned ? `#${detail.numberAssigned}` : 'their number';
+                if (!confirm(`Release kit for ${playerLabel} (${numberLabel})?`)) return;
+                startImportProgress('Releasing kit…');
                 try {
                     await waitForDb();
                     await db.kitDetails.delete(detail.id);
+                    setKitImportMessage(`Released kit for ${playerLabel}.`);
                 } catch (err) {
-                    console.error('Unable to release kit detail', err);
-                    alert('Failed to release kit: ' + (err?.message || 'Unknown error'));
+                    console.error('Unable to release kit', err);
+                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
                 } finally {
                     finishImportProgress();
                 }
-            };
+            }, [finishImportProgress, setKitImportMessage, startImportProgress]);
 
             useEffect(() => {
                 let mounted = true;
@@ -4731,24 +4626,6 @@
                     return acc;
                 }, {});
             }, [players]);
-
-            const [releasingKitId, setReleasingKitId] = useState('');
-            const releaseKit = async (detail) => {
-                if (!detail?.id) return;
-                const playerLabel = playerLookup[String(detail.playerId)];
-                const name = playerLabel ? `${playerLabel.firstName} ${playerLabel.lastName}` : detail.playerName || 'this player';
-                if (!confirm(`Release kit (${detail.numberAssigned || 'no number'}) from ${name}?`)) return;
-                setReleasingKitId(detail.id);
-                startImportProgress('Releasing kit…');
-                try {
-                    await db.kitDetails.delete(detail.id);
-                } catch (err) {
-                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
-                } finally {
-                    setReleasingKitId('');
-                    finishImportProgress();
-                }
-            };
 
             const kitEntries = useMemo(() => {
                 return [...kitDetails].sort((a, b) => {
@@ -4795,44 +4672,6 @@
                 });
             }, [kitQueue, playerLookup]);
 
-            const [releasingKitId, setReleasingKitId] = useState(null);
-
-            const releaseKit = useCallback(async (detail, playerName) => {
-                if (!detail || !detail.id) return;
-                const targetName = playerName || detail.playerName || 'this player';
-                if (!confirm(`Release kit for ${targetName}? This frees their number.`)) return;
-                setReleasingKitId(detail.id);
-                startImportProgress('Releasing kit…');
-                try {
-                    await db.kitDetails.delete(detail.id);
-                    const numberLabel = detail.numberAssigned ? `#${detail.numberAssigned}` : 'their number';
-                    setKitImportMessage(`Released ${numberLabel} for ${targetName}.`);
-                } catch (err) {
-                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
-                } finally {
-                    finishImportProgress();
-                    setReleasingKitId(null);
-                }
-            }, [finishImportProgress, startImportProgress]);
-
-            const releaseKitDetail = useCallback(async (detail) => {
-                if (!detail?.id) return;
-                const name = detail.playerName || 'this player';
-                const number = detail.numberAssigned ? `#${detail.numberAssigned}` : 'no number';
-                if (!confirm(`Release kit for ${name} (${number})? This frees the number for someone else.`)) {
-                    return;
-                }
-                startImportProgress('Releasing kit record…');
-                try {
-                    await db.kitDetails.delete(detail.id);
-                    setKitImportMessage(`Released kit for ${name}.`);
-                } catch (err) {
-                    alert('Unable to release kit: ' + (err?.message || 'Unknown error'));
-                } finally {
-                    finishImportProgress();
-                }
-            }, [finishImportProgress, setKitImportMessage, startImportProgress]);
-
             const clearPlayerKit = async (detail) => {
                 if (!detail) return;
                 const playerLabel = detail.playerId
@@ -4877,24 +4716,6 @@
                 } finally {
                     setIsImportingKit(false);
                     if (event.target) event.target.value = '';
-                }
-            };
-
-            const releaseKitDetail = async (detail) => {
-                if (!detail) return;
-                const label = detail.playerName || 'player';
-                if (!confirm(`Release kit for ${label}? This frees the number.`)) return;
-                startImportProgress('Releasing kit…');
-                try {
-                    await waitForDb();
-                    if (!detail.id) throw new Error('Kit entry is missing an identifier');
-                    await db.kitDetails.delete(detail.id);
-                    alert(`Released kit for ${label}.`);
-                } catch (err) {
-                    console.error('Release kit failed', err);
-                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
-                } finally {
-                    finishImportProgress();
                 }
             };
 
@@ -4972,43 +4793,6 @@
                 setKitImportRows(null);
             };
             
-            const releaseKitDetail = async (detail) => {
-                if (!detail || !detail.id) return;
-                const nameLabel = detail.playerName || 'this player';
-                const numberLabel = detail.numberAssigned ? `#${detail.numberAssigned}` : 'their number';
-                if (!confirm(`Release kit for ${nameLabel} and free up ${numberLabel}?`)) return;
-                startImportProgress('Releasing kit…');
-                try {
-                    await waitForDb();
-                    await db.kitDetails.delete(detail.id);
-                    alert(`Kit released for ${nameLabel}.`);
-                } catch (err) {
-                    console.error('Release failed', err);
-                    alert(`Unable to release kit: ${err?.message || 'Unexpected error'}`);
-                } finally {
-                    finishImportProgress();
-                }
-            };
-
-            const releaseKitEntry = async (detail) => {
-                if (!detail || !detail.id) return;
-                const label = detail.playerName || 'player';
-                const numberLabel = detail.numberAssigned ? `#${detail.numberAssigned}` : 'this entry';
-                if (!confirm(`Release ${numberLabel} for ${label} and free up that number?`)) return;
-                startImportProgress('Releasing kit…');
-                try {
-                    await db.kitDetails.delete(detail.id);
-                    setKitImportMessage(`Released ${numberLabel} for ${label}.`);
-                } catch (err) {
-                    console.error('Release failed', err);
-                    alert('Unable to release kit: ' + (err?.message || 'Unknown error'));
-                } finally {
-                    finishImportProgress();
-                }
-            };
-            
-            const removeKitDetail = useCallback(async (detail) => {
-                if (!detail?.id) return;
                 if (!confirm(`Remove kit assignment for ${detail.playerName || 'this player'}?`)) return;
                 startImportProgress('Removing kit record…');
                 try {
@@ -6443,13 +6227,6 @@
                 setKitDetails(list);
             }, []);
 
-            const releaseKitDetail = useCallback(async (detailId) => {
-                if (!detailId) return;
-                await waitForDb();
-                await db.kitDetails.delete(detailId);
-                refreshKitDetails();
-            }, [refreshKitDetails]);
-
             useEffect(() => {
                 refreshKitDetails();
                 const handler = (e) => {
@@ -6502,185 +6279,11 @@
                 }
             }, []);
 
-            const releaseKitDetail = useCallback(async (detailId) => {
-                if (!detailId) return;
-                startImportProgress('Releasing kit…');
-                try {
-                    await waitForDb();
-                    await db.kitDetails.delete(detailId);
-                } finally {
-                    finishImportProgress();
-                }
-            }, [startImportProgress, finishImportProgress]);
-
-            const releaseKitDetail = useCallback(async (kitId) => {
-                if (!kitId) return;
-                await waitForDb();
-                await db.kitDetails.delete(kitId);
-            }, []);
-
-            const releaseKitDetail = useCallback(async ({ kitId, playerId }) => {
-                if (!kitId && !playerId) return;
-                await waitForDb();
-                let targetId = kitId;
-                if (!targetId && playerId) {
-                    const match = kitDetails.find(detail => detail.playerId && String(detail.playerId) === String(playerId));
-                    if (match) targetId = match.id;
-                }
-                if (!targetId) return;
-                try {
-                    await db.kitDetails.delete(targetId);
-                    setKitDetails(prev => prev.filter(detail => detail.id !== targetId));
-                } catch (err) {
-                    console.error('Release kit failed', err);
-                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
-                }
-            }, [kitDetails]);
-
-            const releaseKitDetail = useCallback(async (detail) => {
-                if (!detail?.id) return;
-                startImportProgress('Updating kit allocation…');
-                try {
-                    await waitForDb();
-                    await db.kitDetails.delete(detail.id);
-                } finally {
-                    finishImportProgress();
-                }
-            }, [startImportProgress, finishImportProgress]);
-
-            const releaseKitDetail = useCallback(async (detail) => {
-                if (!detail || !detail.id) return;
-                await waitForDb();
-                await db.kitDetails.delete(detail.id);
-                await refreshKitDetails();
-            }, [refreshKitDetails]);
-
-            const releaseKitDetail = useCallback(async (playerId) => {
-                if (!playerId) return;
-                await waitForDb();
-                await db.kitDetails.where('playerId').equals(String(playerId)).delete();
-            }, []);
-
-            const releasePlayerKit = useCallback(async (playerId) => {
-                if (!playerId) return;
-                await waitForDb();
-                const existing = await db.kitDetails.where({ playerId: String(playerId) }).first();
-                if (!existing) return;
-                await db.kitDetails.update(existing.id, {
-                    ...existing,
-                    playerId: null,
-                    numberAssigned: '',
-                    playerName: existing.playerName || '',
-                    kitArrived: existing.kitArrived || ''
-                });
-            }, []);
-            const releaseKitDetail = useCallback(async (detail) => {
-                if (!detail?.id) return;
-                await waitForDb();
-                await db.kitDetails.delete(detail.id);
-            }, []);
-
-            const releaseKitDetail = useCallback(async (detail) => {
-                if (!detail?.id) return;
-                await waitForDb();
-                await db.kitDetails.update(detail.id, {
-                    playerId: '',
-                    numberAssigned: ''
-                });
-            }, []);
-
-            const releaseKitDetail = useCallback(async (detail) => {
-                if (!detail?.id) return;
-                await waitForDb();
-                await db.kitDetails.delete(detail.id);
-                refreshKitDetails();
-            }, [refreshKitDetails]);
-
-            const releaseKitDetail = useCallback(async (playerId) => {
-                if (!playerId) return;
-                await waitForDb();
-                const existing = await db.kitDetails.where({ playerId: String(playerId) }).first();
-                if (existing) {
-                    await db.kitDetails.delete(existing.id);
-                }
-            }, []);
-
             const importKitDetails = useCallback(async (records = []) => {
                 for (const record of records) {
                     await saveKitDetail(record);
                 }
             }, [saveKitDetail]);
-
-            const releasePlayerKit = useCallback(async (playerId) => {
-                if (!playerId) return;
-                await waitForDb();
-                const existing = await db.kitDetails.where({ playerId: String(playerId) }).first();
-                if (existing) {
-                    await db.kitDetails.delete(existing.id);
-                }
-            }, []);
-
-            const releaseKit = useCallback(async (playerId) => {
-                if (!playerId) return;
-                await waitForDb();
-                const detail = await db.kitDetails.where({ playerId: String(playerId) }).first();
-                if (!detail) return;
-                await db.kitDetails.delete(detail.id);
-                await refreshKitDetails();
-                await refreshKitQueue();
-            }, [refreshKitDetails, refreshKitQueue]);
-
-            const releasePlayerKit = useCallback(async (playerId) => {
-                if (!playerId) return;
-                await waitForDb();
-                const normalizedPlayerId = String(playerId);
-                const existing = await db.kitDetails.where({ playerId: normalizedPlayerId }).first();
-                if (!existing) return;
-                await db.kitDetails.delete(existing.id);
-                await refreshKitDetails();
-            }, [refreshKitDetails]);
-
-            const removeKitDetail = useCallback(async (detailId) => {
-                if (!detailId) return;
-                await waitForDb();
-                await db.kitDetails.delete(detailId);
-            }, []);
-
-            const removeKitDetail = useCallback(async ({ id, playerId } = {}) => {
-                if (!id && !playerId) return;
-                await waitForDb();
-                if (id) {
-                    await db.kitDetails.delete(id);
-                    return;
-                }
-                const normalized = playerId ? String(playerId) : null;
-                if (!normalized) return;
-                const existing = await db.kitDetails.where({ playerId: normalized }).first();
-                if (existing) {
-                    await db.kitDetails.delete(existing.id);
-                }
-            }, []);
-
-            const removeKitDetail = useCallback(async ({ entryId, playerId }) => {
-                await waitForDb();
-                if (entryId) {
-                    await db.kitDetails.delete(entryId);
-                } else if (playerId !== undefined && playerId !== null) {
-                    const normalized = String(playerId);
-                    const existing = await db.kitDetails.where({ playerId: normalized }).first();
-                    if (existing) {
-                        await db.kitDetails.delete(existing.id);
-                    }
-                }
-                refreshKitDetails();
-            }, [refreshKitDetails]);
-
-            const removeKitDetail = useCallback(async (kitId) => {
-                if (!kitId) return;
-                await waitForDb();
-                await db.kitDetails.delete(kitId);
-                await refreshKitDetails();
-            }, [refreshKitDetails]);
 
             const addKitQueueEntry = useCallback(async ({ playerId, requestedItem, requestedNumber, requestedName, requestedShirtSize, requestedShortSize }) => {
                 const normalizedPlayerId = (playerId === undefined || playerId === null) ? '' : String(playerId).trim();
@@ -6724,94 +6327,11 @@
                 }
             }, []);
 
-            const clearPlayerKit = useCallback(async (playerId) => {
-                if (!playerId) return;
-                startImportProgress('Removing kit record…');
-                try {
-                    await waitForDb();
-                    const records = await db.kitDetails.where({ playerId: String(playerId) }).toArray();
-                    if (!records.length) return;
-                    await db.kitDetails.bulkDelete(records.map(record => record.id));
-                } finally {
-                    finishImportProgress();
-                }
-            }, [finishImportProgress, startImportProgress]);
-
-            const removeKitDetail = useCallback(async (detailId) => {
-                if (!detailId) return;
-                await waitForDb();
-                await db.kitDetails.delete(detailId);
-            }, []);
-
             const removeKitQueueEntry = useCallback(async (entryId) => {
                 if (!entryId) return;
                 await waitForDb();
                 await db.kitQueue.delete(entryId);
             }, []);
-
-            const releaseKitDetail = useCallback(async (playerId) => {
-                if (!playerId) return;
-                startImportProgress('Releasing kit…');
-                try {
-                    await waitForDb();
-                    const record = await db.kitDetails.where({ playerId: String(playerId) }).and(detail => !detail.releasedAt).first();
-                    if (!record) {
-                        alert('No active kit record found for this player.');
-                        return;
-                    }
-                    await db.kitDetails.update(record.id, { ...record, releasedAt: new Date().toISOString() });
-                    await refreshKitDetails();
-                } catch (err) {
-                    console.error('Release failed', err);
-                    alert('Unable to release kit: ' + (err?.message || 'Unknown error'));
-                } finally {
-                    finishImportProgress();
-                }
-            }, [startImportProgress, finishImportProgress, refreshKitDetails]);
-
-            const releaseKitDetail = useCallback(async (player) => {
-                if (!player) return;
-                await waitForDb();
-                const playerId = String(player.id);
-                const existing = await db.kitDetails.where({ playerId }).first();
-                if (!existing) return;
-                await db.kitDetails.delete(existing.id);
-                await refreshKitDetails();
-            }, [refreshKitDetails]);
-
-            const releasePlayerKit = useCallback(async (playerId) => {
-                if (!playerId) return;
-                await waitForDb();
-                const normalized = String(playerId);
-                const existing = await db.kitDetails.where('playerId').equals(normalized).first();
-                if (!existing) return;
-                await db.kitDetails.delete(existing.id);
-                refreshKitDetails();
-            }, [refreshKitDetails]);
-
-            const releaseKitDetail = useCallback(async (detailId) => {
-                if (!detailId) return;
-                await waitForDb();
-                await db.kitDetails.delete(detailId);
-                await refreshKitDetails();
-            }, [refreshKitDetails]);
-
-            const releaseKitDetail = useCallback(async (detail) => {
-                if (!detail) return;
-                await waitForDb();
-                try {
-                    if (detail.id) {
-                        await db.kitDetails.delete(detail.id);
-                    } else if (detail.playerId) {
-                        const existing = await db.kitDetails.where({ playerId: String(detail.playerId) }).first();
-                        if (existing) {
-                            await db.kitDetails.delete(existing.id);
-                        }
-                    }
-                } finally {
-                    await refreshKitDetails();
-                }
-            }, [refreshKitDetails]);
 
             useEffect(() => {
                 persistKitNumberLimit(kitNumberLimit);
@@ -6871,9 +6391,9 @@
                             {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
                             {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
                             {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
-                            {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} saveKitDetail={saveKitDetail} kitSizeOptions={kitSizeOptions} releasePlayerKit={releasePlayerKit} />}
+                            {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} saveKitDetail={saveKitDetail} kitSizeOptions={kitSizeOptions} />}
                             {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
-                        {activeTab === 'kit' && <Kit kitDetails={kitDetails} onImportKitDetails={importKitDetails} onRemoveKitDetail={removeKitDetail} kitQueue={kitQueue} onAddQueueEntry={addKitQueueEntry} onRemoveQueueEntry={removeKitQueueEntry} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} kitSizeOptions={kitSizeOptions} onNavigate={setActiveTab} />}
+                        {activeTab === 'kit' && <Kit kitDetails={kitDetails} onImportKitDetails={importKitDetails} kitQueue={kitQueue} onAddQueueEntry={addKitQueueEntry} onRemoveQueueEntry={removeKitQueueEntry} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} kitSizeOptions={kitSizeOptions} onNavigate={setActiveTab} />}
                             <div className="pt-6 text-center text-[10px] text-slate-400">Build {APP_VERSION}</div>
                         </main>
                         
