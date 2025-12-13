@@ -701,16 +701,28 @@
 
         const ImportProgressContext = React.createContext({
             startImportProgress: () => {},
-            finishImportProgress: () => {}
+            finishImportProgress: () => {},
+            addProgressDetail: () => {},
+            progressDetails: []
         });
         const useImportProgress = () => useContext(ImportProgressContext);
 
-        const ImportProgressOverlay = ({ message = "Updating data…" }) => (
+        const ImportProgressOverlay = ({ message = "Updating data…", details = [] }) => (
             <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm pointer-events-none">
-                <div className="pointer-events-auto w-full max-w-xs rounded-3xl bg-white/90 border border-white/50 px-6 py-8 text-center shadow-2xl">
+                <div className="pointer-events-auto w-full max-w-xs rounded-3xl bg-white/90 border border-white/50 px-6 py-8 text-center shadow-2xl space-y-3">
                     <div className="mx-auto mb-3 h-12 w-12 rounded-full border-4 border-slate-200 border-t-slate-900 animate-spin"></div>
                     <p className="text-sm font-bold text-slate-900">{message}</p>
                     <p className="text-[11px] text-slate-500 mt-1">Hang tight while we sync the latest records.</p>
+                    {details?.length ? (
+                        <div className="max-h-28 overflow-y-auto text-left text-[11px] text-slate-500 bg-slate-50/70 border border-slate-200 rounded-xl px-3 py-2 no-scrollbar">
+                            {details.map((line, idx) => (
+                                <div key={`${line}-${idx}`} className="flex items-start gap-2">
+                                    <span className="mt-[2px] text-slate-300">•</span>
+                                    <span className="text-slate-600">{line}</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : null}
                 </div>
             </div>
         );
@@ -2123,7 +2135,7 @@
             const [feeEdits, setFeeEdits] = useState({});
             const [newCost, setNewCost] = useState({ description: '', amount: '', category: 'Referee Fee', flow: 'payable' });
             const [payee, setPayee] = useState({ type: 'referee', value: '' });
-            const { startImportProgress, finishImportProgress } = useImportProgress();
+            const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const payeeOptions = useMemo(() => {
                 const cat = (newCost.category || '').toLowerCase();
                 const opts = [];
@@ -2695,6 +2707,7 @@
             const confirmMagic = async () => {
                 if(!parsedData || !parsedData.entries || parsedData.entries.length === 0) return;
                 startImportProgress('Importing fixture data…');
+                addProgressDetail('Preparing game record…');
                 try {
                     let finalFixtureId = null;
                 let fixtureOpponentLabel = parsedData.opponent;
@@ -2717,6 +2730,7 @@
                     if(existingMatchFees.length) {
                         await db.transactions.bulkDelete(existingMatchFees.map(tx => tx.id));
                     }
+                    addProgressDetail(`Updating existing game vs ${fixtureOpponentLabel}`);
                 } else {
                     // Resolve opponent/venue to known lists if close match, otherwise create
                     let bestOpponent = opponents
@@ -2755,6 +2769,7 @@
                     });
                     fixtureOpponentLabel = opponentName;
                     feeForFixture = parsedData.feeAmount || 20;
+                    addProgressDetail(`Created new game vs ${fixtureOpponentLabel} on ${parsedData.date}`);
                 }
 
                 if(!finalFixtureId) {
@@ -2767,7 +2782,8 @@
                 const participations = [];
                 const transactions = [];
 
-                for (const entry of parsedData.entries) {
+                for (let i = 0; i < parsedData.entries.length; i++) {
+                    const entry = parsedData.entries[i];
                     const trimmedName = (entry.name || '').trim();
                     if(!trimmedName) continue;
                     let playerId = typeof entry.selectedId === 'number' ? entry.selectedId : parseInt(entry.selectedId, 10);
@@ -2782,6 +2798,9 @@
                             lastName,
                             isActive: true
                         });
+                        addProgressDetail(`(${i + 1}/${parsedData.entries.length}) Added new player ${firstName} ${lastName}`);
+                    } else {
+                        addProgressDetail(`(${i + 1}/${parsedData.entries.length}) Linked ${trimmedName} to player #${playerId}`);
                     }
 
                     participations.push({ fixtureId: finalFixtureId, playerId, status: 'SELECTED' });
@@ -2813,6 +2832,7 @@
                     }
                 }
 
+                addProgressDetail('Writing players, fees, and payments…');
                 await db.participations.bulkAdd(participations);
                 await db.transactions.bulkAdd(transactions);
 
@@ -6201,10 +6221,12 @@
             const [isVersionMismatch, setIsVersionMismatch] = useState(false);
             const [importCount, setImportCount] = useState(0);
             const [importMessage, setImportMessage] = useState('');
+            const [progressDetails, setProgressDetails] = useState([]);
             const startImportProgress = useCallback((label = 'Updating data…') => {
                 setImportCount(prev => {
                     if (prev === 0) {
                         setImportMessage(label);
+                        setProgressDetails([]);
                     }
                     return prev + 1;
                 });
@@ -6214,15 +6236,26 @@
                     const next = Math.max(prev - 1, 0);
                     if (next === 0) {
                         setImportMessage('');
+                        setProgressDetails([]);
                     }
                     return next;
+                });
+            }, []);
+            const addProgressDetail = useCallback((line) => {
+                if (!line) return;
+                setProgressDetails(prev => {
+                    const next = [...prev, line];
+                    // Keep last 8 items so the overlay stays compact.
+                    return next.slice(Math.max(next.length - 8, 0));
                 });
             }, []);
             const importProgressContext = useMemo(() => ({
                 startImportProgress,
                 finishImportProgress,
+                addProgressDetail,
+                progressDetails,
                 isImporting: importCount > 0
-            }), [startImportProgress, finishImportProgress, importCount]);
+            }), [startImportProgress, finishImportProgress, addProgressDetail, progressDetails, importCount]);
 
             useEffect(() => {
                 const load = async () => {
@@ -6426,7 +6459,7 @@
                             <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} />
                         </Modal>
                     </div>
-                    {importCount > 0 && <ImportProgressOverlay message={importMessage || "Updating data…"} />}
+                    {importCount > 0 && <ImportProgressOverlay message={importMessage || "Updating data…"} details={progressDetails} />}
                 </ImportProgressContext.Provider>
             );
         };
