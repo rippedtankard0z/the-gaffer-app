@@ -385,17 +385,6 @@
                 .trim();
         };
 
-        const formatCategoryLabel = (value = '') => {
-            if (!value) return '';
-            return value
-                .toString()
-                .replace(/_/g, ' ')
-                .split(/\s+/)
-                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                .join(' ')
-                .trim();
-        };
-
         const transactionHasCoveringPayment = (charge, txList = []) => {
             if (!charge || !Array.isArray(txList) || !txList.length) return false;
             return txList.some(tx => (
@@ -637,11 +626,6 @@
             if (parts.length !== 3) return new Date().toISOString();
             try { return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString(); } 
             catch (e) { return new Date().toISOString(); }
-        };
-
-        const formatCategoryLabel = (category) => {
-            if (!category) return '';
-            return category === 'MATCH_FEE' ? 'Match Fee' : category;
         };
 
         const Icon = ({ name, size = 20, className }) => {
