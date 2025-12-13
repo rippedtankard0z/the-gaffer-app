@@ -111,7 +111,7 @@
                 return String(max + 1 || 1);
             };
 
-            const createRunner = (name, filterFn, opts = { reverse: false }) => ({
+            const createRunner = (name, filterFn = () => true, opts = { reverse: false }) => ({
                 and(extraFn) { return createRunner(name, (item) => filterFn(item) && extraFn(item), opts); },
                 reverse() { return createRunner(name, filterFn, { ...opts, reverse: !opts.reverse }); },
                 async toArray() {
@@ -122,6 +122,10 @@
                 async first() {
                     const arr = await this.toArray();
                     return arr[0];
+                },
+                async count() {
+                    const arr = await this.toArray();
+                    return arr.length;
                 },
                 async delete() {
                     const arr = await this.toArray();
@@ -178,6 +182,10 @@
                     async delete(id) { await ready; await deleteDoc(docRef(name, id)); },
                     async bulkDelete(ids) { await ready; await Promise.all(ids.map(i => deleteDoc(docRef(name, i)))); },
                     async clear() { await ready; await this.bulkDelete(cache[name].map(x => x.id)); },
+                    filter(predicate) {
+                        const fn = typeof predicate === 'function' ? predicate : () => true;
+                        return createRunner(name, fn);
+                    },
                     toCollection() {
                         return {
                             primaryKeys: async () => { await ready; return cache[name].map(x => x.id); }
@@ -189,7 +197,11 @@
                             return createRunner(name, (item) => filters.every(([key, value]) => item?.[key] === value));
                         }
                         return {
-                            equals(val) { return createRunner(name, (item) => item?.[fieldOrFilter] === val); }
+                            equals(val) { return createRunner(name, (item) => item?.[fieldOrFilter] === val); },
+                            anyOf(values) {
+                                const arr = Array.isArray(values) ? values : Array.from(arguments);
+                                return createRunner(name, (item) => arr.some(val => item?.[fieldOrFilter] === val));
+                            }
                         };
                     },
                     orderBy(field) {
@@ -212,6 +224,27 @@
             };
 
             window.firebaseReady = ready;
+            const releaseKitDetail = async ({ id, playerId } = {}) => {
+                await ready;
+                let targetId = id;
+                if (!targetId && playerId) {
+                    const normalized = String(playerId);
+                    const existing = cache.kitDetails.find(detail => String(detail.playerId) === normalized);
+                    targetId = existing?.id;
+                }
+                if (!targetId) {
+                    console.warn('releaseKitDetail: no kit detail found to release', { playerId, id });
+                    return false;
+                }
+                try {
+                    await deleteDoc(docRef('kitDetails', targetId));
+                    return true;
+                } catch (err) {
+                    console.error('releaseKitDetail failed', err);
+                    return false;
+                }
+            };
+
             window.db = {
                 players: createTable('players'),
                 fixtures: createTable('fixtures'),
@@ -221,7 +254,8 @@
                 venues: createTable('venues'),
                 referees: createTable('referees'),
                 kitDetails: createTable('kitDetails'),
-                kitQueue: createTable('kitQueue')
+                kitQueue: createTable('kitQueue'),
+                releaseKitDetail
             };
         } catch (err) {
             console.error('Firebase init failed. Provide a valid GAFFER_FIREBASE_CONFIG to continue.', err);
@@ -338,6 +372,17 @@
             } catch (e) {
                 return `S$${amount.toFixed(options.minimumFractionDigits || 0)}`;
             }
+        };
+
+        const transactionHasCoveringPayment = (charge, txList = []) => {
+            if (!charge || !Array.isArray(txList) || !txList.length) return false;
+            return txList.some(tx => (
+                tx.playerId === charge.playerId &&
+                tx.category === charge.category &&
+                tx.amount > 0 &&
+                (charge.fixtureId ? tx.fixtureId === charge.fixtureId : true) &&
+                Math.abs(tx.amount) >= Math.abs(charge.amount)
+            ));
         };
 
         const DEFAULT_CATEGORIES = ['Referee Fee', 'Match Fee'];
@@ -514,6 +559,12 @@
 
         const persistKitNumberLimit = (value) => {
             writeStorageJSON(KIT_NUMBER_LIMIT_KEY, value);
+        };
+
+        const releaseKitDetailById = async (id) => {
+            if (!id) return;
+            await waitForDb();
+            await db.kitDetails.delete(id);
         };
 
         const loadRefDefaults = () => {
@@ -888,11 +939,13 @@
             const [fixtures, setFixtures] = useState([]);
             const [participations, setParticipations] = useState([]);
             const [playerTx, setPlayerTx] = useState([]);
+            const [transactions, setTransactions] = useState([]);
             const [isAddOpen, setIsAddOpen] = useState(false);
             const [isEditOpen, setIsEditOpen] = useState(false);
             const [editPlayer, setEditPlayer] = useState(null);
             const [editPlayerKit, setEditPlayerKit] = useState({ shirtSize: '', shortSize: '' });
             const [isWallOpen, setIsWallOpen] = useState(false);
+            const [isDebtOpen, setIsDebtOpen] = useState(false);
             const [newPlayer, setNewPlayer] = useState({
                 firstName: '',
                 lastName: '',
@@ -923,6 +976,53 @@
                 if (!selectedPlayer) return null;
                 return kitDetails.find(detail => detail?.playerId && String(detail.playerId) === String(selectedPlayer.id)) || null;
             }, [selectedPlayer, kitDetails]);
+
+            const releasePlayerKit = useCallback(async (player) => {
+                if (!player) return;
+                const kitRecord = kitDetails.find(detail => detail?.playerId && String(detail.playerId) === String(player.id));
+                if (!kitRecord) return;
+                if (!confirm(`Release ${player.firstName} ${player.lastName}'s kit (this frees up ${kitRecord.numberAssigned || 'their'} number)?`)) {
+                    return;
+                }
+                startImportProgress('Releasing kit…');
+                try {
+                    await db.kitDetails.delete(kitRecord.id);
+                    if (selectedPlayer && selectedPlayer.id === player.id) {
+                        setSelectedPlayer(prev => prev ? { ...prev } : prev);
+                    }
+                    refresh();
+                } catch (err) {
+                    console.error('Failed to release kit', err);
+                    alert('Unable to release kit: ' + (err?.message || 'unexpected error'));
+                } finally {
+                    finishImportProgress();
+                }
+            }, [kitDetails, selectedPlayer, startImportProgress, finishImportProgress]);
+
+            const releasePlayerKit = useCallback(async () => {
+                if (!selectedPlayer || !selectedPlayerKit) return;
+                if (!confirm(`Release ${selectedPlayer.firstName} ${selectedPlayer.lastName}'s kit and free up their number?`)) return;
+                const cleared = {
+                    ...selectedPlayerKit,
+                    playerId: '',
+                    playerName: '',
+                    shirtSize: '',
+                    shortSize: '',
+                    numberAssigned: '',
+                    kitArrived: '',
+                    numberRequested: '',
+                    numberRequestedAlt: '',
+                    writingOnBack: '',
+                    paid: '',
+                    numberFree: ''
+                };
+                try {
+                    await saveKitDetail(cleared);
+                    alert('Kit released. Number is now available on the Kit tab.');
+                } catch (err) {
+                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error.'));
+                }
+            }, [selectedPlayer, selectedPlayerKit, saveKitDetail]);
 
             const refresh = async () => {
                 await waitForDb();
@@ -959,6 +1059,7 @@
                 setPlayers(list);
                 setFixtures(fixt);
                 setParticipations(parts);
+                setTransactions(txs);
 
                 const focusName = localStorage.getItem('gaffer:focusPlayerName');
                 if(focusName) {
@@ -1001,14 +1102,60 @@
                 setPlayers(prev => prev.map(p => p.id === player.id ? { ...p, isActive: next } : p));
             };
 
-            const hasExistingPayment = (tx) => {
-                return playerTx.some(p => p.playerId === tx.playerId && p.category === tx.category && p.amount > 0 && (tx.fixtureId ? p.fixtureId === tx.fixtureId : true) && Math.abs(p.amount) >= Math.abs(tx.amount));
+            const hasExistingPayment = (tx, source = playerTx) => transactionHasCoveringPayment(tx, source);
+
+            const buildDebtDigest = () => {
+                if (!players.length || !transactions.length) return 'No outstanding debts. ✅';
+                const lines = [];
+                players.forEach(player => {
+                    const charges = transactions.filter(tx => tx.playerId === player.id && tx.amount < 0);
+                    const outstanding = charges.filter(charge => !transactionHasCoveringPayment(charge, transactions));
+                    if (!outstanding.length) return;
+                    const total = outstanding.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+                    const header = `${player.firstName} ${player.lastName}`.trim();
+                    lines.push(`${header} – Owes ${formatCurrency(total, { maximumFractionDigits: 0 })}`);
+                    outstanding.forEach(tx => {
+                        const fixture = fixtures.find(f => f.id === tx.fixtureId);
+                        let label = '';
+                        if (fixture) {
+                            const dateLabel = fixture.date ? new Date(fixture.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+                            label = `vs ${fixture.opponent || 'TBC'}${dateLabel ? ` (${dateLabel})` : ''}`;
+                        } else {
+                            label = tx.description || tx.category || 'Charge';
+                        }
+                        const tag = tx.category && (!fixture || (tx.description && tx.description !== tx.category)) ? ` [${tx.category}]` : '';
+                        lines.push(` • ${label}${tag} – ${formatCurrency(Math.abs(tx.amount), { maximumFractionDigits: 0 })}`);
+                    });
+                    lines.push('');
+                });
+                return lines.length ? lines.join('\n').trim() : 'No outstanding debts. ✅';
+            };
+
+            const copyDebtDigest = () => {
+                const digest = buildDebtDigest();
+                const fallbackCopy = () => {
+                    const ta = document.createElement('textarea');
+                    ta.value = digest;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    alert('Copied debt blast (fallback)');
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(digest)
+                        .then(() => alert('Debt blast copied for WhatsApp'))
+                        .catch(fallbackCopy);
+                } else {
+                    fallbackCopy();
+                }
             };
 
             const handlePay = async (tx) => {
+                if (hasExistingPayment(tx)) { alert('Already paid.'); return; }
+                if (!confirm("Mark this specific item as paid?")) return;
+                startImportProgress('Recording payment…');
                 try {
-                    if (hasExistingPayment(tx)) { alert('Already paid.'); return; }
-                    if (!confirm("Mark this specific item as paid?")) return;
                     await db.transactions.add({
                         date: new Date().toISOString(),
                         category: tx.category || 'MATCH_FEE',
@@ -1069,6 +1216,61 @@
                 await saveKitDetail(payload);
             };
 
+            const releasePlayerKit = useCallback(async () => {
+                if (!selectedPlayer || !selectedPlayerKit) return;
+                if (!confirm(`Release ${selectedPlayer.firstName} ${selectedPlayer.lastName}'s kit and free up the number?`)) return;
+                startImportProgress('Releasing kit record…');
+                try {
+                    await db.kitDetails.delete(selectedPlayerKit.id);
+                    alert('Kit released. Number is now available for reassignment.');
+                } catch (err) {
+                    console.error('Kit release failed', err);
+                    alert('Unable to release kit: ' + (err?.message || 'Unknown error'));
+                } finally {
+                    finishImportProgress();
+                }
+            }, [selectedPlayer, selectedPlayerKit, startImportProgress, finishImportProgress]);
+            const releasePlayerKit = async () => {
+                if (!selectedPlayer || !selectedPlayerKit) return;
+                if (!confirm(`Release kit for ${selectedPlayer.firstName} ${selectedPlayer.lastName}? This frees the assigned number.`)) return;
+                startImportProgress('Releasing kit…');
+                try {
+                    await db.kitDetails.delete(selectedPlayerKit.id);
+                } catch (err) {
+                    console.error('Release kit failed', err);
+                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
+                } finally {
+                    finishImportProgress();
+                }
+            };
+
+            const releasePlayerKit = async () => {
+                if (!selectedPlayerKit || !saveKitDetail) return;
+                if (!confirm('Release this kit so the number becomes available again?')) return;
+                startImportProgress('Releasing kit…');
+                try {
+                    await saveKitDetail({
+                        ...selectedPlayerKit,
+                        numberAssigned: '',
+                        isActive: false,
+                        releasedAt: new Date().toISOString()
+                    });
+                    alert('Kit released. Number is now available.');
+                    refresh();
+                } catch (err) {
+                    alert('Unable to release kit: ' + (err?.message || 'Unknown error'));
+                } finally {
+                    finishImportProgress();
+                }
+            };
+
+            const releasePlayerKit = async () => {
+                if (!selectedPlayerKit) return;
+                if (!confirm(`Release kit for ${selectedPlayer?.firstName} ${selectedPlayer?.lastName}?`)) return;
+                await db.kitDetails.delete(selectedPlayerKit.id);
+                setSelectedPlayer(prev => prev ? { ...prev } : prev);
+            };
+
             const startEdit = (player) => {
                 setEditPlayer({ 
                     ...player, 
@@ -1107,6 +1309,39 @@
                 setIsEditOpen(false);
                 setSelectedPlayer(prev => prev && prev.id === editPlayer.id ? { ...prev, ...editPlayer } : prev);
                 refresh();
+            };
+
+            const releasePlayerKit = async () => {
+                if (!selectedPlayer || !selectedPlayerKit?.id) return;
+                if (!confirm(`Release kit for ${selectedPlayer.firstName} ${selectedPlayer.lastName}?`)) return;
+                startImportProgress('Releasing kit…');
+                try {
+                    await db.kitDetails.delete(selectedPlayerKit.id);
+                    alert('Kit released. Number is now available for reassigning.');
+                } catch (err) {
+                    console.error('Failed to release kit', err);
+                    alert('Unable to release kit: ' + (err?.message || 'unexpected error'));
+                } finally {
+                    finishImportProgress();
+                }
+            };
+
+            const releasePlayerKit = async (player) => {
+                if (!player) return;
+                const playerId = String(player.id);
+                const existing = kitDetails.find(detail => detail?.playerId && String(detail.playerId) === playerId);
+                if (!existing) return;
+                if (!confirm(`Release kit for ${player.firstName} ${player.lastName} ${existing.numberAssigned ? `(#${existing.numberAssigned})` : ''}?`)) return;
+                setIsReleasingKit(true);
+                try {
+                    await db.kitDetails.delete(existing.id);
+                    alert(`${player.firstName} ${player.lastName}'s kit has been released.`);
+                } catch (err) {
+                    console.error('Failed to release kit', err);
+                    alert('Unable to release kit: ' + (err?.message || 'unknown error'));
+                } finally {
+                    setIsReleasingKit(false);
+                }
             };
 
             const addCharge = async () => {
@@ -1562,7 +1797,7 @@
                     <header className="px-1">
                         <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Squad</h1>
                         <p className="text-slate-500 text-sm font-medium">Manage roster & debts</p>
-                        <div className="flex gap-2 mt-2">
+                        <div className="flex gap-2 mt-2 flex-wrap">
                             <button onClick={() => setIsWallOpen(true)} className="text-xs font-bold bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg border border-rose-100 flex items-center gap-1">
                                 <Icon name="AlertTriangle" size={14} /> Wall of Shame
                             </button>
@@ -1587,6 +1822,9 @@
                                 }
                             }} className="text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-100">
                                 Copy Squad
+                            </button>
+                            <button onClick={() => setIsDebtOpen(true)} className="text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-1">
+                                <Icon name="MessageSquare" size={14} /> Debt Message
                             </button>
                         </div>
                         {importSummary && (
@@ -1692,13 +1930,16 @@
                                             )}
                                         </div>
                                     )}
-                                    {selectedPlayerKit && (
-                                        <div className="flex flex-wrap gap-2">
-                                            {selectedPlayerKit.shirtSize && <span>Shirt size: {selectedPlayerKit.shirtSize}</span>}
-                                            {selectedPlayerKit.shortSize && <span>Short size: {selectedPlayerKit.shortSize}</span>}
-                                        </div>
-                                    )}
-                                </div>
+                                {selectedPlayerKit && (
+                                    <div className="flex flex-wrap gap-2">
+                                        {selectedPlayerKit.shirtSize && <span>Shirt size: {selectedPlayerKit.shirtSize}</span>}
+                                        {selectedPlayerKit.shortSize && <span>Short size: {selectedPlayerKit.shortSize}</span>}
+                                        <button onClick={() => releasePlayerKit(selectedPlayer)} disabled={isReleasingKit} className="text-[11px] font-bold px-3 py-1 rounded-full border border-rose-200 bg-rose-50 text-rose-700">
+                                            {isReleasingKit ? 'Releasing…' : 'Release kit'}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                                 <div className="space-y-2">
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Available Positions</div>
                                     <div className="flex flex-wrap gap-2">
@@ -1773,7 +2014,7 @@
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments & Fees</div>
                                     <div className="space-y-2 max-h-48 overflow-y-auto">
                                         {Array.from(new Map(playerTx.map(tx => [tx.id, tx])).values()).map(tx => {
-                                            const outstanding = tx.amount < 0 && !hasExistingPayment(tx);
+                const outstanding = tx.amount < 0 && !hasExistingPayment(tx);
                                             return (
                                                 <div key={tx.id} className="flex justify-between items-center p-3 border border-slate-100 rounded-xl bg-white">
                                                     <div>
@@ -1869,9 +2110,19 @@
                                     <div className="text-sm font-bold text-rose-700">{formatCurrency(p.balance)}</div>
                                 </div>
                             ))}
-                            {topDebtors.length === 0 && <div className="text-center text-sm text-slate-400">Nobody owes a dime. Love to see it.</div>}
+                    {topDebtors.length === 0 && <div className="text-center text-sm text-slate-400">Nobody owes a dime. Love to see it.</div>}
                             <button onClick={generateWallImage} className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-rose-500/20">
                                 Download Share Image
+                            </button>
+                        </div>
+                    </Modal>
+
+                    <Modal isOpen={isDebtOpen} onClose={() => setIsDebtOpen(false)} title="WhatsApp Debt Blast">
+                        <div className="space-y-3">
+                            <p className="text-xs text-slate-500">Copy this and drop it into WhatsApp so everyone sees what they owe.</p>
+                            <textarea readOnly className="w-full h-48 bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-mono no-scrollbar" value={buildDebtDigest()} />
+                            <button onClick={copyDebtDigest} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
+                                <Icon name="Copy" size={16} /> Copy message
                             </button>
                         </div>
                     </Modal>
@@ -4427,6 +4678,7 @@
             const [kitImportRows, setKitImportRows] = useState(null);
             const [kitImportMessage, setKitImportMessage] = useState('');
             const [isImportingKit, setIsImportingKit] = useState(false);
+            const [releasingKitId, setReleasingKitId] = useState(null);
             const { startImportProgress, finishImportProgress } = useImportProgress();
             const importInputRef = useRef(null);
             const queueItemOptions = useMemo(() => ([
@@ -4434,6 +4686,22 @@
                 { value: 'SHORTS', label: 'Shorts' },
                 { value: 'FULL_KIT', label: 'Full Kit' }
             ]), []);
+
+            const releaseKitDetail = async (detail) => {
+                if (!detail?.id) return;
+                const target = detail.playerName || 'this player';
+                if (!confirm(`Release kit for ${target} and free up the number?`)) return;
+                startImportProgress('Releasing kit...');
+                try {
+                    await waitForDb();
+                    await db.kitDetails.delete(detail.id);
+                } catch (err) {
+                    console.error('Unable to release kit detail', err);
+                    alert('Failed to release kit: ' + (err?.message || 'Unknown error'));
+                } finally {
+                    finishImportProgress();
+                }
+            };
 
             useEffect(() => {
                 let mounted = true;
@@ -4463,6 +4731,24 @@
                     return acc;
                 }, {});
             }, [players]);
+
+            const [releasingKitId, setReleasingKitId] = useState('');
+            const releaseKit = async (detail) => {
+                if (!detail?.id) return;
+                const playerLabel = playerLookup[String(detail.playerId)];
+                const name = playerLabel ? `${playerLabel.firstName} ${playerLabel.lastName}` : detail.playerName || 'this player';
+                if (!confirm(`Release kit (${detail.numberAssigned || 'no number'}) from ${name}?`)) return;
+                setReleasingKitId(detail.id);
+                startImportProgress('Releasing kit…');
+                try {
+                    await db.kitDetails.delete(detail.id);
+                } catch (err) {
+                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
+                } finally {
+                    setReleasingKitId('');
+                    finishImportProgress();
+                }
+            };
 
             const kitEntries = useMemo(() => {
                 return [...kitDetails].sort((a, b) => {
@@ -4509,6 +4795,74 @@
                 });
             }, [kitQueue, playerLookup]);
 
+            const [releasingKitId, setReleasingKitId] = useState(null);
+
+            const releaseKit = useCallback(async (detail, playerName) => {
+                if (!detail || !detail.id) return;
+                const targetName = playerName || detail.playerName || 'this player';
+                if (!confirm(`Release kit for ${targetName}? This frees their number.`)) return;
+                setReleasingKitId(detail.id);
+                startImportProgress('Releasing kit…');
+                try {
+                    await db.kitDetails.delete(detail.id);
+                    const numberLabel = detail.numberAssigned ? `#${detail.numberAssigned}` : 'their number';
+                    setKitImportMessage(`Released ${numberLabel} for ${targetName}.`);
+                } catch (err) {
+                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
+                } finally {
+                    finishImportProgress();
+                    setReleasingKitId(null);
+                }
+            }, [finishImportProgress, startImportProgress]);
+
+            const releaseKitDetail = useCallback(async (detail) => {
+                if (!detail?.id) return;
+                const name = detail.playerName || 'this player';
+                const number = detail.numberAssigned ? `#${detail.numberAssigned}` : 'no number';
+                if (!confirm(`Release kit for ${name} (${number})? This frees the number for someone else.`)) {
+                    return;
+                }
+                startImportProgress('Releasing kit record…');
+                try {
+                    await db.kitDetails.delete(detail.id);
+                    setKitImportMessage(`Released kit for ${name}.`);
+                } catch (err) {
+                    alert('Unable to release kit: ' + (err?.message || 'Unknown error'));
+                } finally {
+                    finishImportProgress();
+                }
+            }, [finishImportProgress, setKitImportMessage, startImportProgress]);
+
+            const clearPlayerKit = async (detail) => {
+                if (!detail) return;
+                const playerLabel = detail.playerId
+                    ? `${playerLookup[String(detail.playerId)]?.firstName || ''} ${playerLookup[String(detail.playerId)]?.lastName || ''}`.trim()
+                    : detail.playerName || 'player';
+                if (!confirm(`Remove kit record for ${playerLabel}?`)) return;
+                startImportProgress('Removing kit record…');
+                try {
+                    const cleared = {
+                        ...detail,
+                        kitArrived: '',
+                        shirtSize: '',
+                        shortSize: '',
+                        writingOnBack: '',
+                        paid: '',
+                        numberFree: '',
+                        numberRequested: '',
+                        numberRequestedAlt: '',
+                        numberAssigned: ''
+                    };
+                    if (typeof onImportKitDetails === 'function') {
+                        await onImportKitDetails([cleared]);
+                    }
+                } catch (err) {
+                    alert('Unable to remove kit: ' + (err?.message || err));
+                } finally {
+                    finishImportProgress();
+                }
+            };
+
             const handleKitCsvFile = async (event) => {
                 const file = event.target?.files?.[0];
                 if (!file) return;
@@ -4523,6 +4877,24 @@
                 } finally {
                     setIsImportingKit(false);
                     if (event.target) event.target.value = '';
+                }
+            };
+
+            const releaseKitDetail = async (detail) => {
+                if (!detail) return;
+                const label = detail.playerName || 'player';
+                if (!confirm(`Release kit for ${label}? This frees the number.`)) return;
+                startImportProgress('Releasing kit…');
+                try {
+                    await waitForDb();
+                    if (!detail.id) throw new Error('Kit entry is missing an identifier');
+                    await db.kitDetails.delete(detail.id);
+                    alert(`Released kit for ${label}.`);
+                } catch (err) {
+                    console.error('Release kit failed', err);
+                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
+                } finally {
+                    finishImportProgress();
                 }
             };
 
@@ -4599,6 +4971,56 @@
             const cancelKitImport = () => {
                 setKitImportRows(null);
             };
+            
+            const releaseKitDetail = async (detail) => {
+                if (!detail || !detail.id) return;
+                const nameLabel = detail.playerName || 'this player';
+                const numberLabel = detail.numberAssigned ? `#${detail.numberAssigned}` : 'their number';
+                if (!confirm(`Release kit for ${nameLabel} and free up ${numberLabel}?`)) return;
+                startImportProgress('Releasing kit…');
+                try {
+                    await waitForDb();
+                    await db.kitDetails.delete(detail.id);
+                    alert(`Kit released for ${nameLabel}.`);
+                } catch (err) {
+                    console.error('Release failed', err);
+                    alert(`Unable to release kit: ${err?.message || 'Unexpected error'}`);
+                } finally {
+                    finishImportProgress();
+                }
+            };
+
+            const releaseKitEntry = async (detail) => {
+                if (!detail || !detail.id) return;
+                const label = detail.playerName || 'player';
+                const numberLabel = detail.numberAssigned ? `#${detail.numberAssigned}` : 'this entry';
+                if (!confirm(`Release ${numberLabel} for ${label} and free up that number?`)) return;
+                startImportProgress('Releasing kit…');
+                try {
+                    await db.kitDetails.delete(detail.id);
+                    setKitImportMessage(`Released ${numberLabel} for ${label}.`);
+                } catch (err) {
+                    console.error('Release failed', err);
+                    alert('Unable to release kit: ' + (err?.message || 'Unknown error'));
+                } finally {
+                    finishImportProgress();
+                }
+            };
+            
+            const removeKitDetail = useCallback(async (detail) => {
+                if (!detail?.id) return;
+                if (!confirm(`Remove kit assignment for ${detail.playerName || 'this player'}?`)) return;
+                startImportProgress('Removing kit record…');
+                try {
+                    await waitForDb();
+                    await db.kitDetails.delete(detail.id);
+                    setKitImportMessage(`Removed kit entry for ${detail.playerName || 'player'}.`);
+                } catch (err) {
+                    alert('Could not remove kit record: ' + (err?.message || 'Unexpected error'));
+                } finally {
+                    finishImportProgress();
+                }
+            }, [finishImportProgress, startImportProgress]);
             
             const addToQueue = async () => {
                 if (!queueCandidate) {
@@ -4703,31 +5125,36 @@
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                {kitEntries.length ? kitEntries.map(detail => {
-                                    const playerLabel = detail.playerId ? `${(playerLookup[detail.playerId]?.firstName || '')} ${(playerLookup[detail.playerId]?.lastName || '')}`.trim() : detail.playerName;
-                                    const displayName = playerLabel || detail.playerName || 'Unknown player';
-                                    return (
-                                        <button key={detail.id} onClick={() => detail.playerId && openPlayer(detail.playerId)} className="w-full text-left p-3 rounded-xl border border-slate-100 bg-slate-50 hover:border-brand-200 transition-colors">
-                                            <div className="flex items-center justify-between gap-3">
-                                                <div>
-                                                    <div className="text-sm font-bold text-slate-900">{displayName}</div>
-                                                    <div className="text-[11px] text-slate-500">Kit: {detail.kitArrived || 'Pending'} · Paid: {detail.paid || 'N/A'}</div>
-                                                </div>
-                                                <div className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                                                    #{detail.numberAssigned || '—'}
-                                                </div>
-                                            </div>
-                                            <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap gap-2">
-                                                {detail.shirtSize && <span>Shirt size: {detail.shirtSize}</span>}
-                                                {detail.shortSize && <span>Short size: {detail.shortSize}</span>}
-                                                {detail.writingOnBack && <span>Back name: {detail.writingOnBack}</span>}
-                                            </div>
+                        {kitEntries.length ? kitEntries.map(detail => {
+                            const playerLabel = detail.playerId ? `${(playerLookup[detail.playerId]?.firstName || '')} ${(playerLookup[detail.playerId]?.lastName || '')}`.trim() : detail.playerName;
+                            const displayName = playerLabel || detail.playerName || 'Unknown player';
+                            return (
+                                <div key={detail.id} role="button" tabIndex={0} onClick={() => detail.playerId && openPlayer(detail.playerId)} className="w-full text-left p-3 rounded-xl border border-slate-100 bg-slate-50 hover:border-brand-200 transition-colors cursor-pointer" onKeyDown={(event) => { if (event.key === 'Enter') { detail.playerId && openPlayer(detail.playerId); } }}>
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-900">{displayName}</div>
+                                            <div className="text-[11px] text-slate-500">Kit: {detail.kitArrived || 'Pending'} · Paid: {detail.paid || 'N/A'}</div>
+                                        </div>
+                                        <div className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                            #{detail.numberAssigned || '—'}
+                                        </div>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap gap-2">
+                                        {detail.shirtSize && <span>Shirt size: {detail.shirtSize}</span>}
+                                        {detail.shortSize && <span>Short size: {detail.shortSize}</span>}
+                                        {detail.writingOnBack && <span>Back name: {detail.writingOnBack}</span>}
+                                    </div>
+                                    <div className="flex justify-end mt-3">
+                                        <button type="button" onClick={(event) => { event.stopPropagation(); releaseKitDetail(detail); }} className="text-[11px] font-bold text-rose-600 border border-rose-200 bg-rose-50 px-3 py-1 rounded-full hover:bg-rose-100 transition">
+                                            Release kit
                                         </button>
-                                    );
-                                }) : (
-                                    <div className="text-sm text-slate-400 text-center">No kit records yet. Upload using the button above.</div>
-                                )}
-                            </div>
+                                    </div>
+                                </div>
+                            );
+                        }) : (
+                            <div className="text-sm text-slate-400 text-center">No kit records yet. Upload using the button above.</div>
+                        )}
+                    </div>
                         </div>
 
                         <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-soft space-y-3">
@@ -5985,8 +6412,9 @@
             }, []);
             const importProgressContext = useMemo(() => ({
                 startImportProgress,
-                finishImportProgress
-            }), [startImportProgress, finishImportProgress]);
+                finishImportProgress,
+                isImporting: importCount > 0
+            }), [startImportProgress, finishImportProgress, importCount]);
 
             useEffect(() => {
                 const load = async () => {
@@ -6014,6 +6442,13 @@
                 const list = await db.kitDetails.toArray();
                 setKitDetails(list);
             }, []);
+
+            const releaseKitDetail = useCallback(async (detailId) => {
+                if (!detailId) return;
+                await waitForDb();
+                await db.kitDetails.delete(detailId);
+                refreshKitDetails();
+            }, [refreshKitDetails]);
 
             useEffect(() => {
                 refreshKitDetails();
@@ -6067,11 +6502,185 @@
                 }
             }, []);
 
+            const releaseKitDetail = useCallback(async (detailId) => {
+                if (!detailId) return;
+                startImportProgress('Releasing kit…');
+                try {
+                    await waitForDb();
+                    await db.kitDetails.delete(detailId);
+                } finally {
+                    finishImportProgress();
+                }
+            }, [startImportProgress, finishImportProgress]);
+
+            const releaseKitDetail = useCallback(async (kitId) => {
+                if (!kitId) return;
+                await waitForDb();
+                await db.kitDetails.delete(kitId);
+            }, []);
+
+            const releaseKitDetail = useCallback(async ({ kitId, playerId }) => {
+                if (!kitId && !playerId) return;
+                await waitForDb();
+                let targetId = kitId;
+                if (!targetId && playerId) {
+                    const match = kitDetails.find(detail => detail.playerId && String(detail.playerId) === String(playerId));
+                    if (match) targetId = match.id;
+                }
+                if (!targetId) return;
+                try {
+                    await db.kitDetails.delete(targetId);
+                    setKitDetails(prev => prev.filter(detail => detail.id !== targetId));
+                } catch (err) {
+                    console.error('Release kit failed', err);
+                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
+                }
+            }, [kitDetails]);
+
+            const releaseKitDetail = useCallback(async (detail) => {
+                if (!detail?.id) return;
+                startImportProgress('Updating kit allocation…');
+                try {
+                    await waitForDb();
+                    await db.kitDetails.delete(detail.id);
+                } finally {
+                    finishImportProgress();
+                }
+            }, [startImportProgress, finishImportProgress]);
+
+            const releaseKitDetail = useCallback(async (detail) => {
+                if (!detail || !detail.id) return;
+                await waitForDb();
+                await db.kitDetails.delete(detail.id);
+                await refreshKitDetails();
+            }, [refreshKitDetails]);
+
+            const releaseKitDetail = useCallback(async (playerId) => {
+                if (!playerId) return;
+                await waitForDb();
+                await db.kitDetails.where('playerId').equals(String(playerId)).delete();
+            }, []);
+
+            const releasePlayerKit = useCallback(async (playerId) => {
+                if (!playerId) return;
+                await waitForDb();
+                const existing = await db.kitDetails.where({ playerId: String(playerId) }).first();
+                if (!existing) return;
+                await db.kitDetails.update(existing.id, {
+                    ...existing,
+                    playerId: null,
+                    numberAssigned: '',
+                    playerName: existing.playerName || '',
+                    kitArrived: existing.kitArrived || ''
+                });
+            }, []);
+            const releaseKitDetail = useCallback(async (detail) => {
+                if (!detail?.id) return;
+                await waitForDb();
+                await db.kitDetails.delete(detail.id);
+            }, []);
+
+            const releaseKitDetail = useCallback(async (detail) => {
+                if (!detail?.id) return;
+                await waitForDb();
+                await db.kitDetails.update(detail.id, {
+                    playerId: '',
+                    numberAssigned: ''
+                });
+            }, []);
+
+            const releaseKitDetail = useCallback(async (detail) => {
+                if (!detail?.id) return;
+                await waitForDb();
+                await db.kitDetails.delete(detail.id);
+                refreshKitDetails();
+            }, [refreshKitDetails]);
+
+            const releaseKitDetail = useCallback(async (playerId) => {
+                if (!playerId) return;
+                await waitForDb();
+                const existing = await db.kitDetails.where({ playerId: String(playerId) }).first();
+                if (existing) {
+                    await db.kitDetails.delete(existing.id);
+                }
+            }, []);
+
             const importKitDetails = useCallback(async (records = []) => {
                 for (const record of records) {
                     await saveKitDetail(record);
                 }
             }, [saveKitDetail]);
+
+            const releasePlayerKit = useCallback(async (playerId) => {
+                if (!playerId) return;
+                await waitForDb();
+                const existing = await db.kitDetails.where({ playerId: String(playerId) }).first();
+                if (existing) {
+                    await db.kitDetails.delete(existing.id);
+                }
+            }, []);
+
+            const releaseKit = useCallback(async (playerId) => {
+                if (!playerId) return;
+                await waitForDb();
+                const detail = await db.kitDetails.where({ playerId: String(playerId) }).first();
+                if (!detail) return;
+                await db.kitDetails.delete(detail.id);
+                await refreshKitDetails();
+                await refreshKitQueue();
+            }, [refreshKitDetails, refreshKitQueue]);
+
+            const releasePlayerKit = useCallback(async (playerId) => {
+                if (!playerId) return;
+                await waitForDb();
+                const normalizedPlayerId = String(playerId);
+                const existing = await db.kitDetails.where({ playerId: normalizedPlayerId }).first();
+                if (!existing) return;
+                await db.kitDetails.delete(existing.id);
+                await refreshKitDetails();
+            }, [refreshKitDetails]);
+
+            const removeKitDetail = useCallback(async (detailId) => {
+                if (!detailId) return;
+                await waitForDb();
+                await db.kitDetails.delete(detailId);
+            }, []);
+
+            const removeKitDetail = useCallback(async ({ id, playerId } = {}) => {
+                if (!id && !playerId) return;
+                await waitForDb();
+                if (id) {
+                    await db.kitDetails.delete(id);
+                    return;
+                }
+                const normalized = playerId ? String(playerId) : null;
+                if (!normalized) return;
+                const existing = await db.kitDetails.where({ playerId: normalized }).first();
+                if (existing) {
+                    await db.kitDetails.delete(existing.id);
+                }
+            }, []);
+
+            const removeKitDetail = useCallback(async ({ entryId, playerId }) => {
+                await waitForDb();
+                if (entryId) {
+                    await db.kitDetails.delete(entryId);
+                } else if (playerId !== undefined && playerId !== null) {
+                    const normalized = String(playerId);
+                    const existing = await db.kitDetails.where({ playerId: normalized }).first();
+                    if (existing) {
+                        await db.kitDetails.delete(existing.id);
+                    }
+                }
+                refreshKitDetails();
+            }, [refreshKitDetails]);
+
+            const removeKitDetail = useCallback(async (kitId) => {
+                if (!kitId) return;
+                await waitForDb();
+                await db.kitDetails.delete(kitId);
+                await refreshKitDetails();
+            }, [refreshKitDetails]);
 
             const addKitQueueEntry = useCallback(async ({ playerId, requestedItem, requestedNumber, requestedName, requestedShirtSize, requestedShortSize }) => {
                 const normalizedPlayerId = (playerId === undefined || playerId === null) ? '' : String(playerId).trim();
@@ -6115,11 +6724,94 @@
                 }
             }, []);
 
+            const clearPlayerKit = useCallback(async (playerId) => {
+                if (!playerId) return;
+                startImportProgress('Removing kit record…');
+                try {
+                    await waitForDb();
+                    const records = await db.kitDetails.where({ playerId: String(playerId) }).toArray();
+                    if (!records.length) return;
+                    await db.kitDetails.bulkDelete(records.map(record => record.id));
+                } finally {
+                    finishImportProgress();
+                }
+            }, [finishImportProgress, startImportProgress]);
+
+            const removeKitDetail = useCallback(async (detailId) => {
+                if (!detailId) return;
+                await waitForDb();
+                await db.kitDetails.delete(detailId);
+            }, []);
+
             const removeKitQueueEntry = useCallback(async (entryId) => {
                 if (!entryId) return;
                 await waitForDb();
                 await db.kitQueue.delete(entryId);
             }, []);
+
+            const releaseKitDetail = useCallback(async (playerId) => {
+                if (!playerId) return;
+                startImportProgress('Releasing kit…');
+                try {
+                    await waitForDb();
+                    const record = await db.kitDetails.where({ playerId: String(playerId) }).and(detail => !detail.releasedAt).first();
+                    if (!record) {
+                        alert('No active kit record found for this player.');
+                        return;
+                    }
+                    await db.kitDetails.update(record.id, { ...record, releasedAt: new Date().toISOString() });
+                    await refreshKitDetails();
+                } catch (err) {
+                    console.error('Release failed', err);
+                    alert('Unable to release kit: ' + (err?.message || 'Unknown error'));
+                } finally {
+                    finishImportProgress();
+                }
+            }, [startImportProgress, finishImportProgress, refreshKitDetails]);
+
+            const releaseKitDetail = useCallback(async (player) => {
+                if (!player) return;
+                await waitForDb();
+                const playerId = String(player.id);
+                const existing = await db.kitDetails.where({ playerId }).first();
+                if (!existing) return;
+                await db.kitDetails.delete(existing.id);
+                await refreshKitDetails();
+            }, [refreshKitDetails]);
+
+            const releasePlayerKit = useCallback(async (playerId) => {
+                if (!playerId) return;
+                await waitForDb();
+                const normalized = String(playerId);
+                const existing = await db.kitDetails.where('playerId').equals(normalized).first();
+                if (!existing) return;
+                await db.kitDetails.delete(existing.id);
+                refreshKitDetails();
+            }, [refreshKitDetails]);
+
+            const releaseKitDetail = useCallback(async (detailId) => {
+                if (!detailId) return;
+                await waitForDb();
+                await db.kitDetails.delete(detailId);
+                await refreshKitDetails();
+            }, [refreshKitDetails]);
+
+            const releaseKitDetail = useCallback(async (detail) => {
+                if (!detail) return;
+                await waitForDb();
+                try {
+                    if (detail.id) {
+                        await db.kitDetails.delete(detail.id);
+                    } else if (detail.playerId) {
+                        const existing = await db.kitDetails.where({ playerId: String(detail.playerId) }).first();
+                        if (existing) {
+                            await db.kitDetails.delete(existing.id);
+                        }
+                    }
+                } finally {
+                    await refreshKitDetails();
+                }
+            }, [refreshKitDetails]);
 
             useEffect(() => {
                 persistKitNumberLimit(kitNumberLimit);
@@ -6179,9 +6871,9 @@
                             {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
                             {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
                             {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
-                            {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} saveKitDetail={saveKitDetail} kitSizeOptions={kitSizeOptions} />}
+                            {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} saveKitDetail={saveKitDetail} kitSizeOptions={kitSizeOptions} releasePlayerKit={releasePlayerKit} />}
                             {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
-                            {activeTab === 'kit' && <Kit kitDetails={kitDetails} onImportKitDetails={importKitDetails} kitQueue={kitQueue} onAddQueueEntry={addKitQueueEntry} onRemoveQueueEntry={removeKitQueueEntry} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} kitSizeOptions={kitSizeOptions} onNavigate={setActiveTab} />}
+                        {activeTab === 'kit' && <Kit kitDetails={kitDetails} onImportKitDetails={importKitDetails} onRemoveKitDetail={removeKitDetail} kitQueue={kitQueue} onAddQueueEntry={addKitQueueEntry} onRemoveQueueEntry={removeKitQueueEntry} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} kitSizeOptions={kitSizeOptions} onNavigate={setActiveTab} />}
                             <div className="pt-6 text-center text-[10px] text-slate-400">Build {APP_VERSION}</div>
                         </main>
                         
