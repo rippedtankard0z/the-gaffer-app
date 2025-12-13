@@ -365,26 +365,6 @@
 
         const deriveFlow = (type) => type === 'INCOME' ? 'receivable' : 'payable';
 
-        const formatCategoryLabel = (category) => {
-            if (!category) return '';
-            return String(category)
-                .replace(/_/g, ' ')
-                .split(' ')
-                .map(word => word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : '')
-                .join(' ')
-                .trim();
-        };
-
-        const formatCategoryLabel = (category) => {
-            if (!category) return '';
-            return String(category)
-                .replace(/_/g, ' ')
-                .split(' ')
-                .map(word => word ? word[0].toUpperCase() + word.slice(1).toLowerCase() : '')
-                .join(' ')
-                .trim();
-        };
-
         const formatCurrency = (value, options = {}) => {
             const amount = Number(value || 0);
             try {
@@ -392,26 +372,6 @@
             } catch (e) {
                 return `S$${amount.toFixed(options.minimumFractionDigits || 0)}`;
             }
-        };
-
-        const formatCategoryLabel = (category = '') => {
-            if (!category) return '';
-            return category
-                .toString()
-                .split(/[\s_]+/)
-                .map(part => part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : '')
-                .join(' ')
-                .trim();
-        };
-
-        const formatCategoryLabel = (category = '') => {
-            if (!category) return '';
-            return category
-                .toString()
-                .split(/[\s_]+/)
-                .map(part => part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : '')
-                .join(' ')
-                .trim();
         };
 
         // Turn categories like MATCH_FEE into "Match Fee" for UI/WhatsApp output.
