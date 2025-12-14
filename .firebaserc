@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "the-gaffer-581d8",
+    "prod": "the-gaffer-581d8"
+  },
+  "targets": {},
+  "etags": {}
+}

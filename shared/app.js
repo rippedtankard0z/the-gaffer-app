@@ -1,9 +1,11 @@
 'use strict';
         const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
-        const APP_VERSION = window.GAFFER_BUILD_VERSION || 'dev';
+        const MASTER_BUILD_VERSION = '2024.12.06-07';
+        if (!window.GAFFER_BUILD_VERSION) {
+            window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
+        }
+        const APP_VERSION = window.GAFFER_BUILD_VERSION;
         const READ_ONLY = !!window.GAFFER_READ_ONLY;
-console.log('[Gaffer] READ_ONLY =', READ_ONLY);
-
         const VERSION_STORAGE_KEY = 'gaffer:lastBuildVersion';
         console.info('[Gaffer] Loaded build version:', APP_VERSION);
 
@@ -38,6 +40,20 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
             } catch (e) {
                 return `S$${amount.toFixed(options.minimumFractionDigits || 0)}`;
             }
+        };
+
+        const formatBuildLabel = (version, isViewer = false) => {
+            const raw = (version || '').toString().trim();
+            if (!raw && isViewer) return 'viewer';
+            let withoutPrefix = raw.replace(/^v+/i, '');
+            if (isViewer) {
+                const lower = withoutPrefix.toLowerCase();
+                if (lower.startsWith('viewer-')) {
+                    withoutPrefix = withoutPrefix.slice(withoutPrefix.indexOf('-') + 1);
+                }
+                return `viewer | ${withoutPrefix || 'latest'}`;
+            }
+            return withoutPrefix || 'latest';
         };
 
         // Turn categories like MATCH_FEE into "Match Fee" for UI/WhatsApp output.
@@ -5417,6 +5433,47 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
                 </div>
             );
         };
+        const BACKUP_SCOPE_ITEMS = [
+            { key: 'players', type: 'collection', label: 'Players & profiles', description: 'Squad names, kit sizes, personal balances and notes.' },
+            { key: 'fixtures', type: 'collection', label: 'Fixtures & match history', description: 'Past and future games with scores and tags.' },
+            { key: 'transactions', type: 'collection', label: 'Ledger activity', description: 'All match fees, payments and reimbursements.' },
+            { key: 'participations', type: 'collection', label: 'Participation links', description: 'Attendance and linking between players and fixtures.' },
+            { key: 'opponents', type: 'collection', label: 'Opponents directory', description: 'Saved teams for quick match setup.' },
+            { key: 'venues', type: 'collection', label: 'Venues list', description: 'Grounds, pitches and saved venue details.' },
+            { key: 'referees', type: 'collection', label: 'Referees & contacts', description: 'Officials with saved phone numbers.' },
+            { key: 'kitDetails', type: 'collection', label: 'Kit holders', description: 'Current kit assignments and status.' },
+            { key: 'kitQueue', type: 'collection', label: 'Kit order queue', description: 'Upcoming kit requests and priorities.' },
+            { key: 'kitSettings', type: 'setting', label: 'Kit settings', description: 'Number limits and available size options.' },
+            { key: 'positionDefinitions', type: 'collection', label: 'Position definitions', description: 'Master list that powers player roles.' },
+            { key: 'categories', type: 'collection', label: 'Cost categories', description: 'Custom buckets for expenses and income.' },
+            { key: 'itemCategories', type: 'collection', label: 'Player item presets', description: 'Saved kit charge labels for player cards.' },
+            { key: 'seasonCategories', type: 'collection', label: 'Season tags', description: 'Named seasons used across fixtures and imports.' },
+            { key: 'refDefaults', type: 'setting', label: 'Referee defaults', description: 'Preferred referee fee, payment method and reminders.' }
+        ];
+
+        const summarizeBackupData = (data = {}) => {
+            const countList = (list) => Array.isArray(list) ? list.length : 0;
+            const hasKitLimit = Number.isFinite(Number(data?.kitNumberLimit));
+            const hasKitSizes = Array.isArray(data?.kitSizeOptions) && data.kitSizeOptions.length;
+            return {
+                players: countList(data.players),
+                fixtures: countList(data.fixtures),
+                transactions: countList(data.transactions),
+                participations: countList(data.participations),
+                opponents: countList(data.opponents),
+                venues: countList(data.venues),
+                referees: countList(data.referees),
+                kitDetails: countList(data.kitDetails),
+                kitQueue: countList(data.kitQueue),
+                kitSettings: (hasKitLimit || hasKitSizes) ? 1 : 0,
+                positionDefinitions: countList(data.positionDefinitions),
+                categories: countList(data.categories),
+                itemCategories: countList(data.itemCategories),
+                seasonCategories: countList(data.seasonCategories),
+                refDefaults: data.refDefaults ? 1 : 0
+            };
+        };
+
         const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, kitSizeOptions = [], setKitSizeOptions, kitNumberLimit, setKitNumberLimit, hideHeader = false }) => {
             const [newCat, setNewCat] = useState('');
             const [newItemCat, setNewItemCat] = useState('');
@@ -5441,7 +5498,14 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
             const [isImportAllBusy, setIsImportAllBusy] = useState(false);
             const [isImportAllDone, setIsImportAllDone] = useState(false);
             const [importAllStatus, setImportAllStatus] = useState('Preparing files…');
-            const { startImportProgress, finishImportProgress } = useImportProgress();
+            const [lastBackupSummary, setLastBackupSummary] = useState(null);
+            const [isBackupPreviewOpen, setIsBackupPreviewOpen] = useState(false);
+            const [isBackupGenerating, setIsBackupGenerating] = useState(false);
+            const [isImportPreviewOpen, setIsImportPreviewOpen] = useState(false);
+            const [importPreviewData, setImportPreviewData] = useState(null);
+            const [importPreviewSummary, setImportPreviewSummary] = useState({});
+            const [importPreviewName, setImportPreviewName] = useState('');
+            const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
 
             useEffect(() => {
                 const loadFixtures = async () => {
@@ -5478,6 +5542,12 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
             const [reassignModal, setReassignModal] = useState({ open: false, cat: '', isItem: false, count: 0 });
             const [reassignChoice, setReassignChoice] = useState('');
             const [reassignNew, setReassignNew] = useState('');
+            const resetImportPreviewState = () => {
+                setImportPreviewData(null);
+                setImportPreviewSummary({});
+                setImportPreviewName('');
+                if(importInputRef.current) importInputRef.current.value = '';
+            };
             const archiveSeason = async (carryDebt) => {
                 if(!confirm(`Archive season and ${carryDebt ? 'carry over' : 'reset'} balances?`)) return;
                 const ts = new Date().toISOString();
@@ -6084,16 +6154,38 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
             };
 
             const backupData = async () => {
+                const [
+                    players,
+                    fixtures,
+                    transactions,
+                    participations,
+                    opponents,
+                    venues,
+                    referees,
+                    kitDetails,
+                    kitQueueEntries
+                ] = await Promise.all([
+                    db.players.toArray(),
+                    db.fixtures.toArray(),
+                    db.transactions.toArray(),
+                    db.participations.toArray(),
+                    db.opponents.toArray(),
+                    db.venues.toArray(),
+                    db.referees.toArray(),
+                    db.kitDetails.toArray(),
+                    db.kitQueue.toArray()
+                ]);
+                const generatedAt = new Date();
                 const payload = {
-                    players: await db.players.toArray(),
-                    fixtures: await db.fixtures.toArray(),
-                    transactions: await db.transactions.toArray(),
-                    participations: await db.participations.toArray(),
-                    opponents: await db.opponents.toArray(),
-                    venues: await db.venues.toArray(),
-                    referees: await db.referees.toArray(),
-                    kitDetails: await db.kitDetails.toArray(),
-                    kitQueue: await db.kitQueue.toArray(),
+                    players,
+                    fixtures,
+                    transactions,
+                    participations,
+                    opponents,
+                    venues,
+                    referees,
+                    kitDetails,
+                    kitQueue: kitQueueEntries,
                     kitNumberLimit,
                     kitSizeOptions,
                     positionDefinitions,
@@ -6101,34 +6193,73 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
                     itemCategories,
                     seasonCategories,
                     refDefaults,
-                    generatedAt: new Date().toISOString()
+                    generatedAt: generatedAt.toISOString()
                 };
                 const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
                 const link = document.createElement('a');
                 link.href = URL.createObjectURL(blob);
-                link.download = `gaffer-backup-${new Date().toISOString().split('T')[0]}.json`;
+                link.download = `gaffer-backup-${generatedAt.toISOString().split('T')[0]}.json`;
                 link.click();
+                const counts = {
+                    players: players.length,
+                    fixtures: fixtures.length,
+                    transactions: transactions.length,
+                    participations: participations.length,
+                    opponents: opponents.length,
+                    venues: venues.length,
+                    referees: referees.length,
+                    kitDetails: kitDetails.length,
+                    kitQueue: kitQueueEntries.length
+                };
+                const summaryParts = [
+                    ['players', 'players'],
+                    ['fixtures', 'fixtures'],
+                    ['transactions', 'ledger entries'],
+                    ['participations', 'participations'],
+                    ['opponents', 'opponents'],
+                    ['venues', 'venues'],
+                    ['referees', 'referees'],
+                    ['kitDetails', 'kit holders'],
+                    ['kitQueue', 'kit queue entries']
+                ].map(([key, label]) => {
+                    const value = counts[key];
+                    return typeof value === 'number' ? `${value} ${label}` : null;
+                }).filter(Boolean);
+                setLastBackupSummary({
+                    timestamp: generatedAt.toISOString(),
+                    details: summaryParts.join(', ')
+                });
             };
 
-            const handleImportFile = async (e) => {
-                const file = e.target.files?.[0];
-                if(!file) return;
-                let data = null;
+            const confirmBackupDownload = async () => {
+                setIsBackupGenerating(true);
                 try {
-                    const text = await file.text();
-                    data = JSON.parse(text);
+                    await backupData();
+                    setIsBackupPreviewOpen(false);
                 } catch (err) {
-                    alert('Import failed. Invalid file?');
-                    if(importInputRef.current) importInputRef.current.value = '';
+                    alert('Backup failed: ' + err.message);
+                } finally {
+                    setIsBackupGenerating(false);
+                }
+            };
+
+            const cancelImportPreview = () => {
+                if(isImporting) return;
+                setIsImportPreviewOpen(false);
+                resetImportPreviewState();
+            };
+
+            const confirmBackupImport = async () => {
+                if(!importPreviewData) {
+                    setIsImportPreviewOpen(false);
                     return;
                 }
-                if(!confirm('Importing will overwrite existing data. Continue?')) {
-                    if(importInputRef.current) importInputRef.current.value = '';
-                    return;
-                }
+                const data = importPreviewData;
+                setIsImportPreviewOpen(false);
                 startImportProgress('Importing backup data…');
                 setIsImporting(true);
                 try {
+                    addProgressDetail('Clearing existing records…');
                     await db.fixtures.clear();
                     await db.players.clear();
                     await db.transactions.clear();
@@ -6138,38 +6269,73 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
                     await db.referees.clear();
                     await db.kitDetails.clear();
                     await db.kitQueue.clear();
-                    if(data.players?.length) await db.players.bulkAdd(data.players);
-                    if(data.fixtures?.length) await db.fixtures.bulkAdd(data.fixtures);
+                    if(data.players?.length) {
+                        addProgressDetail(`Restoring ${data.players.length} players…`);
+                        await db.players.bulkAdd(data.players);
+                    }
+                    if(data.fixtures?.length) {
+                        addProgressDetail(`Restoring ${data.fixtures.length} fixtures…`);
+                        await db.fixtures.bulkAdd(data.fixtures);
+                    }
                     if(data.transactions?.length) {
+                        addProgressDetail(`Importing ${data.transactions.length} ledger rows…`);
                         const normalizedTx = data.transactions.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) }));
                         await db.transactions.bulkAdd(normalizedTx);
                     }
-                    if(data.participations?.length) await db.participations.bulkAdd(data.participations);
-                    if(data.opponents?.length) await db.opponents.bulkAdd(data.opponents);
-                    if(data.venues?.length) await db.venues.bulkAdd(data.venues);
-                    if(data.referees?.length) await db.referees.bulkAdd(data.referees);
-                    if(data.kitDetails?.length) await db.kitDetails.bulkPut(data.kitDetails);
-                    if(data.kitQueue?.length) await db.kitQueue.bulkPut(data.kitQueue);
+                    if(data.participations?.length) {
+                        addProgressDetail(`Linking ${data.participations.length} participations…`);
+                        await db.participations.bulkAdd(data.participations);
+                    }
+                    if(data.opponents?.length) {
+                        addProgressDetail(`Adding ${data.opponents.length} opponents…`);
+                        await db.opponents.bulkAdd(data.opponents);
+                    }
+                    if(data.venues?.length) {
+                        addProgressDetail(`Adding ${data.venues.length} venues…`);
+                        await db.venues.bulkAdd(data.venues);
+                    }
+                    if(data.referees?.length) {
+                        addProgressDetail(`Adding ${data.referees.length} referees…`);
+                        await db.referees.bulkAdd(data.referees);
+                    }
+                    if(data.kitDetails?.length) {
+                        addProgressDetail(`Restoring ${data.kitDetails.length} kit holders…`);
+                        await db.kitDetails.bulkPut(data.kitDetails);
+                    }
+                    if(data.kitQueue?.length) {
+                        addProgressDetail(`Restoring ${data.kitQueue.length} kit queue entries…`);
+                        await db.kitQueue.bulkPut(data.kitQueue);
+                    }
                     const nextCats = Array.isArray(data.categories) ? data.categories : [];
+                    if(nextCats.length) addProgressDetail('Updating cost categories…');
                     setCategories(nextCats);
                     persistCategories(nextCats);
                     const nextItemCats = Array.isArray(data.itemCategories) ? data.itemCategories : [];
+                    if(nextItemCats.length) addProgressDetail('Updating player item categories…');
                     setItemCategories(nextItemCats);
                     persistItemCategories(nextItemCats);
                     const nextSeasonCats = Array.isArray(data.seasonCategories) ? data.seasonCategories : [];
+                    if(nextSeasonCats.length) addProgressDetail('Updating seasons…');
                     setSeasonCategories(nextSeasonCats);
                     persistSeasonCategories(nextSeasonCats);
-                    if(data.refDefaults) { setRefDefaults(data.refDefaults); persistRefDefaults(data.refDefaults); }
+                    if(data.refDefaults) {
+                        addProgressDetail('Restoring referee defaults…');
+                        setRefDefaults(data.refDefaults);
+                        persistRefDefaults(data.refDefaults);
+                    }
                     if(Number.isFinite(Number(data?.kitNumberLimit))) {
                         const limit = Math.max(1, Number(data.kitNumberLimit));
+                        addProgressDetail(`Setting kit number limit to ${limit}…`);
                         setKitNumberLimit(limit);
                         persistKitNumberLimit(limit);
                     }
                     if(Array.isArray(data?.kitSizeOptions)) {
+                        addProgressDetail('Updating kit sizes…');
                         setKitSizeOptions(data.kitSizeOptions);
                         persistKitSizeOptions(data.kitSizeOptions);
                     }
                     if(Array.isArray(data?.positionDefinitions)) {
+                        addProgressDetail('Restoring position definitions…');
                         const cleanedPositions = data.positionDefinitions.map(item => {
                             const code = (item?.code || '').toString().trim();
                             const label = (item?.label || '').toString().trim();
@@ -6189,7 +6355,23 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
                 } finally {
                     setIsImporting(false);
                     finishImportProgress();
-                    if(importInputRef.current) importInputRef.current.value = '';
+                    resetImportPreviewState();
+                }
+            };
+
+            const handleImportFile = async (e) => {
+                const file = e.target.files?.[0];
+                if(!file) return;
+                try {
+                    const text = await file.text();
+                    const json = JSON.parse(text);
+                    setImportPreviewData(json);
+                    setImportPreviewSummary(summarizeBackupData(json));
+                    setImportPreviewName(file.name || 'backup.json');
+                    setIsImportPreviewOpen(true);
+                } catch (err) {
+                    alert('Import failed. Invalid file?');
+                    resetImportPreviewState();
                 }
             };
 
@@ -6331,13 +6513,18 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
                     <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Backup & Import</div>
                         <div className="flex gap-2">
-                            <button onClick={backupData} className="flex-1 bg-slate-900 text-white font-bold rounded-lg px-4 py-3">Download Backup</button>
-                            <button onClick={() => importInputRef.current?.click()} className="flex-1 bg-slate-100 text-slate-800 border border-slate-200 font-bold rounded-lg px-4 py-3">
+                            <button onClick={() => setIsBackupPreviewOpen(true)} className="flex-1 bg-slate-900 text-white font-bold rounded-lg px-4 py-3">Download Backup</button>
+                            <button onClick={() => importInputRef.current?.click()} disabled={isImporting} className={`flex-1 border border-slate-200 font-bold rounded-lg px-4 py-3 ${isImporting ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-100 text-slate-800'}`}>
                                 {isImporting ? 'Importing…' : 'Import Data'}
                             </button>
                         </div>
                         <input type="file" accept="application/json" ref={importInputRef} className="hidden" onChange={handleImportFile} />
-                        <div className="text-[11px] text-slate-500">Backup includes players, fixtures, transactions, participations, and categories.</div>
+                        <div className="text-[11px] text-slate-500">Backups run locally and include players, fixtures, ledger activity, kit tracking, and saved settings.</div>
+                        {lastBackupSummary && (
+                            <div className="text-[11px] text-emerald-600 mt-1">
+                                All data backed up at {new Date(lastBackupSummary.timestamp).toLocaleString()} ({lastBackupSummary.details}).
+                            </div>
+                        )}
                         <div className="mt-4 p-3 rounded-xl bg-slate-50 border border-slate-200">
                             <div className="flex items-center justify-between">
                                 <div>
@@ -6414,6 +6601,67 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
                         </div>
                         <div className="text-[11px] text-slate-500">These actions are destructive and local; consider exporting a backup first.</div>
                     </div>
+
+                    <Modal isOpen={isImportPreviewOpen} onClose={() => { if(!isImporting) cancelImportPreview(); }} title="Import Contents">
+                        {importPreviewName && (
+                            <div className="mb-2 text-xs text-slate-500">File: <span className="font-semibold text-slate-700">{importPreviewName}</span></div>
+                        )}
+                        <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                            {BACKUP_SCOPE_ITEMS.map(item => {
+                                const count = importPreviewSummary[item.key] || 0;
+                                const included = count > 0;
+                                const statusText = item.type === 'setting'
+                                    ? (included ? 'Included' : 'Not included')
+                                    : (included ? `${count} record${count === 1 ? '' : 's'}` : 'Not included');
+                                return (
+                                    <div key={item.key} className={`flex gap-3 p-3 rounded-xl border ${included ? 'border-emerald-100 bg-emerald-50' : 'border-slate-100 bg-white'}`}>
+                                        <div className={`mt-1 h-6 w-6 rounded-full border flex items-center justify-center ${included ? 'bg-emerald-600/10 border-emerald-200 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-400'}`}>
+                                            <Icon name={included ? 'Check' : 'Minus'} size={16} />
+                                        </div>
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-800">{item.label}</div>
+                                            <div className="text-xs text-slate-500">{item.description}</div>
+                                            <div className="text-[11px] text-slate-400 mt-1">{statusText}</div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <p className="mt-4 text-[11px] text-amber-600 font-semibold">Importing will completely replace your current data with the contents of this file.</p>
+                        <div className="mt-4 flex gap-2">
+                            <button onClick={cancelImportPreview} disabled={isImporting} className={`flex-1 rounded-lg border border-slate-200 px-4 py-2 font-bold ${isImporting ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-50 text-slate-700'}`}>
+                                Cancel
+                            </button>
+                            <button onClick={confirmBackupImport} disabled={isImporting} className={`flex-1 rounded-lg px-4 py-2 font-bold text-white ${isImporting ? 'bg-slate-400 cursor-wait' : 'bg-rose-600'}`}>
+                                {isImporting ? 'Importing…' : 'Replace data'}
+                            </button>
+                        </div>
+                    </Modal>
+
+                    <Modal isOpen={isBackupPreviewOpen} onClose={() => { if(!isBackupGenerating) setIsBackupPreviewOpen(false); }} title="Backup Contents">
+                        <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                            {BACKUP_SCOPE_ITEMS.map(item => (
+                                <div key={item.key} className="flex gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                    <div className="mt-1 h-6 w-6 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
+                                        <Icon name="Check" size={16} />
+                                    </div>
+                                    <div>
+                                        <div className="text-sm font-bold text-slate-800">{item.label}</div>
+                                        <div className="text-xs text-slate-500">{item.description}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <p className="mt-4 text-[11px] text-slate-500">Backups are generated locally in your browser. Click OK when you are ready to download the JSON file.</p>
+                        <div className="mt-4 flex gap-2">
+                            <button onClick={() => setIsBackupPreviewOpen(false)} disabled={isBackupGenerating} className={`flex-1 rounded-lg border border-slate-200 px-4 py-2 font-bold ${isBackupGenerating ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-50 text-slate-700'}`}>
+                                Cancel
+                            </button>
+                            <button onClick={confirmBackupDownload} disabled={isBackupGenerating} className={`flex-1 rounded-lg px-4 py-2 font-bold text-white ${isBackupGenerating ? 'bg-slate-400 cursor-wait' : 'bg-slate-900'}`}>
+                                {isBackupGenerating ? 'Preparing…' : 'OK, download'}
+                            </button>
+                        </div>
+                    </Modal>
 
                     <Modal isOpen={legacyPreview.length > 0} onClose={() => setLegacyPreview([])} title="Review Legacy Import">
                         <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
@@ -6774,19 +7022,15 @@ console.log('[Gaffer] READ_ONLY =', READ_ONLY);
                         )}
 
                         <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
-                            {READ_ONLY && (
-  <div className="mt-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-[11px] space-y-1">
-    <div className="text-xs font-bold tracking-wide">VIEW ONLY</div>
-    <div>Changes will not be saved.</div>
-  </div>
-)}
 {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
                             {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
                             {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
                             {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} saveKitDetail={saveKitDetail} kitSizeOptions={kitSizeOptions} />}
                             {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
                         {activeTab === 'kit' && <Kit kitDetails={kitDetails} onImportKitDetails={importKitDetails} kitQueue={kitQueue} onAddQueueEntry={addKitQueueEntry} onRemoveQueueEntry={removeKitQueueEntry} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} kitSizeOptions={kitSizeOptions} onNavigate={setActiveTab} />}
-                            <div className="pt-6 text-center text-[10px] text-slate-400">Build {APP_VERSION}</div>
+                            <div className="pt-6 text-center text-[10px] text-slate-400">
+                                {READ_ONLY ? formatBuildLabel(APP_VERSION, true) : `Build ${formatBuildLabel(APP_VERSION, false)}`}
+                            </div>
                         </main>
                         
                         <Nav activeTab={activeTab} setTab={setActiveTab} />
