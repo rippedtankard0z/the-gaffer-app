@@ -62,16 +62,9 @@
             };
         };
         const resolveDefaultLogo = () => {
-            if (typeof window !== 'undefined' && window.location) {
-                const { origin = '', protocol = '', pathname = '' } = window.location;
-                if (origin && protocol !== 'file:') {
-                    return `${origin.replace(/\/$/, '')}/assets/images/Exiles-Logo.jpg.webp`;
-                }
-                if (pathname.includes('/prod/') || pathname.includes('/viewer/')) {
-                    return '../assets/images/Exiles-Logo.jpg.webp';
-                }
-            }
-            return './assets/images/Exiles-Logo.jpg.webp';
+            if (typeof window === 'undefined') return './assets/images/Exiles-Logo.jpg.webp';
+            const base = (window.GAFFER_ASSET_BASE || '.').toString().replace(/\/$/, '');
+            return `${base}/assets/images/Exiles-Logo.jpg.webp`;
         };
         const TEAM_LOGO_SRC = window.GAFFER_LOGO_SRC || resolveDefaultLogo();
 
