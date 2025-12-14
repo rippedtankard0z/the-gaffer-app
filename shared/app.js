@@ -62,9 +62,14 @@
             };
         };
         const resolveDefaultLogo = () => {
-            const path = (window.location && window.location.pathname) || '';
-            if (path.includes('/prod/') || path.includes('/viewer/')) {
-                return '../assets/images/Exiles-Logo.jpg.webp';
+            if (typeof window !== 'undefined' && window.location) {
+                const { origin = '', protocol = '', pathname = '' } = window.location;
+                if (origin && protocol !== 'file:') {
+                    return `${origin.replace(/\/$/, '')}/assets/images/Exiles-Logo.jpg.webp`;
+                }
+                if (pathname.includes('/prod/') || pathname.includes('/viewer/')) {
+                    return '../assets/images/Exiles-Logo.jpg.webp';
+                }
             }
             return './assets/images/Exiles-Logo.jpg.webp';
         };
