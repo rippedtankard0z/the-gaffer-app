@@ -385,6 +385,53 @@
                 .trim();
         };
 
+        const normalizeMotm = (val = '') => (val || '').toString().trim();
+
+        const resolveMotmName = (motm, players = []) => {
+            const clean = normalizeMotm(motm);
+            if (!clean) return '';
+            const asNum = Number(clean);
+            if (!Number.isNaN(asNum)) {
+                const player = players.find(p => Number(p.id) === asNum);
+                if (player) return `${player.firstName} ${player.lastName}`.trim();
+            }
+            const byName = players.find(p => `${p.firstName} ${p.lastName}`.trim().toLowerCase() === clean.toLowerCase());
+            if (byName) return `${byName.firstName} ${byName.lastName}`.trim();
+            return clean;
+        };
+
+        const normalizeMotm = (val = '') => (val || '').toString().trim();
+
+        const resolveMotmName = (motm, players = []) => {
+            const clean = normalizeMotm(motm);
+            if (!clean) return '';
+            const asNum = Number(clean);
+            if (!Number.isNaN(asNum)) {
+                const p = players.find(pl => Number(pl.id) === asNum);
+                if (p) return `${p.firstName} ${p.lastName}`.trim();
+            }
+            const match = players.find(pl => (`${pl.firstName} ${pl.lastName}`).toLowerCase() === clean.toLowerCase());
+            if (match) return `${match.firstName} ${match.lastName}`.trim();
+            return clean;
+        };
+
+        const normalizeMotm = (val = '') => (val ?? '').toString().trim();
+        const resolveMotmName = (motm, players = []) => {
+            const trimmed = normalizeMotm(motm);
+            if (!trimmed) return '';
+            const idNum = Number(trimmed);
+            if (!Number.isNaN(idNum)) {
+                const byId = players.find(p => Number(p.id) === idNum);
+                if (byId) return `${byId.firstName} ${byId.lastName}`.trim();
+            }
+            const lower = trimmed.toLowerCase();
+            const byExact = players.find(p => `${p.firstName} ${p.lastName}`.toLowerCase() === lower);
+            if (byExact) return `${byExact.firstName} ${byExact.lastName}`.trim();
+            const byFirst = players.find(p => p.firstName.toLowerCase() === lower);
+            if (byFirst) return `${byFirst.firstName} ${byFirst.lastName}`.trim();
+            return trimmed;
+        };
+
         const transactionHasCoveringPayment = (charge, txList = []) => {
             if (!charge || !Array.isArray(txList) || !txList.length) return false;
             return txList.some(tx => (
@@ -620,12 +667,180 @@
                 .slice(0, limit);
         };
 
+        const resolveMotmName = (value, players = []) => {
+            const raw = (value && typeof value === 'object' && value.manOfTheMatch !== undefined) ? value.manOfTheMatch : value;
+            if (!raw) return '';
+            const numericId = Number(raw);
+            if (!Number.isNaN(numericId)) {
+                const player = players.find(p => Number(p.id) === numericId);
+                if (player) return `${player.firstName} ${player.lastName}`.trim();
+            }
+            return raw.toString().trim();
+        };
+
+        const resolveMotmName = (value, players = []) => {
+            const raw = (value && value.manOfTheMatch !== undefined) ? value.manOfTheMatch : value;
+            if (!raw) return '';
+            const numericId = Number(raw);
+            if (!Number.isNaN(numericId)) {
+                const player = players.find(p => Number(p.id) === numericId);
+                if (player) return `${player.firstName} ${player.lastName}`.trim();
+            }
+            return raw.toString().trim();
+        };
+
+        const normalizeMotm = (value) => value ? String(value).trim() : '';
+        const resolveMotmName = (motm, players = []) => {
+            const clean = normalizeMotm(motm);
+            if (!clean) return '';
+            const byId = players.find(p => String(p.id) === clean);
+            if (byId) return `${byId.firstName} ${byId.lastName}`;
+            const byName = players.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase() === clean.toLowerCase());
+            return byName ? `${byName.firstName} ${byName.lastName}` : clean;
+        };
+
         const parseDate = (str) => {
             if (!str) return new Date().toISOString();
             const parts = str.split('/');
             if (parts.length !== 3) return new Date().toISOString();
             try { return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString(); } 
             catch (e) { return new Date().toISOString(); }
+        };
+
+        const normalizeMotm = (value = '') => value ? String(value).trim() : '';
+        const resolveMotmName = (motm, players = []) => {
+            const clean = normalizeMotm(motm);
+            if (!clean) return '';
+            const lower = clean.toLowerCase();
+            const matched = players.find(p => String(p.id) === clean || `${p.firstName} ${p.lastName}`.toLowerCase() === lower);
+            return matched ? `${matched.firstName} ${matched.lastName}` : clean;
+        };
+        const normalizeMotm = (value = '') => value ? String(value).trim() : '';
+        const resolveMotmName = (motm, players = []) => {
+            const clean = normalizeMotm(motm);
+            if (!clean) return '';
+            const byId = players.find(p => String(p.id) === clean);
+            if (byId) return `${byId.firstName} ${byId.lastName}`;
+            const byName = players.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase() === clean.toLowerCase());
+            return byName ? `${byName.firstName} ${byName.lastName}` : clean;
+        };
+
+        const normalizeMotm = (value = '') => value ? String(value).trim() : '';
+        const resolveMotmName = (motm, players = []) => {
+            const clean = normalizeMotm(motm);
+            if (!clean) return '';
+            const byId = players.find(p => String(p.id) === clean);
+            if (byId) return `${byId.firstName} ${byId.lastName}`;
+            const byName = players.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase() === clean.toLowerCase());
+            return byName ? `${byName.firstName} ${byName.lastName}` : clean;
+        };
+
+        const normalizeMotm = (value) => value ? String(value).trim() : '';
+        const resolveMotmName = (motm, players = []) => {
+            const clean = normalizeMotm(motm);
+            if (!clean) return '';
+            const byId = players.find(p => String(p.id) === clean);
+            if (byId) return `${byId.firstName} ${byId.lastName}`;
+            const byName = players.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase() === clean.toLowerCase());
+            return byName ? `${byName.firstName} ${byName.lastName}` : clean;
+        };
+
+        const normalizeMotm = (value = '') => (value || '').toString().trim();
+        const resolveMotmName = (motm, players = []) => {
+            const trimmed = normalizeMotm(motm);
+            if (!trimmed) return '';
+            const num = Number(trimmed);
+            if (!Number.isNaN(num)) {
+                const found = players.find(p => Number(p.id) === num);
+                if (found) return `${found.firstName} ${found.lastName}`;
+            }
+            const exact = players.find(p => `${p.firstName} ${p.lastName}`.toLowerCase() === trimmed.toLowerCase());
+            if (exact) return `${exact.firstName} ${exact.lastName}`;
+            return trimmed;
+        };
+
+        const normalizeMotm = (val = '') => (val || '').toString().trim();
+        const resolveMotmName = (motm, players = []) => {
+            const clean = normalizeMotm(motm);
+            if (!clean) return '';
+            const num = Number(clean);
+            if (!Number.isNaN(num)) {
+                const match = players.find(p => Number(p.id) === num);
+                if (match) return `${match.firstName} ${match.lastName}`.trim();
+            }
+            const lower = clean.toLowerCase();
+            const match = players.find(p => `${p.firstName} ${p.lastName}`.toLowerCase() === lower);
+            if (match) return `${match.firstName} ${match.lastName}`.trim();
+            return clean;
+        };
+
+        const normalizeMotm = (value) => {
+            if (!value) return '';
+            return String(value).trim();
+        };
+
+        const resolveMotmName = (motm, playerLookup = {}) => {
+            if (!motm) return '';
+            const key = String(motm);
+            const player = playerLookup[key];
+            if (player) return `${player.firstName} ${player.lastName}`.trim();
+            return key;
+        };
+
+        const normalizeMotm = (val) => {
+            if (val === undefined || val === null) return null;
+            const trimmed = String(val).trim();
+            if (!trimmed) return null;
+            const asNum = Number(trimmed);
+            return Number.isNaN(asNum) ? trimmed : asNum;
+        };
+
+        const resolveMotmName = (motm, playerLookup = {}) => {
+            if (motm === undefined || motm === null || motm === '') return '';
+            const candidate = playerLookup[motm] || playerLookup[String(motm)];
+            if (candidate) return `${candidate.firstName} ${candidate.lastName}`.trim();
+            if (typeof motm === 'string') return motm;
+            if (typeof motm === 'number') return `Player #${motm}`;
+            return '';
+        };
+
+        const normalizeMotm = (val) => {
+            if (val === undefined || val === null) return '';
+            const num = Number(val);
+            if (!Number.isNaN(num) && `${val}`.trim() !== '') return num;
+            const str = (val || '').toString().trim();
+            return str;
+        };
+
+        const resolveMotmName = (motm, lookup = {}) => {
+            if (motm === undefined || motm === null || motm === '') return '';
+            const num = Number(motm);
+            if (!Number.isNaN(num)) {
+                const player = lookup[num] || lookup[String(num)];
+                if (player) return `${player.firstName} ${player.lastName}`.trim();
+                return `Player #${num}`;
+            }
+            return motm.toString().trim();
+        };
+
+        const normalizeMotm = (val) => {
+            if (val === undefined || val === null) return '';
+            const trimmed = String(val).trim();
+            if (!trimmed) return '';
+            const num = Number(trimmed);
+            return Number.isNaN(num) ? trimmed : num;
+        };
+
+        const resolveMotmName = (motm, lookup = {}) => {
+            if (motm === undefined || motm === null || motm === '') return '';
+            const num = Number(motm);
+            if (!Number.isNaN(num)) {
+                const player = lookup[String(num)] || lookup[num];
+                if (player) return `${player.firstName} ${player.lastName}`.trim();
+                return `Player #${num}`;
+            }
+            const label = String(motm).trim();
+            return label || '';
         };
 
         const Icon = ({ name, size = 20, className }) => {
@@ -637,6 +852,39 @@
                     {iconData.map((child, index) => React.createElement(child[0], { ...child[1], key: index }))}
                 </svg>
             );
+        };
+
+        const resolveMotmName = (value, players = []) => {
+            const raw = (value && value.manOfTheMatch !== undefined) ? value.manOfTheMatch : value;
+            if (!raw) return '';
+            const numericId = Number(raw);
+            if (!Number.isNaN(numericId)) {
+                const player = players.find(p => Number(p.id) === numericId);
+                if (player) return `${player.firstName} ${player.lastName}`.trim();
+            }
+            return raw.toString().trim();
+        };
+
+        // Resolve MOTM value (id or text) to a display name.
+        const resolveMotmName = (value, players = []) => {
+            if (!value && !value?.manOfTheMatch) return '';
+            const raw = value?.manOfTheMatch ?? value;
+            const numericId = Number(raw);
+            if (!Number.isNaN(numericId)) {
+                const player = players.find(p => Number(p.id) === numericId);
+                if (player) return `${player.firstName} ${player.lastName}`.trim();
+            }
+            return (raw || '').toString().trim();
+        };
+
+        // Resolve Man of the Match label for a fixture, falling back to free text.
+        const resolveMotmName = (fixture, players = []) => {
+            const raw = fixture?.manOfTheMatch;
+            if (!raw) return '';
+            const player = players.find(p => String(p.id) === String(raw));
+            if (player) return `${player.firstName} ${player.lastName}`.trim();
+            if (typeof raw === 'string') return raw.trim();
+            return '';
         };
 
         // --- 3. UI Primitives ---
@@ -802,6 +1050,36 @@
             }
             if (current.length) parts.push(current.trim());
             return parts.map(p => p.replace(/^"|"$/g, '').trim());
+        };
+
+        const normalizeMotm = (value = '') => (value || '').toString().trim();
+        const resolveMotmName = (motm, playerLookup = {}) => {
+            if (!motm) return '';
+            const key = String(motm).trim();
+            if (playerLookup[key]) {
+                const p = playerLookup[key];
+                return `${p.firstName} ${p.lastName}`.trim();
+            }
+            const lower = key.toLowerCase();
+            if (playerLookup[lower]) {
+                const p = playerLookup[lower];
+                return `${p.firstName} ${p.lastName}`.trim();
+            }
+            return key;
+        };
+
+        const normalizeMotm = (value) => {
+            if (value === undefined || value === null) return '';
+            const trimmed = String(value).trim();
+            return trimmed;
+        };
+
+        const resolveMotmName = (motm, playerLookup = {}) => {
+            const key = normalizeMotm(motm);
+            if (!key) return '';
+            const match = playerLookup[key] || playerLookup[String(key)] || null;
+            if (match) return `${match.firstName} ${match.lastName}`.trim();
+            return key;
         };
 
         const CURRENT_PLAYER_TRUE = new Set(['yes', 'y', 'true', '1', 'current', 'active']);
@@ -986,7 +1264,7 @@
             const [isImportingPlayers, setIsImportingPlayers] = useState(false);
             const [importSummary, setImportSummary] = useState('');
             const [playerImportRows, setPlayerImportRows] = useState(null);
-            const { startImportProgress, finishImportProgress } = useImportProgress();
+            const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const [playerPositionSelection, setPlayerPositionSelection] = useState('');
             const [playerCustomPositionInput, setPlayerCustomPositionInput] = useState('');
             const [sortPlayersBy, setSortPlayersBy] = useState('name');
@@ -2131,7 +2409,7 @@
             const [fixtureTx, setFixtureTx] = useState([]);
             const [allTx, setAllTx] = useState([]);
             const [isAddOpen, setIsAddOpen] = useState(false);
-            const [newFixture, setNewFixture] = useState({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: '15:00', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season' });
+            const [newFixture, setNewFixture] = useState({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: '15:00', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season', manOfTheMatch: '' });
             const [feeEdits, setFeeEdits] = useState({});
             const [newCost, setNewCost] = useState({ description: '', amount: '', category: 'Referee Fee', flow: 'payable' });
             const [payee, setPayee] = useState({ type: 'referee', value: '' });
@@ -2187,11 +2465,36 @@
             const [legacyResultsText, setLegacyResultsText] = useState('');
             const [resultsPreview, setResultsPreview] = useState([]);
             const [isScoreOpen, setIsScoreOpen] = useState(false);
-            const [scoreForm, setScoreForm] = useState({ our: 0, their: 0, scorersArr: [] });
+            const [scoreForm, setScoreForm] = useState({ our: 0, their: 0, scorersArr: [], motmSelection: '', motmCustom: '' });
             const [quickOpponent, setQuickOpponent] = useState({ name: '', payee: '', contact: '' });
             const [quickVenue, setQuickVenue] = useState({ name: '', price: '', address: '', payee: '', contact: '' });
             const [selectedSeason, setSelectedSeason] = useState(seasonCategories?.[0] || '2025/2026 Season');
             const [magicFixtureTarget, setMagicFixtureTarget] = useState('new');
+            const playerLookup = useMemo(() => players.reduce((acc, p) => { acc[p.id] = p; return acc; }, {}), [players]);
+            const getPlayerByMotmValue = useCallback((value) => {
+                if (value === undefined || value === null) return null;
+                const label = typeof value === 'number' ? String(value) : (value || '').toString();
+                const trimmed = label.trim();
+                if (!trimmed) return null;
+                const byId = players.find(p => String(p.id) === trimmed);
+                if (byId) return byId;
+                const lower = trimmed.toLowerCase();
+                const byName = players.find(p => (`${p.firstName} ${p.lastName}`).trim().toLowerCase() === lower);
+                return byName || null;
+            }, [players]);
+            const resolveMotmLabel = useCallback((value) => {
+                const match = getPlayerByMotmValue(value);
+                if (match) return `${match.firstName} ${match.lastName}`.trim();
+                const clean = (value ?? '').toString().trim();
+                return clean;
+            }, [getPlayerByMotmValue]);
+            const deriveMotmState = useCallback((value) => {
+                const clean = (value ?? '').toString().trim();
+                if (!clean) return { selection: '', custom: '' };
+                const match = getPlayerByMotmValue(value);
+                if (match) return { selection: String(match.id), custom: '' };
+                return { selection: '__custom__', custom: clean };
+            }, [getPlayerByMotmValue]);
             const gamesStats = useMemo(() => {
                 if(!fixtures.length) return { total: 0, wins: 0, draws: 0, losses: 0, thisYear: 0, lastYear: 0, bySeason: {} };
                 const nowYear = new Date().getFullYear();
@@ -2220,6 +2523,27 @@
                 });
                 return { total, wins, draws, losses, thisYear, lastYear, bySeason };
             }, [fixtures]);
+            const motmBoard = useMemo(() => {
+                if (!fixtures.length) return [];
+                return fixtures
+                    .filter(f => f.manOfTheMatch)
+                    .map(f => {
+                        const label = resolveMotmLabel(f.manOfTheMatch);
+                        if (!label) return null;
+                        const timestamp = Date.parse(f.date || '');
+                        return {
+                            id: f.id,
+                            opponent: f.opponent || 'Opponent',
+                            label,
+                            date: f.date,
+                            timestamp: Number.isNaN(timestamp) ? 0 : timestamp,
+                            homeScore: f.homeScore,
+                            awayScore: f.awayScore
+                        };
+                    })
+                    .filter(Boolean)
+                    .sort((a, b) => b.timestamp - a.timestamp);
+            }, [fixtures, resolveMotmLabel]);
 
             const refresh = async () => {
                 await waitForDb();
@@ -2258,11 +2582,19 @@
                 setSquad(squadState);
                 const txs = await db.transactions.where('fixtureId').equals(fixture.id).toArray();
                 setFixtureTx(txs);
-                setSelectedFixture({ ...fixture, feeAmount: fixture.feeAmount || 20, seasonTag: fixture.seasonTag || seasonCategories?.[0] || '2025/2026 Season' });
+                setSelectedFixture({ 
+                    ...fixture, 
+                    feeAmount: fixture.feeAmount || 20, 
+                    seasonTag: fixture.seasonTag || seasonCategories?.[0] || '2025/2026 Season',
+                    manOfTheMatch: fixture.manOfTheMatch || ''
+                });
+                const motmState = deriveMotmState(fixture.manOfTheMatch);
                 setScoreForm({ 
                     our: fixture.homeScore || 0, 
                     their: fixture.awayScore || 0, 
-                    scorersArr: (fixture.scorers || []).map(s => typeof s === 'number' ? String(s) : s) 
+                    scorersArr: (fixture.scorers || []).map(s => typeof s === 'number' ? String(s) : s),
+                    motmSelection: motmState.selection,
+                    motmCustom: motmState.custom
                 });
                 const newFeeEdits = {};
                 Object.keys(squadState).forEach(pid => {
@@ -2396,12 +2728,15 @@
 
             const saveFixtureDetails = async () => {
                 if(!selectedFixture) return;
+                const motmValue = selectedFixture.manOfTheMatch;
+                const normalizedMotm = typeof motmValue === 'string' ? motmValue.trim() : (motmValue ?? '');
                 await db.fixtures.update(selectedFixture.id, { 
                     opponent: selectedFixture.opponent, 
                     date: selectedFixture.date, 
                     time: selectedFixture.time, 
                     venue: selectedFixture.venue,
-                    feeAmount: selectedFixture.feeAmount || 20
+                    feeAmount: selectedFixture.feeAmount || 20,
+                    manOfTheMatch: normalizedMotm || ''
                 });
                 refresh();
                 alert('Fixture updated');
@@ -2449,11 +2784,16 @@
             const saveScore = async () => {
                 if(!selectedFixture) return;
                 const scorersClean = (scoreForm.scorersArr || []).filter(Boolean).map(s => s === 'OG' ? 'OG' : s);
+                const motmValue = scoreForm.motmSelection === '__custom__'
+                    ? (scoreForm.motmCustom || '').trim()
+                    : (scoreForm.motmSelection || '');
                 await db.fixtures.update(selectedFixture.id, {
                     homeScore: Number(scoreForm.our) || 0,
                     awayScore: Number(scoreForm.their) || 0,
-                    scorers: scorersClean
+                    scorers: scorersClean,
+                    manOfTheMatch: motmValue || ''
                 });
+                setSelectedFixture(prev => prev ? { ...prev, manOfTheMatch: motmValue } : prev);
                 setIsScoreOpen(false);
                 reloadSelected();
             };
@@ -2490,6 +2830,11 @@
                     return { player: p, due, paid, isPaid: paid >= due, feeTx, payTx };
                 });
             }, [players, squad, fixtureTx, selectedFixture, allTx]);
+            const motmPlayerChoices = useMemo(() => {
+                if (!players.length) return [];
+                const selectedPlayers = players.filter(p => squad[p.id]);
+                return selectedPlayers.length ? selectedPlayers : players;
+            }, [players, squad]);
 
             const fixtureTotals = useMemo(() => {
                 if(!selectedFixture) return { cost: 0, ref: 0 };
@@ -2569,7 +2914,7 @@
             const handleAdd = async (e) => {
                 e.preventDefault();
                 await db.fixtures.add({ ...newFixture, status: 'SCHEDULED' });
-                setNewFixture({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: '15:00', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season' });
+                setNewFixture({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: '15:00', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season', manOfTheMatch: '' });
                 setIsAddOpen(false);
                 refresh();
             };
@@ -3005,6 +3350,30 @@
                         ))}
                     </div>
 
+                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Man of the Match Board</div>
+                            <span className="text-[10px] font-semibold text-slate-400">{motmBoard.length} awards logged</span>
+                        </div>
+                        {motmBoard.length ? (
+                            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                {motmBoard.slice(0, 8).map(item => {
+                                    const dateLabel = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC';
+                                    const hasScore = typeof item.homeScore === 'number' && typeof item.awayScore === 'number';
+                                    const scoreLabel = hasScore ? ` · Exiles ${item.homeScore}-${item.awayScore}` : '';
+                                    return (
+                                        <div key={`motm-board-${item.id}`} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                            <div className="text-sm font-bold text-slate-900">{item.label}</div>
+                                            <div className="text-[11px] text-slate-500">{dateLabel} · vs {item.opponent}{scoreLabel}</div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="text-sm text-slate-400">No awards recorded yet. Save a score to start tracking.</div>
+                        )}
+                    </div>
+
                     <div className="space-y-3">
                         {fixtures.map(f => (
                             <div key={f.id} onClick={() => openMatchMode(f)} className="bg-white p-5 rounded-2xl shadow-soft border border-slate-100 flex flex-col gap-3 cursor-pointer hover:border-brand-200 transition-colors group">
@@ -3136,6 +3505,24 @@
                             </select>
                             <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" step="1" value={selectedFixture.feeAmount || 20} onChange={e => setSelectedFixture({ ...selectedFixture, feeAmount: Number(e.target.value) })} placeholder="Match fee" />
                         </div>
+                                </div>
+
+                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Accolades</div>
+                                    <div className="space-y-2">
+                                        <label className="text-[11px] font-bold text-slate-500 uppercase">Man of the Match</label>
+                                        <input list="fixture-motm-options" className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Select player or type a name" value={resolveMotmLabel(selectedFixture.manOfTheMatch) || ''} onChange={e => {
+                                            const val = e.target.value;
+                                            const match = getPlayerByMotmValue(val);
+                                            setSelectedFixture({ ...selectedFixture, manOfTheMatch: match ? String(match.id) : val });
+                                        }} />
+                                        <datalist id="fixture-motm-options">
+                                            {players.map(p => (
+                                                <option key={`motm-${p.id}`} value={`${p.firstName} ${p.lastName}`}></option>
+                                            ))}
+                                        </datalist>
+                                        <p className="text-[11px] text-slate-500">Use squad suggestions or enter anything to track awards (e.g. guest players or opposition).</p>
+                                    </div>
                                 </div>
 
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
@@ -3300,6 +3687,27 @@
                                         ))}
                                     </select>
                                 ))}
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-[11px] font-bold text-slate-500 uppercase">Man of the Match</label>
+                                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={scoreForm.motmSelection || ''} onChange={e => {
+                                    const val = e.target.value;
+                                    if (val === '__custom__') {
+                                        setScoreForm(prev => ({ ...prev, motmSelection: '__custom__' }));
+                                    } else {
+                                        setScoreForm(prev => ({ ...prev, motmSelection: val, motmCustom: '' }));
+                                    }
+                                }}>
+                                    <option value="">Not set</option>
+                                    {motmPlayerChoices.map(p => (
+                                        <option key={`motm-pick-${p.id}`} value={`${p.id}`}>{p.firstName} {p.lastName}</option>
+                                    ))}
+                                    <option value="__custom__">Custom entry…</option>
+                                </select>
+                                {scoreForm.motmSelection === '__custom__' && (
+                                    <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" placeholder="Custom name or note" value={scoreForm.motmCustom} onChange={e => setScoreForm(prev => ({ ...prev, motmCustom: e.target.value }))} />
+                                )}
+                                <p className="text-[11px] text-slate-500">Pick someone from the squad or choose custom for guests/opposition.</p>
                             </div>
                             <button onClick={saveScore} className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">Save Score</button>
                         </div>
@@ -3551,7 +3959,7 @@
             const [players, setPlayers] = useState([]);
             const [fixtures, setFixtures] = useState([]);
             const [isImporting, setIsImporting] = useState(false);
-            const { startImportProgress, finishImportProgress } = useImportProgress();
+            const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const [newTx, setNewTx] = useState({ description: '', amount: '', category: 'OTHER', type: 'EXPENSE', date: new Date().toISOString().split('T')[0], playerId: '' });
             const [isAddTxOpen, setIsAddTxOpen] = useState(false);
             const [newTxCategoryName, setNewTxCategoryName] = useState('');
