@@ -4088,6 +4088,7 @@
         };
         // --- DASHBOARD MODULE ---
         const Dashboard = ({ onNavigate, kitDetails = [], kitQueue = [], kitNumberLimit = DEFAULT_KIT_NUMBER_LIMIT, onOpenSettings = () => {} }) => {
+            const buildLabel = READ_ONLY ? formatBuildLabel(APP_VERSION, true) : formatBuildLabel(APP_VERSION, false);
             const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [], outstanding: { receivable: 0, payable: 0 } });
             const [nextFixture, setNextFixture] = useState(null);
             const [lastResult, setLastResult] = useState(null);
@@ -4278,14 +4279,14 @@
                 <div className="space-y-6 pb-28 animate-slide-up">
                     <header className="flex justify-between items-center pt-2 px-1">
                         <div>
-                            <div className="text-brand-600 font-display font-bold text-lg tracking-tight">BRITISH EXILES</div>
+                            <div className="text-brand-600 font-display font-bold text-lg tracking-tight">THE BRITISH EXILES</div>
                             <div className="text-slate-400 text-xs font-medium uppercase tracking-widest">Manager Dashboard</div>
                         </div>
                         <div className="flex items-center gap-2">
                             <button onClick={onOpenSettings} className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-700 hover:bg-slate-100 transition">
                                 <Icon name="Settings" size={18} />
                             </button>
-                            <span className="text-[10px] font-semibold text-slate-400">v{APP_VERSION}</span>
+                            <span className="text-[10px] font-semibold text-slate-400">{buildLabel}</span>
                         </div>
                     </header>
 
