@@ -4460,7 +4460,16 @@
             const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [], outstanding: { receivable: 0, payable: 0 } });
             const [nextFixture, setNextFixture] = useState(null);
             const [lastResult, setLastResult] = useState(null);
-            const [insights, setInsights] = useState({ form: [], topScorer: null, motmLeader: null, avgGoals: { for: 0, against: 0 }, cleanSheets: 0 });
+            const [insights, setInsights] = useState({
+                form: [],
+                topScorer: null,
+                motmLeader: null,
+                avgGoals: { for: 0, against: 0 },
+                cleanSheets: 0,
+                debtors: [],
+                recentPayments: [],
+                upcomingBirthdays: []
+            });
             const kitOverview = useMemo(() => {
                 const limit = Math.max(1, Number(kitNumberLimit) || DEFAULT_KIT_NUMBER_LIMIT);
                 const assignedNumbers = new Set(kitDetails
@@ -4499,6 +4508,64 @@
 
                     const playerLookup = {};
                     playerList.forEach(p => { playerLookup[String(p.id)] = p; });
+                    const perPlayerBalance = {};
+                    playerList.forEach(p => { perPlayerBalance[String(p.id)] = 0; });
+                    txs.forEach(tx => {
+                        if (tx.playerId === undefined || tx.playerId === null) return;
+                        const key = String(tx.playerId);
+                        if (perPlayerBalance[key] === undefined) perPlayerBalance[key] = 0;
+                        perPlayerBalance[key] += tx.amount;
+                    });
+                    const debtors = Object.entries(perPlayerBalance)
+                        .map(([id, balance]) => {
+                            if (balance >= 0) return null;
+                            const player = playerLookup[id];
+                            if (!player) return null;
+                            return {
+                                id,
+                                name: `${player.firstName} ${player.lastName}`.trim(),
+                                balance
+                            };
+                        })
+                        .filter(Boolean)
+                        .sort((a, b) => a.balance - b.balance)
+                        .slice(0, 3);
+                    const now = new Date();
+                    const upcomingBirthdays = playerList
+                        .map((player) => {
+                            if (!player.dateOfBirth) return null;
+                            const dob = new Date(player.dateOfBirth);
+                            if (Number.isNaN(dob.getTime())) return null;
+                            const next = new Date(now.getFullYear(), dob.getMonth(), dob.getDate());
+                            if (next < now) next.setFullYear(next.getFullYear() + 1);
+                            const diffDays = Math.round((next - now) / (1000 * 60 * 60 * 24));
+                            if (diffDays < 0 || diffDays > 60) return null;
+                            const turning = next.getFullYear() - dob.getFullYear();
+                            return {
+                                id: player.id,
+                                name: `${player.firstName} ${player.lastName}`.trim(),
+                                inDays: diffDays,
+                                turning,
+                                dateLabel: next.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                            };
+                        })
+                        .filter(Boolean)
+                        .sort((a, b) => a.inDays - b.inDays)
+                        .slice(0, 3);
+                    const recentPayments = txs
+                        .filter(tx => tx.amount > 0)
+                        .sort((a, b) => new Date(b.date) - new Date(a.date))
+                        .slice(0, 4)
+                        .map(tx => {
+                            const player = tx.playerId !== undefined && tx.playerId !== null ? playerLookup[String(tx.playerId)] : null;
+                            return {
+                                id: tx.id,
+                                description: tx.description || 'Payment received',
+                                amount: tx.amount,
+                                date: tx.date,
+                                playerName: player ? `${player.firstName} ${player.lastName}`.trim() : (tx.payee || '')
+                            };
+                        });
                     const form = playedFixtures.slice(0, 5).map(f => {
                         const our = Number(f.homeScore || 0);
                         const their = Number(f.awayScore || 0);
@@ -4559,7 +4626,10 @@
                         topScorer,
                         motmLeader,
                         avgGoals,
-                        cleanSheets: goalTotals.cleanSheets
+                        cleanSheets: goalTotals.cleanSheets,
+                        debtors,
+                        recentPayments,
+                        upcomingBirthdays
                     });
                 };
                 load();
@@ -4710,6 +4780,69 @@
                                 <div className="text-[11px] text-slate-500">Clean sheets: {insights.cleanSheets}</div>
                             </div>
                         </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-4">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Financial Pulse</div>
+                        <div className="space-y-3">
+                            <div>
+                                <div className="text-[10px] font-semibold text-rose-500 uppercase tracking-wider mb-1">Debt Watch</div>
+                                {insights.debtors.length ? (
+                                    <div className="space-y-2">
+                                        {insights.debtors.map((debtor) => (
+                                            <div key={debtor.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-rose-50 border border-rose-100">
+                                                <div>
+                                                    <div className="text-sm font-bold text-rose-800">{debtor.name}</div>
+                                                    <div className="text-[11px] text-rose-500">Owes {formatCurrency(Math.abs(debtor.balance), { maximumFractionDigits: 0 })}</div>
+                                                </div>
+                                                <button onClick={() => onNavigate('players')} className="text-[10px] font-bold text-rose-700 underline">Follow up</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-xs text-slate-400">No overdue balances 👏</div>
+                                )}
+                            </div>
+                            <div>
+                                <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider mb-1">Recent Payments</div>
+                                {insights.recentPayments.length ? (
+                                    <div className="space-y-2">
+                                        {insights.recentPayments.map((tx) => (
+                                            <div key={tx.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-100">
+                                                <div>
+                                                    <div className="text-sm font-bold text-emerald-900 truncate">{tx.playerName || 'Unnamed payer'}</div>
+                                                    <div className="text-[11px] text-emerald-600 truncate">{tx.description}</div>
+                                                </div>
+                                                <div className="text-xs font-bold text-emerald-700">{formatCurrency(tx.amount, { maximumFractionDigits: 0 })}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-xs text-slate-400">No payments logged recently.</div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Upcoming Birthdays</div>
+                        {insights.upcomingBirthdays.length ? (
+                            <div className="space-y-2">
+                                {insights.upcomingBirthdays.map((entry) => (
+                                    <div key={entry.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50 border border-slate-100">
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-900">{entry.name}</div>
+                                            <div className="text-[11px] text-slate-500">Turning {entry.turning} on {entry.dateLabel}</div>
+                                        </div>
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-brand-50 text-brand-700 border border-brand-100">
+                                            {entry.inDays === 0 ? 'Today' : `In ${entry.inDays}d`}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-xs text-slate-400">No birthdays in the next 60 days.</div>
+                        )}
                     </div>
 
                     <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
