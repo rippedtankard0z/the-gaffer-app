@@ -1,6 +1,7 @@
 'use strict';
         const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
         const APP_VERSION = window.GAFFER_BUILD_VERSION || 'dev';
+        const READ_ONLY = !!window.GAFFER_READ_ONLY;
         const VERSION_STORAGE_KEY = 'gaffer:lastBuildVersion';
         console.info('[Gaffer] Loaded build version:', APP_VERSION);
 
@@ -6771,7 +6772,13 @@
                         )}
 
                         <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
-                            {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
+                            {READ_ONLY && (
+  <div className="mt-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-[11px] space-y-1">
+    <div className="text-xs font-bold tracking-wide">VIEW ONLY</div>
+    <div>Changes will not be saved.</div>
+  </div>
+)}
+{activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
                             {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
                             {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
                             {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} saveKitDetail={saveKitDetail} kitSizeOptions={kitSizeOptions} />}
