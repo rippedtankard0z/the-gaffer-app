@@ -51,11 +51,24 @@
                 if (lower.startsWith('viewer-')) {
                     withoutPrefix = withoutPrefix.slice(withoutPrefix.indexOf('-') + 1);
                 }
-                return `viewer | ${withoutPrefix || 'latest'}`;
+                return {
+                    label: 'viewer',
+                    version: withoutPrefix || 'latest'
+                };
             }
-            return withoutPrefix || 'latest';
+            return {
+                label: `Build ${withoutPrefix || 'latest'}`,
+                version: ''
+            };
         };
-        const TEAM_LOGO_SRC = window.GAFFER_LOGO_SRC || '/assets/images/Exiles-Logo.jpg.webp';
+        const resolveDefaultLogo = () => {
+            const path = (window.location && window.location.pathname) || '';
+            if (path.includes('/prod/') || path.includes('/viewer/')) {
+                return '../assets/images/Exiles-Logo.jpg.webp';
+            }
+            return './assets/images/Exiles-Logo.jpg.webp';
+        };
+        const TEAM_LOGO_SRC = window.GAFFER_LOGO_SRC || resolveDefaultLogo();
 
         // Turn categories like MATCH_FEE into "Match Fee" for UI/WhatsApp output.
         const formatCategoryLabel = (value = '') => {
@@ -4283,7 +4296,7 @@
                             <img src={TEAM_LOGO_SRC} alt="The British Exiles crest" className="h-12 w-12 rounded-2xl border border-white shadow-glass object-cover" />
                             <div>
                                 <div className="text-brand-600 font-display font-bold text-lg tracking-tight">THE BRITISH EXILES</div>
-                                <div className="text-slate-400 text-xs font-display font-medium uppercase tracking-widest">Manager Dashboard</div>
+                                <div className="text-slate-400 text-xs font-sans font-medium uppercase tracking-widest">Manager Dashboard</div>
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -7034,7 +7047,15 @@
                             {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
                         {activeTab === 'kit' && <Kit kitDetails={kitDetails} onImportKitDetails={importKitDetails} kitQueue={kitQueue} onAddQueueEntry={addKitQueueEntry} onRemoveQueueEntry={removeKitQueueEntry} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} kitSizeOptions={kitSizeOptions} onNavigate={setActiveTab} />}
                             <div className="pt-6 text-center text-[10px] text-slate-400">
-                                {READ_ONLY ? formatBuildLabel(APP_VERSION, true) : `Build ${formatBuildLabel(APP_VERSION, false)}`}
+                                {(() => {
+                                    const formatted = READ_ONLY ? formatBuildLabel(APP_VERSION, true) : formatBuildLabel(APP_VERSION, false);
+                                    return (
+                                        <div className="text-slate-400 text-[10px] font-semibold leading-tight">
+                                            <div>{formatted.label}</div>
+                                            {formatted.version && <div>{formatted.version}</div>}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         </main>
                         
