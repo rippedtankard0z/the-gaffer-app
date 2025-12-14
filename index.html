@@ -385,51 +385,40 @@
                 .trim();
         };
 
-        const normalizeMotm = (val = '') => (val || '').toString().trim();
-
-        const resolveMotmName = (motm, players = []) => {
-            const clean = normalizeMotm(motm);
-            if (!clean) return '';
-            const asNum = Number(clean);
-            if (!Number.isNaN(asNum)) {
-                const player = players.find(p => Number(p.id) === asNum);
-                if (player) return `${player.firstName} ${player.lastName}`.trim();
-            }
-            const byName = players.find(p => `${p.firstName} ${p.lastName}`.trim().toLowerCase() === clean.toLowerCase());
-            if (byName) return `${byName.firstName} ${byName.lastName}`.trim();
-            return clean;
+        const normalizeMotm = (value = '') => {
+            return (value ?? '').toString().trim();
         };
 
-        const normalizeMotm = (val = '') => (val || '').toString().trim();
-
-        const resolveMotmName = (motm, players = []) => {
-            const clean = normalizeMotm(motm);
-            if (!clean) return '';
-            const asNum = Number(clean);
-            if (!Number.isNaN(asNum)) {
-                const p = players.find(pl => Number(pl.id) === asNum);
-                if (p) return `${p.firstName} ${p.lastName}`.trim();
+        const resolveMotmName = (motm, playersOrLookup = []) => {
+            let raw = motm;
+            if (raw && typeof raw === 'object' && raw.manOfTheMatch !== undefined) {
+                raw = raw.manOfTheMatch;
             }
-            const match = players.find(pl => (`${pl.firstName} ${pl.lastName}`).toLowerCase() === clean.toLowerCase());
+            const clean = normalizeMotm(raw);
+            if (!clean) return '';
+
+            const tryByArray = (list = []) => {
+                if (!Array.isArray(list)) return null;
+                const byId = list.find(p => String(p.id) === clean);
+                if (byId) return byId;
+                const lower = clean.toLowerCase();
+                return list.find(p => (`${p.firstName} ${p.lastName}`).trim().toLowerCase() === lower);
+            };
+
+            const tryByLookup = (lookup = {}) => {
+                if (Array.isArray(lookup) || !lookup || typeof lookup !== 'object') return null;
+                return lookup[clean] || lookup[String(clean)];
+            };
+
+            const match = Array.isArray(playersOrLookup)
+                ? tryByArray(playersOrLookup)
+                : (tryByLookup(playersOrLookup) || tryByArray(Object.values(playersOrLookup || {})));
+
             if (match) return `${match.firstName} ${match.lastName}`.trim();
-            return clean;
-        };
 
-        const normalizeMotm = (val = '') => (val ?? '').toString().trim();
-        const resolveMotmName = (motm, players = []) => {
-            const trimmed = normalizeMotm(motm);
-            if (!trimmed) return '';
-            const idNum = Number(trimmed);
-            if (!Number.isNaN(idNum)) {
-                const byId = players.find(p => Number(p.id) === idNum);
-                if (byId) return `${byId.firstName} ${byId.lastName}`.trim();
-            }
-            const lower = trimmed.toLowerCase();
-            const byExact = players.find(p => `${p.firstName} ${p.lastName}`.toLowerCase() === lower);
-            if (byExact) return `${byExact.firstName} ${byExact.lastName}`.trim();
-            const byFirst = players.find(p => p.firstName.toLowerCase() === lower);
-            if (byFirst) return `${byFirst.firstName} ${byFirst.lastName}`.trim();
-            return trimmed;
+            const numeric = Number(clean);
+            if (!Number.isNaN(numeric) && clean !== '') return `Player #${numeric}`;
+            return clean;
         };
 
         const transactionHasCoveringPayment = (charge, txList = []) => {
@@ -667,180 +656,12 @@
                 .slice(0, limit);
         };
 
-        const resolveMotmName = (value, players = []) => {
-            const raw = (value && typeof value === 'object' && value.manOfTheMatch !== undefined) ? value.manOfTheMatch : value;
-            if (!raw) return '';
-            const numericId = Number(raw);
-            if (!Number.isNaN(numericId)) {
-                const player = players.find(p => Number(p.id) === numericId);
-                if (player) return `${player.firstName} ${player.lastName}`.trim();
-            }
-            return raw.toString().trim();
-        };
-
-        const resolveMotmName = (value, players = []) => {
-            const raw = (value && value.manOfTheMatch !== undefined) ? value.manOfTheMatch : value;
-            if (!raw) return '';
-            const numericId = Number(raw);
-            if (!Number.isNaN(numericId)) {
-                const player = players.find(p => Number(p.id) === numericId);
-                if (player) return `${player.firstName} ${player.lastName}`.trim();
-            }
-            return raw.toString().trim();
-        };
-
-        const normalizeMotm = (value) => value ? String(value).trim() : '';
-        const resolveMotmName = (motm, players = []) => {
-            const clean = normalizeMotm(motm);
-            if (!clean) return '';
-            const byId = players.find(p => String(p.id) === clean);
-            if (byId) return `${byId.firstName} ${byId.lastName}`;
-            const byName = players.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase() === clean.toLowerCase());
-            return byName ? `${byName.firstName} ${byName.lastName}` : clean;
-        };
-
         const parseDate = (str) => {
             if (!str) return new Date().toISOString();
             const parts = str.split('/');
             if (parts.length !== 3) return new Date().toISOString();
             try { return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString(); } 
             catch (e) { return new Date().toISOString(); }
-        };
-
-        const normalizeMotm = (value = '') => value ? String(value).trim() : '';
-        const resolveMotmName = (motm, players = []) => {
-            const clean = normalizeMotm(motm);
-            if (!clean) return '';
-            const lower = clean.toLowerCase();
-            const matched = players.find(p => String(p.id) === clean || `${p.firstName} ${p.lastName}`.toLowerCase() === lower);
-            return matched ? `${matched.firstName} ${matched.lastName}` : clean;
-        };
-        const normalizeMotm = (value = '') => value ? String(value).trim() : '';
-        const resolveMotmName = (motm, players = []) => {
-            const clean = normalizeMotm(motm);
-            if (!clean) return '';
-            const byId = players.find(p => String(p.id) === clean);
-            if (byId) return `${byId.firstName} ${byId.lastName}`;
-            const byName = players.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase() === clean.toLowerCase());
-            return byName ? `${byName.firstName} ${byName.lastName}` : clean;
-        };
-
-        const normalizeMotm = (value = '') => value ? String(value).trim() : '';
-        const resolveMotmName = (motm, players = []) => {
-            const clean = normalizeMotm(motm);
-            if (!clean) return '';
-            const byId = players.find(p => String(p.id) === clean);
-            if (byId) return `${byId.firstName} ${byId.lastName}`;
-            const byName = players.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase() === clean.toLowerCase());
-            return byName ? `${byName.firstName} ${byName.lastName}` : clean;
-        };
-
-        const normalizeMotm = (value) => value ? String(value).trim() : '';
-        const resolveMotmName = (motm, players = []) => {
-            const clean = normalizeMotm(motm);
-            if (!clean) return '';
-            const byId = players.find(p => String(p.id) === clean);
-            if (byId) return `${byId.firstName} ${byId.lastName}`;
-            const byName = players.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase() === clean.toLowerCase());
-            return byName ? `${byName.firstName} ${byName.lastName}` : clean;
-        };
-
-        const normalizeMotm = (value = '') => (value || '').toString().trim();
-        const resolveMotmName = (motm, players = []) => {
-            const trimmed = normalizeMotm(motm);
-            if (!trimmed) return '';
-            const num = Number(trimmed);
-            if (!Number.isNaN(num)) {
-                const found = players.find(p => Number(p.id) === num);
-                if (found) return `${found.firstName} ${found.lastName}`;
-            }
-            const exact = players.find(p => `${p.firstName} ${p.lastName}`.toLowerCase() === trimmed.toLowerCase());
-            if (exact) return `${exact.firstName} ${exact.lastName}`;
-            return trimmed;
-        };
-
-        const normalizeMotm = (val = '') => (val || '').toString().trim();
-        const resolveMotmName = (motm, players = []) => {
-            const clean = normalizeMotm(motm);
-            if (!clean) return '';
-            const num = Number(clean);
-            if (!Number.isNaN(num)) {
-                const match = players.find(p => Number(p.id) === num);
-                if (match) return `${match.firstName} ${match.lastName}`.trim();
-            }
-            const lower = clean.toLowerCase();
-            const match = players.find(p => `${p.firstName} ${p.lastName}`.toLowerCase() === lower);
-            if (match) return `${match.firstName} ${match.lastName}`.trim();
-            return clean;
-        };
-
-        const normalizeMotm = (value) => {
-            if (!value) return '';
-            return String(value).trim();
-        };
-
-        const resolveMotmName = (motm, playerLookup = {}) => {
-            if (!motm) return '';
-            const key = String(motm);
-            const player = playerLookup[key];
-            if (player) return `${player.firstName} ${player.lastName}`.trim();
-            return key;
-        };
-
-        const normalizeMotm = (val) => {
-            if (val === undefined || val === null) return null;
-            const trimmed = String(val).trim();
-            if (!trimmed) return null;
-            const asNum = Number(trimmed);
-            return Number.isNaN(asNum) ? trimmed : asNum;
-        };
-
-        const resolveMotmName = (motm, playerLookup = {}) => {
-            if (motm === undefined || motm === null || motm === '') return '';
-            const candidate = playerLookup[motm] || playerLookup[String(motm)];
-            if (candidate) return `${candidate.firstName} ${candidate.lastName}`.trim();
-            if (typeof motm === 'string') return motm;
-            if (typeof motm === 'number') return `Player #${motm}`;
-            return '';
-        };
-
-        const normalizeMotm = (val) => {
-            if (val === undefined || val === null) return '';
-            const num = Number(val);
-            if (!Number.isNaN(num) && `${val}`.trim() !== '') return num;
-            const str = (val || '').toString().trim();
-            return str;
-        };
-
-        const resolveMotmName = (motm, lookup = {}) => {
-            if (motm === undefined || motm === null || motm === '') return '';
-            const num = Number(motm);
-            if (!Number.isNaN(num)) {
-                const player = lookup[num] || lookup[String(num)];
-                if (player) return `${player.firstName} ${player.lastName}`.trim();
-                return `Player #${num}`;
-            }
-            return motm.toString().trim();
-        };
-
-        const normalizeMotm = (val) => {
-            if (val === undefined || val === null) return '';
-            const trimmed = String(val).trim();
-            if (!trimmed) return '';
-            const num = Number(trimmed);
-            return Number.isNaN(num) ? trimmed : num;
-        };
-
-        const resolveMotmName = (motm, lookup = {}) => {
-            if (motm === undefined || motm === null || motm === '') return '';
-            const num = Number(motm);
-            if (!Number.isNaN(num)) {
-                const player = lookup[String(num)] || lookup[num];
-                if (player) return `${player.firstName} ${player.lastName}`.trim();
-                return `Player #${num}`;
-            }
-            const label = String(motm).trim();
-            return label || '';
         };
 
         const Icon = ({ name, size = 20, className }) => {
@@ -852,39 +673,6 @@
                     {iconData.map((child, index) => React.createElement(child[0], { ...child[1], key: index }))}
                 </svg>
             );
-        };
-
-        const resolveMotmName = (value, players = []) => {
-            const raw = (value && value.manOfTheMatch !== undefined) ? value.manOfTheMatch : value;
-            if (!raw) return '';
-            const numericId = Number(raw);
-            if (!Number.isNaN(numericId)) {
-                const player = players.find(p => Number(p.id) === numericId);
-                if (player) return `${player.firstName} ${player.lastName}`.trim();
-            }
-            return raw.toString().trim();
-        };
-
-        // Resolve MOTM value (id or text) to a display name.
-        const resolveMotmName = (value, players = []) => {
-            if (!value && !value?.manOfTheMatch) return '';
-            const raw = value?.manOfTheMatch ?? value;
-            const numericId = Number(raw);
-            if (!Number.isNaN(numericId)) {
-                const player = players.find(p => Number(p.id) === numericId);
-                if (player) return `${player.firstName} ${player.lastName}`.trim();
-            }
-            return (raw || '').toString().trim();
-        };
-
-        // Resolve Man of the Match label for a fixture, falling back to free text.
-        const resolveMotmName = (fixture, players = []) => {
-            const raw = fixture?.manOfTheMatch;
-            if (!raw) return '';
-            const player = players.find(p => String(p.id) === String(raw));
-            if (player) return `${player.firstName} ${player.lastName}`.trim();
-            if (typeof raw === 'string') return raw.trim();
-            return '';
         };
 
         // --- 3. UI Primitives ---
@@ -1050,36 +838,6 @@
             }
             if (current.length) parts.push(current.trim());
             return parts.map(p => p.replace(/^"|"$/g, '').trim());
-        };
-
-        const normalizeMotm = (value = '') => (value || '').toString().trim();
-        const resolveMotmName = (motm, playerLookup = {}) => {
-            if (!motm) return '';
-            const key = String(motm).trim();
-            if (playerLookup[key]) {
-                const p = playerLookup[key];
-                return `${p.firstName} ${p.lastName}`.trim();
-            }
-            const lower = key.toLowerCase();
-            if (playerLookup[lower]) {
-                const p = playerLookup[lower];
-                return `${p.firstName} ${p.lastName}`.trim();
-            }
-            return key;
-        };
-
-        const normalizeMotm = (value) => {
-            if (value === undefined || value === null) return '';
-            const trimmed = String(value).trim();
-            return trimmed;
-        };
-
-        const resolveMotmName = (motm, playerLookup = {}) => {
-            const key = normalizeMotm(motm);
-            if (!key) return '';
-            const match = playerLookup[key] || playerLookup[String(key)] || null;
-            if (match) return `${match.firstName} ${match.lastName}`.trim();
-            return key;
         };
 
         const CURRENT_PLAYER_TRUE = new Set(['yes', 'y', 'true', '1', 'current', 'active']);
