@@ -3,7 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>The Gaffer | British Exiles</title>
+    <script>
+        window.GAFFER_BUILD_VERSION = '2024.12.06-07';
+    </script>
     
     <!-- React & DOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -69,7 +75,9 @@
                 participations: [],
                 opponents: [],
                 venues: [],
-                referees: []
+                referees: [],
+                kitDetails: [],
+                kitQueue: []
             };
 
             const ready = (async () => {
@@ -103,7 +111,7 @@
                 return String(max + 1 || 1);
             };
 
-            const createRunner = (name, filterFn, opts = { reverse: false }) => ({
+            const createRunner = (name, filterFn = () => true, opts = { reverse: false }) => ({
                 and(extraFn) { return createRunner(name, (item) => filterFn(item) && extraFn(item), opts); },
                 reverse() { return createRunner(name, filterFn, { ...opts, reverse: !opts.reverse }); },
                 async toArray() {
@@ -114,6 +122,10 @@
                 async first() {
                     const arr = await this.toArray();
                     return arr[0];
+                },
+                async count() {
+                    const arr = await this.toArray();
+                    return arr.length;
                 },
                 async delete() {
                     const arr = await this.toArray();
@@ -170,6 +182,10 @@
                     async delete(id) { await ready; await deleteDoc(docRef(name, id)); },
                     async bulkDelete(ids) { await ready; await Promise.all(ids.map(i => deleteDoc(docRef(name, i)))); },
                     async clear() { await ready; await this.bulkDelete(cache[name].map(x => x.id)); },
+                    filter(predicate) {
+                        const fn = typeof predicate === 'function' ? predicate : () => true;
+                        return createRunner(name, fn);
+                    },
                     toCollection() {
                         return {
                             primaryKeys: async () => { await ready; return cache[name].map(x => x.id); }
@@ -181,7 +197,11 @@
                             return createRunner(name, (item) => filters.every(([key, value]) => item?.[key] === value));
                         }
                         return {
-                            equals(val) { return createRunner(name, (item) => item?.[fieldOrFilter] === val); }
+                            equals(val) { return createRunner(name, (item) => item?.[fieldOrFilter] === val); },
+                            anyOf(values) {
+                                const arr = Array.isArray(values) ? values : Array.from(arguments);
+                                return createRunner(name, (item) => arr.some(val => item?.[fieldOrFilter] === val));
+                            }
                         };
                     },
                     orderBy(field) {
@@ -204,6 +224,27 @@
             };
 
             window.firebaseReady = ready;
+            const releaseKitDetail = async ({ id, playerId } = {}) => {
+                await ready;
+                let targetId = id;
+                if (!targetId && playerId) {
+                    const normalized = String(playerId);
+                    const existing = cache.kitDetails.find(detail => String(detail.playerId) === normalized);
+                    targetId = existing?.id;
+                }
+                if (!targetId) {
+                    console.warn('releaseKitDetail: no kit detail found to release', { playerId, id });
+                    return false;
+                }
+                try {
+                    await deleteDoc(docRef('kitDetails', targetId));
+                    return true;
+                } catch (err) {
+                    console.error('releaseKitDetail failed', err);
+                    return false;
+                }
+            };
+
             window.db = {
                 players: createTable('players'),
                 fixtures: createTable('fixtures'),
@@ -211,7 +252,10 @@
                 participations: createTable('participations'),
                 opponents: createTable('opponents'),
                 venues: createTable('venues'),
-                referees: createTable('referees')
+                referees: createTable('referees'),
+                kitDetails: createTable('kitDetails'),
+                kitQueue: createTable('kitQueue'),
+                releaseKitDetail
             };
         } catch (err) {
             console.error('Firebase init failed. Provide a valid GAFFER_FIREBASE_CONFIG to continue.', err);
@@ -292,7 +336,10 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo, useRef } = React;
+        const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
+        const APP_VERSION = window.GAFFER_BUILD_VERSION || 'dev';
+        const VERSION_STORAGE_KEY = 'gaffer:lastBuildVersion';
+        console.info('[Gaffer] Loaded build version:', APP_VERSION);
 
         // Defensive fallback so other tabs never crash if a duplicate modal variable leaks outside Players.
         if (typeof isDupModalOpen === 'undefined') {
@@ -325,6 +372,64 @@
             } catch (e) {
                 return `S$${amount.toFixed(options.minimumFractionDigits || 0)}`;
             }
+        };
+
+        // Turn categories like MATCH_FEE into "Match Fee" for UI/WhatsApp output.
+        const formatCategoryLabel = (value = '') => {
+            if (!value) return '';
+            return value.toString()
+                .replace(/_/g, ' ')
+                .split(/\s+/)
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ')
+                .trim();
+        };
+
+        const normalizeMotm = (value = '') => {
+            return (value ?? '').toString().trim();
+        };
+
+        const resolveMotmName = (motm, playersOrLookup = []) => {
+            let raw = motm;
+            if (raw && typeof raw === 'object' && raw.manOfTheMatch !== undefined) {
+                raw = raw.manOfTheMatch;
+            }
+            const clean = normalizeMotm(raw);
+            if (!clean) return '';
+
+            const tryByArray = (list = []) => {
+                if (!Array.isArray(list)) return null;
+                const byId = list.find(p => String(p.id) === clean);
+                if (byId) return byId;
+                const lower = clean.toLowerCase();
+                return list.find(p => (`${p.firstName} ${p.lastName}`).trim().toLowerCase() === lower);
+            };
+
+            const tryByLookup = (lookup = {}) => {
+                if (Array.isArray(lookup) || !lookup || typeof lookup !== 'object') return null;
+                return lookup[clean] || lookup[String(clean)];
+            };
+
+            const match = Array.isArray(playersOrLookup)
+                ? tryByArray(playersOrLookup)
+                : (tryByLookup(playersOrLookup) || tryByArray(Object.values(playersOrLookup || {})));
+
+            if (match) return `${match.firstName} ${match.lastName}`.trim();
+
+            const numeric = Number(clean);
+            if (!Number.isNaN(numeric) && clean !== '') return `Player #${numeric}`;
+            return clean;
+        };
+
+        const transactionHasCoveringPayment = (charge, txList = []) => {
+            if (!charge || !Array.isArray(txList) || !txList.length) return false;
+            return txList.some(tx => (
+                tx.playerId === charge.playerId &&
+                tx.category === charge.category &&
+                tx.amount > 0 &&
+                (charge.fixtureId ? tx.fixtureId === charge.fixtureId : true) &&
+                Math.abs(tx.amount) >= Math.abs(charge.amount)
+            ));
         };
 
         const DEFAULT_CATEGORIES = ['Referee Fee', 'Match Fee'];
@@ -389,9 +494,7 @@
             return Number.isNaN(num) ? fallback : num;
         };
 
-        const KIT_QUEUE_KEY = 'gaffer:kitQueue';
         const KIT_NUMBER_LIMIT_KEY = 'gaffer:kitNumberLimit';
-        const KIT_DETAILS_KEY = 'gaffer:kitDetails';
         const POSITION_DEFS_KEY = 'gaffer:positionDefinitions';
         const DEFAULT_KIT_NUMBER_LIMIT = 50;
         const DEFAULT_POSITION_DEFINITIONS = [
@@ -414,23 +517,6 @@
             { code: 'SS', label: 'Second Striker / Support Striker' }
         ];
 
-        const loadKitQueue = () => {
-            const data = readStorageJSON(KIT_QUEUE_KEY, []);
-            return Array.isArray(data) ? data : [];
-        };
-
-        const persistKitQueue = (queue) => {
-            writeStorageJSON(KIT_QUEUE_KEY, queue);
-        };
-
-        const loadKitDetails = () => {
-            const data = readStorageJSON(KIT_DETAILS_KEY, []);
-            return Array.isArray(data) ? data : [];
-        };
-
-        const persistKitDetails = (details) => {
-            writeStorageJSON(KIT_DETAILS_KEY, details);
-        };
         const KIT_SIZE_OPTIONS_KEY = 'gaffer:kitSizeOptions';
         const DEFAULT_KIT_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
         const loadKitSizeOptions = () => {
@@ -520,6 +606,12 @@
 
         const persistKitNumberLimit = (value) => {
             writeStorageJSON(KIT_NUMBER_LIMIT_KEY, value);
+        };
+
+        const releaseKitDetailById = async (id) => {
+            if (!id) return;
+            await waitForDb();
+            await db.kitDetails.delete(id);
         };
 
         const loadRefDefaults = () => {
@@ -642,6 +734,34 @@
                 </svg>
             );
         };
+
+        const ImportProgressContext = React.createContext({
+            startImportProgress: () => {},
+            finishImportProgress: () => {},
+            addProgressDetail: () => {},
+            progressDetails: []
+        });
+        const useImportProgress = () => useContext(ImportProgressContext);
+
+        const ImportProgressOverlay = ({ message = "Updating data…", details = [] }) => (
+            <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm pointer-events-none">
+                <div className="pointer-events-auto w-full max-w-xs rounded-3xl bg-white/90 border border-white/50 px-6 py-8 text-center shadow-2xl space-y-3">
+                    <div className="mx-auto mb-3 h-12 w-12 rounded-full border-4 border-slate-200 border-t-slate-900 animate-spin"></div>
+                    <p className="text-sm font-bold text-slate-900">{message}</p>
+                    <p className="text-[11px] text-slate-500 mt-1">Hang tight while we sync the latest records.</p>
+                    {details?.length ? (
+                        <div className="max-h-28 overflow-y-auto text-left text-[11px] text-slate-500 bg-slate-50/70 border border-slate-200 rounded-xl px-3 py-2 no-scrollbar">
+                            {details.map((line, idx) => (
+                                <div key={`${line}-${idx}`} className="flex items-start gap-2">
+                                    <span className="mt-[2px] text-slate-300">•</span>
+                                    <span className="text-slate-600">{line}</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : null}
+                </div>
+            </div>
+        );
 
         // --- 4. Feature Modules ---
 
@@ -871,18 +991,20 @@
         };
 
         // --- PLAYERS MODULE ---
-        const Players = ({ itemCategories, positionDefinitions, kitDetails = [], setKitDetails, kitSizeOptions = [] }) => {
+        const Players = ({ itemCategories, positionDefinitions, kitDetails = [], saveKitDetail, kitSizeOptions = [] }) => {
             const [players, setPlayers] = useState([]);
             const [balances, setBalances] = useState({});
             const [selectedPlayer, setSelectedPlayer] = useState(null);
             const [fixtures, setFixtures] = useState([]);
             const [participations, setParticipations] = useState([]);
             const [playerTx, setPlayerTx] = useState([]);
+            const [transactions, setTransactions] = useState([]);
             const [isAddOpen, setIsAddOpen] = useState(false);
             const [isEditOpen, setIsEditOpen] = useState(false);
             const [editPlayer, setEditPlayer] = useState(null);
             const [editPlayerKit, setEditPlayerKit] = useState({ shirtSize: '', shortSize: '' });
             const [isWallOpen, setIsWallOpen] = useState(false);
+            const [isDebtOpen, setIsDebtOpen] = useState(false);
             const [newPlayer, setNewPlayer] = useState({
                 firstName: '',
                 lastName: '',
@@ -900,18 +1022,49 @@
             const [isImportingPlayers, setIsImportingPlayers] = useState(false);
             const [importSummary, setImportSummary] = useState('');
             const [playerImportRows, setPlayerImportRows] = useState(null);
+            const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const [playerPositionSelection, setPlayerPositionSelection] = useState('');
             const [playerCustomPositionInput, setPlayerCustomPositionInput] = useState('');
             const [sortPlayersBy, setSortPlayersBy] = useState('name');
+            const [sortDirection, setSortDirection] = useState('asc');
+            const [playerSearch, setPlayerSearch] = useState('');
             const [duplicatePairs, setDuplicatePairs] = useState([]);
             const [isDupModalOpen, setIsDupModalOpen] = useState(false);
-            const [duplicateDebug, setDuplicateDebug] = useState(null);
             const [isDupScanning, setIsDupScanning] = useState(false);
             const [dupScanProgress, setDupScanProgress] = useState({ phase: '', checked: 0, total: 0, found: 0, lastFound: '' });
+            const [isReleasingKit, setIsReleasingKit] = useState(false);
             const selectedPlayerKit = useMemo(() => {
                 if (!selectedPlayer) return null;
                 return kitDetails.find(detail => detail?.playerId && String(detail.playerId) === String(selectedPlayer.id)) || null;
             }, [selectedPlayer, kitDetails]);
+
+            const releasePlayerKit = useCallback(async (player) => {
+                if (!player) return;
+                const kitRecord = kitDetails.find(detail => detail?.playerId && String(detail.playerId) === String(player.id));
+                if (!kitRecord) {
+                    alert('No kit record found for this player.');
+                    return;
+                }
+                if (!confirm(`Release ${player.firstName} ${player.lastName}'s kit (this frees up ${kitRecord.numberAssigned || 'their'} number)?`)) {
+                    return;
+                }
+                setIsReleasingKit(true);
+                startImportProgress('Releasing kit…');
+                try {
+                    await db.kitDetails.delete(kitRecord.id);
+                    alert(`Kit released for ${player.firstName} ${player.lastName}.`);
+                    if (selectedPlayer && selectedPlayer.id === player.id) {
+                        setSelectedPlayer(prev => (prev ? { ...prev } : prev));
+                    }
+                    refresh();
+                } catch (err) {
+                    console.error('Failed to release kit', err);
+                    alert('Unable to release kit: ' + (err?.message || 'unexpected error'));
+                } finally {
+                    setIsReleasingKit(false);
+                    finishImportProgress();
+                }
+            }, [kitDetails, selectedPlayer, startImportProgress, finishImportProgress]);
 
             const refresh = async () => {
                 await waitForDb();
@@ -948,6 +1101,7 @@
                 setPlayers(list);
                 setFixtures(fixt);
                 setParticipations(parts);
+                setTransactions(txs);
 
                 const focusName = localStorage.getItem('gaffer:focusPlayerName');
                 if(focusName) {
@@ -990,26 +1144,76 @@
                 setPlayers(prev => prev.map(p => p.id === player.id ? { ...p, isActive: next } : p));
             };
 
-            const hasExistingPayment = (tx) => {
-                return playerTx.some(p => p.playerId === tx.playerId && p.category === tx.category && p.amount > 0 && (tx.fixtureId ? p.fixtureId === tx.fixtureId : true) && Math.abs(p.amount) >= Math.abs(tx.amount));
+            const hasExistingPayment = (tx, source = playerTx) => transactionHasCoveringPayment(tx, source);
+
+            const buildDebtDigest = () => {
+                if (!players.length || !transactions.length) return 'No outstanding debts. ✅';
+                const lines = [];
+                players.forEach(player => {
+                    const charges = transactions.filter(tx => tx.playerId === player.id && tx.amount < 0);
+                    const outstanding = charges.filter(charge => !transactionHasCoveringPayment(charge, transactions));
+                    if (!outstanding.length) return;
+                    const total = outstanding.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+                    const header = `${player.firstName} ${player.lastName}`.trim();
+                    lines.push(`${header} – Owes ${formatCurrency(total, { maximumFractionDigits: 0 })}`);
+                    outstanding.forEach(tx => {
+                        const fixture = fixtures.find(f => f.id === tx.fixtureId);
+                        let label = '';
+                        if (fixture) {
+                            const dateLabel = fixture.date ? new Date(fixture.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+                            label = `vs ${fixture.opponent || 'TBC'}${dateLabel ? ` (${dateLabel})` : ''}`;
+                        } else {
+                            label = tx.description || formatCategoryLabel(tx.category) || 'Charge';
+                        }
+                        const tag = tx.category && (!fixture || (tx.description && tx.description !== tx.category)) ? ` [${formatCategoryLabel(tx.category)}]` : '';
+                        lines.push(` • ${label}${tag} – ${formatCurrency(Math.abs(tx.amount), { maximumFractionDigits: 0 })}`);
+                    });
+                    lines.push('');
+                });
+                return lines.length ? lines.join('\n').trim() : 'No outstanding debts. ✅';
+            };
+
+            const copyDebtDigest = () => {
+                const digest = buildDebtDigest();
+                const fallbackCopy = () => {
+                    const ta = document.createElement('textarea');
+                    ta.value = digest;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    alert('Copied debt blast (fallback)');
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(digest)
+                        .then(() => alert('Debt blast copied for WhatsApp'))
+                        .catch(fallbackCopy);
+                } else {
+                    fallbackCopy();
+                }
             };
 
             const handlePay = async (tx) => {
                 if (hasExistingPayment(tx)) { alert('Already paid.'); return; }
                 if (!confirm("Mark this specific item as paid?")) return;
-                await db.transactions.add({
-                    date: new Date().toISOString(),
-                    category: tx.category || 'MATCH_FEE',
-                    type: 'INCOME',
-                    description: `Payment for ${tx.description}`,
-                    amount: Math.abs(tx.amount), 
-                    flow: 'receivable',
-                    playerId: selectedPlayer.id,
-                    fixtureId: tx.fixtureId,
-                    isReconciled: true
-                });
-                openPlayerDetails(selectedPlayer);
-                refresh();
+                startImportProgress('Recording payment…');
+                try {
+                    await db.transactions.add({
+                        date: new Date().toISOString(),
+                        category: tx.category || 'MATCH_FEE',
+                        type: 'INCOME',
+                        description: `Payment for ${tx.description}`,
+                        amount: Math.abs(tx.amount), 
+                        flow: 'receivable',
+                        playerId: selectedPlayer.id,
+                        fixtureId: tx.fixtureId,
+                        isReconciled: true
+                    });
+                    openPlayerDetails(selectedPlayer);
+                    refresh();
+                } finally {
+                    finishImportProgress();
+                }
             };
 
             const handleAdd = async (e) => {
@@ -1034,33 +1238,24 @@
                 refresh();
             };
 
-            const upsertPlayerKitSizes = (player, patch) => {
-                if (!player || !setKitDetails) return;
-                setKitDetails(prev => {
-                    const playerId = String(player.id);
-                    const existingIndex = prev.findIndex(detail => detail?.playerId && String(detail.playerId) === playerId);
-                    const trimmed = {
-                        shirtSize: (patch.shirtSize || '').trim(),
-                        shortSize: (patch.shortSize || '').trim()
-                    };
-                    if (existingIndex < 0 && !trimmed.shirtSize && !trimmed.shortSize) {
-                        return prev;
-                    }
-                    const base = existingIndex >= 0 ? prev[existingIndex] : null;
-                    const updated = {
-                        ...(base || {}),
-                        ...trimmed,
-                        playerId,
-                        playerName: `${player.firstName} ${player.lastName}`.trim(),
-                        id: base?.id || `kit-${playerId}`
-                    };
-                    if (existingIndex >= 0) {
-                        const next = [...prev];
-                        next[existingIndex] = updated;
-                        return next;
-                    }
-                    return [...prev, updated];
-                });
+            const upsertPlayerKitSizes = async (player, patch) => {
+                if (!player || !saveKitDetail) return;
+                const playerId = String(player.id);
+                const existing = kitDetails.find(detail => detail?.playerId && String(detail.playerId) === playerId);
+                const trimmed = {
+                    shirtSize: (patch.shirtSize || '').trim(),
+                    shortSize: (patch.shortSize || '').trim()
+                };
+                if (!existing && !trimmed.shirtSize && !trimmed.shortSize) {
+                    return;
+                }
+                const payload = {
+                    ...(existing || {}),
+                    ...trimmed,
+                    playerId,
+                    playerName: `${player.firstName} ${player.lastName}`.trim()
+                };
+                await saveKitDetail(payload);
             };
 
             const startEdit = (player) => {
@@ -1097,7 +1292,7 @@
                     shirtNumber: editPlayer.shirtNumber,
                     isActive: editPlayer.isActive 
                 });
-                upsertPlayerKitSizes(editPlayer, editPlayerKit);
+                await upsertPlayerKitSizes(editPlayer, editPlayerKit);
                 setIsEditOpen(false);
                 setSelectedPlayer(prev => prev && prev.id === editPlayer.id ? { ...prev, ...editPlayer } : prev);
                 refresh();
@@ -1241,46 +1436,51 @@
                     alert('Each row must have at least one selected position.');
                     return;
                 }
-                const existingPlayers = await db.players.toArray();
-                const nameIndex = {};
-                existingPlayers.forEach(player => {
-                    const key = sanitizeNameKey(`${player.firstName} ${player.lastName}`);
-                    if (key) nameIndex[key] = player;
-                });
-                let created = 0;
-                let updated = 0;
-                for (const row of rows) {
-                    const key = sanitizeNameKey(`${row.firstName} ${row.lastName}`);
-                    const existing = row.matchedPlayerId ? existingPlayers.find(p => String(p.id) === row.matchedPlayerId) : (key ? nameIndex[key] : null);
-                    const positionsText = row.selectedPositions.join(', ');
-                    const primaryPosition = row.selectedPositions[0] || existing?.position || 'MID';
-                    const preferredPosition = row.selectedPositions[1] || existing?.preferredPosition || primaryPosition;
-                    const currentRaw = (row.currentPlayer || '').toLowerCase();
-                    const hasCurrent = row.currentPlayer !== undefined && row.currentPlayer !== '';
-                    const isActive = hasCurrent ? CURRENT_PLAYER_TRUE.has(currentRaw) : (existing?.isActive !== false);
-                    const payload = {
-                        firstName: row.firstName,
-                        lastName: row.lastName,
-                        position: primaryPosition,
-                        preferredPosition,
-                        phone: overrideIfValue(row.record.phone, existing?.phone || ''),
-                        age: row.record.age ? Number(row.record.age) : (existing?.age ?? null),
-                        dateOfBirth: overrideIfValue(row.record.dateOfBirth, existing?.dateOfBirth || ''),
-                        positions: positionsText,
-                        shirtNumber: overrideIfValue(row.record.shirtNumber, existing?.shirtNumber || ''),
-                        isActive
-                    };
-                    if (existing) {
-                        await db.players.update(existing.id, payload);
-                        updated++;
-                    } else {
-                        await db.players.add(payload);
-                        created++;
+                startImportProgress('Importing players…');
+                try {
+                    const existingPlayers = await db.players.toArray();
+                    const nameIndex = {};
+                    existingPlayers.forEach(player => {
+                        const key = sanitizeNameKey(`${player.firstName} ${player.lastName}`);
+                        if (key) nameIndex[key] = player;
+                    });
+                    let created = 0;
+                    let updated = 0;
+                    for (const row of rows) {
+                        const key = sanitizeNameKey(`${row.firstName} ${row.lastName}`);
+                        const existing = row.matchedPlayerId ? existingPlayers.find(p => String(p.id) === row.matchedPlayerId) : (key ? nameIndex[key] : null);
+                        const positionsText = row.selectedPositions.join(', ');
+                        const primaryPosition = row.selectedPositions[0] || existing?.position || 'MID';
+                        const preferredPosition = row.selectedPositions[1] || existing?.preferredPosition || primaryPosition;
+                        const currentRaw = (row.currentPlayer || '').toLowerCase();
+                        const hasCurrent = row.currentPlayer !== undefined && row.currentPlayer !== '';
+                        const isActive = hasCurrent ? CURRENT_PLAYER_TRUE.has(currentRaw) : (existing?.isActive !== false);
+                        const payload = {
+                            firstName: row.firstName,
+                            lastName: row.lastName,
+                            position: primaryPosition,
+                            preferredPosition,
+                            phone: overrideIfValue(row.record.phone, existing?.phone || ''),
+                            age: row.record.age ? Number(row.record.age) : (existing?.age ?? null),
+                            dateOfBirth: overrideIfValue(row.record.dateOfBirth, existing?.dateOfBirth || ''),
+                            positions: positionsText,
+                            shirtNumber: overrideIfValue(row.record.shirtNumber, existing?.shirtNumber || ''),
+                            isActive
+                        };
+                        if (existing) {
+                            await db.players.update(existing.id, payload);
+                            updated++;
+                        } else {
+                            await db.players.add(payload);
+                            created++;
+                        }
                     }
+                    refresh();
+                    setPlayerImportRows(null);
+                    setImportSummary(`Imported ${created} new player${created === 1 ? '' : 's'} · updated ${updated} record${updated === 1 ? '' : 's'}.`);
+                } finally {
+                    finishImportProgress();
                 }
-                refresh();
-                setPlayerImportRows(null);
-                setImportSummary(`Imported ${created} new player${created === 1 ? '' : 's'} · updated ${updated} record${updated === 1 ? '' : 's'}.`);
             };
             const topDebtors = useMemo(() => {
                 return [...players]
@@ -1292,16 +1492,16 @@
             const selectedPlayerPositions = selectedPlayer ? collectPlayerPositions(selectedPlayer) : [];
             const sortedPlayers = useMemo(() => {
                 const arr = [...players];
+                let sorted;
                 if (sortPlayersBy === 'shirt') {
-                    return arr.sort((a, b) => {
+                    sorted = arr.sort((a, b) => {
                         const an = parseInt(a.shirtNumber, 10) || 0;
                         const bn = parseInt(b.shirtNumber, 10) || 0;
                         if (an === bn) return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
                         return an - bn;
                     });
-                }
-                if (sortPlayersBy === 'paid') {
-                    return arr.sort((a, b) => {
+                } else if (sortPlayersBy === 'paid') {
+                    sorted = arr.sort((a, b) => {
                         const balA = balances[a.id] || 0;
                         const balB = balances[b.id] || 0;
                         const paidA = balA >= 0 ? 1 : 0;
@@ -1309,17 +1509,36 @@
                         if (paidA !== paidB) return paidB - paidA;
                         return balB - balA;
                     });
-                }
-                if (sortPlayersBy === 'active') {
-                    return arr.sort((a, b) => {
+                } else if (sortPlayersBy === 'active') {
+                    sorted = arr.sort((a, b) => {
                         const actA = a.isActive === false ? 0 : 1;
                         const actB = b.isActive === false ? 0 : 1;
                         if (actA !== actB) return actB - actA;
                         return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
                     });
+                } else {
+                    sorted = arr.sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
                 }
-                return arr.sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
-            }, [players, sortPlayersBy, balances]);
+                return sortDirection === 'desc' ? [...sorted].reverse() : sorted;
+            }, [players, sortPlayersBy, balances, sortDirection]);
+
+            const filteredPlayers = useMemo(() => {
+                const term = playerSearch.trim().toLowerCase();
+                if (!term) return sortedPlayers;
+                return sortedPlayers.filter((p) => {
+                    const searchTarget = [
+                        p.firstName,
+                        p.lastName,
+                        `${p.firstName} ${p.lastName}`,
+                        p.phone,
+                        p.position,
+                        p.preferredPosition,
+                        Array.isArray(p.positions) ? p.positions.join(' ') : p.positions,
+                        p.shirtNumber
+                    ].filter(Boolean).join(' ').toLowerCase();
+                    return searchTarget.includes(term);
+                });
+            }, [sortedPlayers, playerSearch]);
 
             // Asynchronous duplicate scanner with progress callbacks for UI feedback
             const scanDuplicatesAsync = async (playerList, onProgress) => {
@@ -1450,34 +1669,10 @@
 
                 const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
                 setDuplicatePairs(pairs);
-                setDuplicateDebug({
-                    playerCount: players.length,
-                    pairCount: pairs.length,
-                    elapsedMs: Math.round(elapsed),
-                    fallback: Boolean(fallbackError),
-                    sample: pairs.slice(0, 3).map(p => ({
-                        a: `${p.a.firstName} ${p.a.lastName}`,
-                        b: `${p.b.firstName} ${p.b.lastName}`,
-                        score: Math.round(p.score * 100)
-                    }))
-                });
                 setIsDupModalOpen(true);
                 if (!pairs.length) {
                     alert('No potential duplicates detected.');
                 }
-            };
-
-            const runDuplicateSelfTest = () => {
-                const samplePlayers = [
-                    { id: 1, firstName: 'John', lastName: 'Smith' },
-                    { id: 2, firstName: 'Jon', lastName: 'Smith' },
-                    { id: 3, firstName: 'Alice', lastName: 'Lee' },
-                    { id: 4, firstName: 'Alice', lastName: 'Li' },
-                    { id: 5, firstName: 'Bob', lastName: 'Brown' }
-                ];
-                const samplePairs = computeDuplicatePairs(samplePlayers);
-                console.log('Duplicate self-test sample', { samplePlayers, samplePairs });
-                alert(`Self-test complete. Found ${samplePairs.length} pair(s). See console for details.`);
             };
 
             const deletePlayerAndRelations = async (player) => {
@@ -1574,7 +1769,7 @@
                     <header className="px-1">
                         <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Squad</h1>
                         <p className="text-slate-500 text-sm font-medium">Manage roster & debts</p>
-                        <div className="flex gap-2 mt-2">
+                        <div className="flex gap-2 mt-2 flex-wrap">
                             <button onClick={() => setIsWallOpen(true)} className="text-xs font-bold bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg border border-rose-100 flex items-center gap-1">
                                 <Icon name="AlertTriangle" size={14} /> Wall of Shame
                             </button>
@@ -1583,9 +1778,6 @@
                             </button>
                             <button onClick={findDuplicatePlayers} className="text-xs font-bold bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg border border-amber-100">
                                 Check duplicates
-                            </button>
-                            <button onClick={runDuplicateSelfTest} className="text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100">
-                                Debug scan
                             </button>
                             <button onClick={() => {
                                 const msg = players.map((p,i)=>`${i+1}. ${p.firstName} ${p.lastName}`).join('\n');
@@ -1603,6 +1795,9 @@
                             }} className="text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-100">
                                 Copy Squad
                             </button>
+                            <button onClick={() => setIsDebtOpen(true)} className="text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-1">
+                                <Icon name="MessageSquare" size={14} /> Debt Message
+                            </button>
                         </div>
                         {importSummary && (
                             <p className="text-[11px] text-slate-500 mt-1">{importSummary}</p>
@@ -1615,11 +1810,34 @@
                                 <option value="paid">Paid status</option>
                                 <option value="active">Active status</option>
                             </select>
+                            <button type="button" onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')} className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-600">
+                                <Icon name={sortDirection === 'asc' ? 'ArrowUp' : 'ArrowDown'} size={12} />
+                                {sortDirection === 'asc' ? 'Asc' : 'Desc'}
+                            </button>
+                        </div>
+                        <div className="mt-3 w-full sm:w-72 relative">
+                            <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                            <input
+                                type="search"
+                                value={playerSearch}
+                                onChange={(e) => setPlayerSearch(e.target.value)}
+                                placeholder="Search players"
+                                className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-9 pr-3 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                            />
+                            {playerSearch && (
+                                <button
+                                    type="button"
+                                    onClick={() => setPlayerSearch('')}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 hover:text-slate-600"
+                                >
+                                    Clear
+                                </button>
+                            )}
                         </div>
                     </header>
 
                     <div className="bg-white rounded-2xl shadow-soft border border-slate-100 overflow-hidden divide-y divide-slate-50">
-                        {sortedPlayers.map((p) => {
+                        {filteredPlayers.length ? filteredPlayers.map((p) => {
                             const bal = balances[p.id] || 0;
                             const availPositions = p.positions || [p.position, p.preferredPosition || p.position].filter(Boolean).join(', ');
                             return (
@@ -1647,7 +1865,11 @@
                                     </div>
                                 </button>
                             );
-                        })}
+                        }) : (
+                            <div className="p-6 text-center text-sm text-slate-500">
+                                No players match that search.
+                            </div>
+                        )}
                     </div>
 
                     <Fab onClick={() => setIsAddOpen(true)} icon="Plus" />
@@ -1703,13 +1925,16 @@
                                             )}
                                         </div>
                                     )}
-                                    {selectedPlayerKit && (
-                                        <div className="flex flex-wrap gap-2">
-                                            {selectedPlayerKit.shirtSize && <span>Shirt size: {selectedPlayerKit.shirtSize}</span>}
-                                            {selectedPlayerKit.shortSize && <span>Short size: {selectedPlayerKit.shortSize}</span>}
-                                        </div>
-                                    )}
-                                </div>
+                                {selectedPlayerKit && (
+                                    <div className="flex flex-wrap gap-2">
+                                        {selectedPlayerKit.shirtSize && <span>Shirt size: {selectedPlayerKit.shirtSize}</span>}
+                                        {selectedPlayerKit.shortSize && <span>Short size: {selectedPlayerKit.shortSize}</span>}
+                                        <button onClick={() => releasePlayerKit(selectedPlayer)} disabled={isReleasingKit} className="text-[11px] font-bold px-3 py-1 rounded-full border border-rose-200 bg-rose-50 text-rose-700">
+                                            {isReleasingKit ? 'Releasing…' : 'Release kit'}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                                 <div className="space-y-2">
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Available Positions</div>
                                     <div className="flex flex-wrap gap-2">
@@ -1784,7 +2009,7 @@
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments & Fees</div>
                                     <div className="space-y-2 max-h-48 overflow-y-auto">
                                         {Array.from(new Map(playerTx.map(tx => [tx.id, tx])).values()).map(tx => {
-                                            const outstanding = tx.amount < 0 && !hasExistingPayment(tx);
+                const outstanding = tx.amount < 0 && !hasExistingPayment(tx);
                                             return (
                                                 <div key={tx.id} className="flex justify-between items-center p-3 border border-slate-100 rounded-xl bg-white">
                                                     <div>
@@ -1880,9 +2105,19 @@
                                     <div className="text-sm font-bold text-rose-700">{formatCurrency(p.balance)}</div>
                                 </div>
                             ))}
-                            {topDebtors.length === 0 && <div className="text-center text-sm text-slate-400">Nobody owes a dime. Love to see it.</div>}
+                    {topDebtors.length === 0 && <div className="text-center text-sm text-slate-400">Nobody owes a dime. Love to see it.</div>}
                             <button onClick={generateWallImage} className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-rose-500/20">
                                 Download Share Image
+                            </button>
+                        </div>
+                    </Modal>
+
+                    <Modal isOpen={isDebtOpen} onClose={() => setIsDebtOpen(false)} title="WhatsApp Debt Blast">
+                        <div className="space-y-3">
+                            <p className="text-xs text-slate-500">Copy this and drop it into WhatsApp so everyone sees what they owe.</p>
+                            <textarea readOnly className="w-full h-48 bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-mono no-scrollbar" value={buildDebtDigest()} />
+                            <button onClick={copyDebtDigest} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
+                                <Icon name="Copy" size={16} /> Copy message
                             </button>
                         </div>
                     </Modal>
@@ -1974,10 +2209,11 @@
             const [fixtureTx, setFixtureTx] = useState([]);
             const [allTx, setAllTx] = useState([]);
             const [isAddOpen, setIsAddOpen] = useState(false);
-            const [newFixture, setNewFixture] = useState({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: '15:00', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season' });
+            const [newFixture, setNewFixture] = useState({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: '15:00', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season', manOfTheMatch: '' });
             const [feeEdits, setFeeEdits] = useState({});
             const [newCost, setNewCost] = useState({ description: '', amount: '', category: 'Referee Fee', flow: 'payable' });
             const [payee, setPayee] = useState({ type: 'referee', value: '' });
+            const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const payeeOptions = useMemo(() => {
                 const cat = (newCost.category || '').toLowerCase();
                 const opts = [];
@@ -2029,10 +2265,36 @@
             const [legacyResultsText, setLegacyResultsText] = useState('');
             const [resultsPreview, setResultsPreview] = useState([]);
             const [isScoreOpen, setIsScoreOpen] = useState(false);
-            const [scoreForm, setScoreForm] = useState({ our: 0, their: 0, scorersArr: [] });
+            const [scoreForm, setScoreForm] = useState({ our: 0, their: 0, scorersArr: [], motmSelection: '', motmCustom: '' });
             const [quickOpponent, setQuickOpponent] = useState({ name: '', payee: '', contact: '' });
             const [quickVenue, setQuickVenue] = useState({ name: '', price: '', address: '', payee: '', contact: '' });
             const [selectedSeason, setSelectedSeason] = useState(seasonCategories?.[0] || '2025/2026 Season');
+            const [magicFixtureTarget, setMagicFixtureTarget] = useState('new');
+            const playerLookup = useMemo(() => players.reduce((acc, p) => { acc[p.id] = p; return acc; }, {}), [players]);
+            const getPlayerByMotmValue = useCallback((value) => {
+                if (value === undefined || value === null) return null;
+                const label = typeof value === 'number' ? String(value) : (value || '').toString();
+                const trimmed = label.trim();
+                if (!trimmed) return null;
+                const byId = players.find(p => String(p.id) === trimmed);
+                if (byId) return byId;
+                const lower = trimmed.toLowerCase();
+                const byName = players.find(p => (`${p.firstName} ${p.lastName}`).trim().toLowerCase() === lower);
+                return byName || null;
+            }, [players]);
+            const resolveMotmLabel = useCallback((value) => {
+                const match = getPlayerByMotmValue(value);
+                if (match) return `${match.firstName} ${match.lastName}`.trim();
+                const clean = (value ?? '').toString().trim();
+                return clean;
+            }, [getPlayerByMotmValue]);
+            const deriveMotmState = useCallback((value) => {
+                const clean = (value ?? '').toString().trim();
+                if (!clean) return { selection: '', custom: '' };
+                const match = getPlayerByMotmValue(value);
+                if (match) return { selection: String(match.id), custom: '' };
+                return { selection: '__custom__', custom: clean };
+            }, [getPlayerByMotmValue]);
             const gamesStats = useMemo(() => {
                 if(!fixtures.length) return { total: 0, wins: 0, draws: 0, losses: 0, thisYear: 0, lastYear: 0, bySeason: {} };
                 const nowYear = new Date().getFullYear();
@@ -2061,6 +2323,27 @@
                 });
                 return { total, wins, draws, losses, thisYear, lastYear, bySeason };
             }, [fixtures]);
+            const motmBoard = useMemo(() => {
+                if (!fixtures.length) return [];
+                return fixtures
+                    .filter(f => f.manOfTheMatch)
+                    .map(f => {
+                        const label = resolveMotmLabel(f.manOfTheMatch);
+                        if (!label) return null;
+                        const timestamp = Date.parse(f.date || '');
+                        return {
+                            id: f.id,
+                            opponent: f.opponent || 'Opponent',
+                            label,
+                            date: f.date,
+                            timestamp: Number.isNaN(timestamp) ? 0 : timestamp,
+                            homeScore: f.homeScore,
+                            awayScore: f.awayScore
+                        };
+                    })
+                    .filter(Boolean)
+                    .sort((a, b) => b.timestamp - a.timestamp);
+            }, [fixtures, resolveMotmLabel]);
 
             const refresh = async () => {
                 await waitForDb();
@@ -2099,11 +2382,19 @@
                 setSquad(squadState);
                 const txs = await db.transactions.where('fixtureId').equals(fixture.id).toArray();
                 setFixtureTx(txs);
-                setSelectedFixture({ ...fixture, feeAmount: fixture.feeAmount || 20, seasonTag: fixture.seasonTag || seasonCategories?.[0] || '2025/2026 Season' });
+                setSelectedFixture({ 
+                    ...fixture, 
+                    feeAmount: fixture.feeAmount || 20, 
+                    seasonTag: fixture.seasonTag || seasonCategories?.[0] || '2025/2026 Season',
+                    manOfTheMatch: fixture.manOfTheMatch || ''
+                });
+                const motmState = deriveMotmState(fixture.manOfTheMatch);
                 setScoreForm({ 
                     our: fixture.homeScore || 0, 
                     their: fixture.awayScore || 0, 
-                    scorersArr: (fixture.scorers || []).map(s => typeof s === 'number' ? String(s) : s) 
+                    scorersArr: (fixture.scorers || []).map(s => typeof s === 'number' ? String(s) : s),
+                    motmSelection: motmState.selection,
+                    motmCustom: motmState.custom
                 });
                 const newFeeEdits = {};
                 Object.keys(squadState).forEach(pid => {
@@ -2237,12 +2528,15 @@
 
             const saveFixtureDetails = async () => {
                 if(!selectedFixture) return;
+                const motmValue = selectedFixture.manOfTheMatch;
+                const normalizedMotm = typeof motmValue === 'string' ? motmValue.trim() : (motmValue ?? '');
                 await db.fixtures.update(selectedFixture.id, { 
                     opponent: selectedFixture.opponent, 
                     date: selectedFixture.date, 
                     time: selectedFixture.time, 
                     venue: selectedFixture.venue,
-                    feeAmount: selectedFixture.feeAmount || 20
+                    feeAmount: selectedFixture.feeAmount || 20,
+                    manOfTheMatch: normalizedMotm || ''
                 });
                 refresh();
                 alert('Fixture updated');
@@ -2290,11 +2584,16 @@
             const saveScore = async () => {
                 if(!selectedFixture) return;
                 const scorersClean = (scoreForm.scorersArr || []).filter(Boolean).map(s => s === 'OG' ? 'OG' : s);
+                const motmValue = scoreForm.motmSelection === '__custom__'
+                    ? (scoreForm.motmCustom || '').trim()
+                    : (scoreForm.motmSelection || '');
                 await db.fixtures.update(selectedFixture.id, {
                     homeScore: Number(scoreForm.our) || 0,
                     awayScore: Number(scoreForm.their) || 0,
-                    scorers: scorersClean
+                    scorers: scorersClean,
+                    manOfTheMatch: motmValue || ''
                 });
+                setSelectedFixture(prev => prev ? { ...prev, manOfTheMatch: motmValue } : prev);
                 setIsScoreOpen(false);
                 reloadSelected();
             };
@@ -2331,6 +2630,11 @@
                     return { player: p, due, paid, isPaid: paid >= due, feeTx, payTx };
                 });
             }, [players, squad, fixtureTx, selectedFixture, allTx]);
+            const motmPlayerChoices = useMemo(() => {
+                if (!players.length) return [];
+                const selectedPlayers = players.filter(p => squad[p.id]);
+                return selectedPlayers.length ? selectedPlayers : players;
+            }, [players, squad]);
 
             const fixtureTotals = useMemo(() => {
                 if(!selectedFixture) return { cost: 0, ref: 0 };
@@ -2410,7 +2714,7 @@
             const handleAdd = async (e) => {
                 e.preventDefault();
                 await db.fixtures.add({ ...newFixture, status: 'SCHEDULED' });
-                setNewFixture({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: '15:00', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season' });
+                setNewFixture({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: '15:00', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season', manOfTheMatch: '' });
                 setIsAddOpen(false);
                 refresh();
             };
@@ -2450,7 +2754,7 @@
 
                 // 3. Parse Players (Robust)
                 const entries = [];
-                const positions = ['GK', 'RB', 'LB', 'CB', 'Def', 'Mid', 'FWD', 'Wing', 'RM', 'LM', 'Anywhere', 'Right Back', 'Left Back', 'Striker', 'RB/LB', 'RM/LM'];
+                const trailingPositionTokens = ['GK', 'RB', 'LB', 'CB', 'Def', 'Mid', 'FWD', 'Wing', 'RM', 'LM', 'Anywhere', 'Right Back', 'Left Back', 'Striker', 'RB/LB', 'RM/LM'];
 
                 // Improved Start Detection: Allows space/dot after 1 (e.g. "1. Con")
                 const playersStart = clean.search(/1[\.\)\s]*[A-Za-z]/);
@@ -2485,23 +2789,16 @@
                         rawContent = rawContent.replace(/Paid\s*$/i, '').trim();
                     }
                     
-                    // Extract Name & Position
+                    // Extract Name & remove trailing shorthand position codes
                     let name = rawContent;
-                    let position = 'MID'; 
 
-                    const sortedPos = positions.sort((a,b) => b.length - a.length);
+                    const sortedPos = trailingPositionTokens.sort((a,b) => b.length - a.length);
                     for(const pos of sortedPos) {
                         const regex = new RegExp(`[\\/\\s]*${pos}$`, 'i');
                         if(regex.test(name)) {
                             name = name.replace(regex, '').trim();
-                            position = pos.toUpperCase();
                             break;
                         }
-                    }
-
-                    for(const pos of sortedPos) {
-                        const regex = new RegExp(`${pos}$`, 'i');
-                        if(regex.test(name)) name = name.replace(regex, '').trim();
                     }
 
                     name = name.replace(/[\/\.\-]$/, '').trim();
@@ -2516,30 +2813,22 @@
                         name.toLowerCase().includes(p.firstName.toLowerCase()) && name.length > 3
                     );
 
-                    const normalizedPos = (position || 'MID').toUpperCase();
                     const suggestions = suggestPlayers(name, players);
                     const bestSuggestion = suggestions[0];
-                    const needsReview = !existing || (bestSuggestion && bestSuggestion.player.id !== existing.id && bestSuggestion.score < 0.65);
-
-                    if(existing) {
-                        entries.push({ 
-                            name: `${existing.firstName} ${existing.lastName}`, 
-                            position: (existing.position || normalizedPos), 
-                            isPaid, 
-                            selectedId: existing.id,
-                            suggestions,
-                            needsReview
-                        });
-                    } else {
-                        entries.push({ 
-                            name, 
-                            position: normalizedPos, 
-                            isPaid, 
-                            selectedId: null,
-                            suggestions,
-                            needsReview: true
-                        });
+                    let selectedId = existing ? String(existing.id) : null;
+                    if(!selectedId && bestSuggestion && bestSuggestion.score >= 0.75) {
+                        selectedId = String(bestSuggestion.player.id);
                     }
+                    const normalizedName = existing ? `${existing.firstName} ${existing.lastName}` : name;
+                    const needsReview = !selectedId;
+
+                    entries.push({
+                        name: normalizedName,
+                        isPaid,
+                        selectedId,
+                        suggestions,
+                        needsReview
+                    });
                 });
                 
                 // Preselect best opponent/venue suggestions
@@ -2549,92 +2838,146 @@
                 if(bestVen && bestVen.score > 0.65) venue = bestVen.v.name;
 
                 setParsedData({ opponent, date: dateStr, time, venue, entries, feeAmount: Number(magicFee) || 20, competitionType: 'LEAGUE', seasonTag });
+                const suggestedFixture = fixtures
+                    .filter(f => f.status === 'PLAYED' || f.status === 'SCHEDULED')
+                    .find(f => {
+                        const fDate = f.date ? new Date(f.date).toISOString().split('T')[0] : '';
+                        const sameDate = fDate === dateStr;
+                        const similarOpponent = stringSimilarity((opponent || '').toLowerCase(), (f.opponent || '').toLowerCase()) >= 0.75;
+                        return sameDate && similarOpponent;
+                    });
+                setMagicFixtureTarget(suggestedFixture ? String(suggestedFixture.id) : 'new');
             };
             
             const confirmMagic = async () => {
                 if(!parsedData || !parsedData.entries || parsedData.entries.length === 0) return;
-                
-                // Resolve opponent/venue to known lists if close match, otherwise create
-                let bestOpponent = opponents
-                    .map(o => ({ o, score: stringSimilarity(parsedData.opponent, o.name) }))
-                    .sort((a,b)=>b.score-a.score)[0];
-                let opponentId = bestOpponent && bestOpponent.score > 0.65 ? bestOpponent.o.id : null;
-                let opponentName = bestOpponent && bestOpponent.score > 0.65 ? bestOpponent.o.name : parsedData.opponent;
-                if(!opponentId) {
-                    opponentId = await db.opponents.add({ name: opponentName });
-                    opponentName = parsedData.opponent;
-                    if(setOpponents) setOpponents([...opponents, { id: opponentId, name: opponentName }]);
+                startImportProgress('Importing fixture data…');
+                addProgressDetail('Preparing game record…');
+                try {
+                    let finalFixtureId = null;
+                let fixtureOpponentLabel = parsedData.opponent;
+                let feeForFixture = parsedData.feeAmount || 20;
+                const existingTarget = magicFixtureTarget !== 'new'
+                    ? fixtures.find(f => String(f.id) === String(magicFixtureTarget))
+                    : null;
+
+                if(existingTarget) {
+                    finalFixtureId = existingTarget.id;
+                    fixtureOpponentLabel = existingTarget.opponent || fixtureOpponentLabel;
+                    feeForFixture = parsedData.feeAmount || existingTarget.feeAmount || 20;
+                    await db.fixtures.update(finalFixtureId, { feeAmount: feeForFixture });
+                    await db.participations.where('fixtureId').equals(finalFixtureId).delete();
+                    const existingMatchFees = await db.transactions
+                        .where('fixtureId')
+                        .equals(finalFixtureId)
+                        .and(tx => (tx.category || '').toUpperCase() === 'MATCH_FEE')
+                        .toArray();
+                    if(existingMatchFees.length) {
+                        await db.transactions.bulkDelete(existingMatchFees.map(tx => tx.id));
+                    }
+                    addProgressDetail(`Updating existing game vs ${fixtureOpponentLabel}`);
+                } else {
+                    // Resolve opponent/venue to known lists if close match, otherwise create
+                    let bestOpponent = opponents
+                        .map(o => ({ o, score: stringSimilarity(parsedData.opponent, o.name) }))
+                        .sort((a,b)=>b.score-a.score)[0];
+                    let opponentId = bestOpponent && bestOpponent.score > 0.65 ? bestOpponent.o.id : null;
+                    let opponentName = bestOpponent && bestOpponent.score > 0.65 ? bestOpponent.o.name : parsedData.opponent;
+                    if(!opponentId) {
+                        opponentId = await db.opponents.add({ name: opponentName });
+                        opponentName = parsedData.opponent;
+                        if(setOpponents) setOpponents([...opponents, { id: opponentId, name: opponentName }]);
+                    }
+
+                    let bestVenue = venues
+                        .map(v => ({ v, score: stringSimilarity(parsedData.venue, v.name) }))
+                        .sort((a,b)=>b.score-a.score)[0];
+                    let venueId = bestVenue && bestVenue.score > 0.65 ? bestVenue.v.id : null;
+                    let venueName = bestVenue && bestVenue.score > 0.65 ? bestVenue.v.name : parsedData.venue;
+                    if(!venueId) {
+                        venueId = await db.venues.add({ name: venueName });
+                        venueName = parsedData.venue;
+                        if(setVenues) setVenues([...venues, { id: venueId, name: venueName }]);
+                    }
+
+                    finalFixtureId = await db.fixtures.add({
+                        opponent: opponentName,
+                        opponentId,
+                        date: parsedData.date,
+                        venue: venueName,
+                        venueId,
+                        time: parsedData.time,
+                        competitionType: parsedData.competitionType || 'LEAGUE',
+                        feeAmount: parsedData.feeAmount || 20,
+                        seasonTag: parsedData.seasonTag || (seasonCategories?.[0] || '2025/2026 Season'),
+                        status: 'SCHEDULED'
+                    });
+                    fixtureOpponentLabel = opponentName;
+                    feeForFixture = parsedData.feeAmount || 20;
+                    addProgressDetail(`Created new game vs ${fixtureOpponentLabel} on ${parsedData.date}`);
                 }
 
-                let bestVenue = venues
-                    .map(v => ({ v, score: stringSimilarity(parsedData.venue, v.name) }))
-                    .sort((a,b)=>b.score-a.score)[0];
-                let venueId = bestVenue && bestVenue.score > 0.65 ? bestVenue.v.id : null;
-                let venueName = bestVenue && bestVenue.score > 0.65 ? bestVenue.v.name : parsedData.venue;
-                if(!venueId) {
-                    venueId = await db.venues.add({ name: venueName });
-                    venueName = parsedData.venue;
-                    if(setVenues) setVenues([...venues, { id: venueId, name: venueName }]);
+                if(!finalFixtureId) {
+                    alert('Unable to determine a game to import into.');
+                    return;
                 }
 
-                const fixtureId = await db.fixtures.add({
-                    opponent: opponentName,
-                    opponentId,
-                    date: parsedData.date,
-                    venue: venueName,
-                    venueId,
-                    time: parsedData.time,
-                    competitionType: parsedData.competitionType || 'LEAGUE',
-                    feeAmount: parsedData.feeAmount || 20,
-                    seasonTag: parsedData.seasonTag || (seasonCategories?.[0] || '2025/2026 Season'),
-                    status: 'SCHEDULED'
-                });
-
+                const normalizedFee = Number.isFinite(Number(feeForFixture)) ? Number(feeForFixture) : 20;
+                const importTimestamp = new Date().toISOString();
                 const participations = [];
                 const transactions = [];
 
-                for (const entry of parsedData.entries) {
-                    let playerId = entry.selectedId ? parseInt(entry.selectedId) : null;
+                for (let i = 0; i < parsedData.entries.length; i++) {
+                    const entry = parsedData.entries[i];
+                    const trimmedName = (entry.name || '').trim();
+                    if(!trimmedName) continue;
+                    let playerId = typeof entry.selectedId === 'number' ? entry.selectedId : parseInt(entry.selectedId, 10);
+                    playerId = Number.isFinite(playerId) ? playerId : null;
                     if (!playerId) {
-                        const names = entry.name.split(' ');
+                        const nameTokens = trimmedName.split(/\s+/).filter(Boolean);
+                        const firstName = nameTokens.shift() || 'Player';
+                        const lastNameRaw = nameTokens.join(' ');
+                        const lastName = lastNameRaw.trim() ? lastNameRaw : '(New)';
                         playerId = await db.players.add({
-                            firstName: names[0],
-                            lastName: names.slice(1).join(' ') || '(New)',
-                            position: entry.position || 'MID',
+                            firstName,
+                            lastName,
                             isActive: true
                         });
+                        addProgressDetail(`(${i + 1}/${parsedData.entries.length}) Added new player ${firstName} ${lastName}`);
+                    } else {
+                        addProgressDetail(`(${i + 1}/${parsedData.entries.length}) Linked ${trimmedName} to player #${playerId}`);
                     }
 
-                    participations.push({ fixtureId, playerId, status: 'SELECTED' });
+                    participations.push({ fixtureId: finalFixtureId, playerId, status: 'SELECTED' });
 
-                    const feeVal = parsedData.feeAmount || 20;
                     transactions.push({
-                        date: new Date().toISOString(),
+                        date: importTimestamp,
                         category: 'MATCH_FEE',
                         type: 'EXPENSE',
                         flow: 'payable',
-                        amount: -Math.abs(feeVal),
-                        description: `Match Fee vs ${parsedData.opponent}`,
+                        amount: -Math.abs(normalizedFee),
+                        description: `Match Fee vs ${fixtureOpponentLabel}`,
                         playerId,
-                        fixtureId,
+                        fixtureId: finalFixtureId,
                         isReconciled: false
                     });
 
                     if (entry.isPaid) {
                         transactions.push({
-                            date: new Date().toISOString(),
+                            date: importTimestamp,
                             category: 'MATCH_FEE',
                             type: 'INCOME',
                             flow: 'receivable',
-                            amount: Math.abs(feeVal),
-                            description: `Payment for vs ${parsedData.opponent}`,
+                            amount: Math.abs(normalizedFee),
+                            description: `Payment for vs ${fixtureOpponentLabel}`,
                             playerId,
-                            fixtureId,
+                            fixtureId: finalFixtureId,
                             isReconciled: true
                         });
                     }
                 }
 
+                addProgressDetail('Writing players, fees, and payments…');
                 await db.participations.bulkAdd(participations);
                 await db.transactions.bulkAdd(transactions);
 
@@ -2642,7 +2985,11 @@
                 setIsMagicOpen(false);
                 setMagicText('');
                 setParsedData(null);
+                setMagicFixtureTarget('new');
                 refresh();
+            } finally {
+                finishImportProgress();
+            }
             };
 
             const updateEntry = (index, changes) => {
@@ -2803,6 +3150,30 @@
                         ))}
                     </div>
 
+                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Man of the Match Board</div>
+                            <span className="text-[10px] font-semibold text-slate-400">{motmBoard.length} awards logged</span>
+                        </div>
+                        {motmBoard.length ? (
+                            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                {motmBoard.slice(0, 8).map(item => {
+                                    const dateLabel = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC';
+                                    const hasScore = typeof item.homeScore === 'number' && typeof item.awayScore === 'number';
+                                    const scoreLabel = hasScore ? ` · Exiles ${item.homeScore}-${item.awayScore}` : '';
+                                    return (
+                                        <div key={`motm-board-${item.id}`} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                            <div className="text-sm font-bold text-slate-900">{item.label}</div>
+                                            <div className="text-[11px] text-slate-500">{dateLabel} · vs {item.opponent}{scoreLabel}</div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="text-sm text-slate-400">No awards recorded yet. Save a score to start tracking.</div>
+                        )}
+                    </div>
+
                     <div className="space-y-3">
                         {fixtures.map(f => (
                             <div key={f.id} onClick={() => openMatchMode(f)} className="bg-white p-5 rounded-2xl shadow-soft border border-slate-100 flex flex-col gap-3 cursor-pointer hover:border-brand-200 transition-colors group">
@@ -2934,6 +3305,24 @@
                             </select>
                             <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" step="1" value={selectedFixture.feeAmount || 20} onChange={e => setSelectedFixture({ ...selectedFixture, feeAmount: Number(e.target.value) })} placeholder="Match fee" />
                         </div>
+                                </div>
+
+                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Accolades</div>
+                                    <div className="space-y-2">
+                                        <label className="text-[11px] font-bold text-slate-500 uppercase">Man of the Match</label>
+                                        <input list="fixture-motm-options" className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Select player or type a name" value={resolveMotmLabel(selectedFixture.manOfTheMatch) || ''} onChange={e => {
+                                            const val = e.target.value;
+                                            const match = getPlayerByMotmValue(val);
+                                            setSelectedFixture({ ...selectedFixture, manOfTheMatch: match ? String(match.id) : val });
+                                        }} />
+                                        <datalist id="fixture-motm-options">
+                                            {players.map(p => (
+                                                <option key={`motm-${p.id}`} value={`${p.firstName} ${p.lastName}`}></option>
+                                            ))}
+                                        </datalist>
+                                        <p className="text-[11px] text-slate-500">Use squad suggestions or enter anything to track awards (e.g. guest players or opposition).</p>
+                                    </div>
                                 </div>
 
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
@@ -3099,6 +3488,27 @@
                                     </select>
                                 ))}
                             </div>
+                            <div className="space-y-2">
+                                <label className="text-[11px] font-bold text-slate-500 uppercase">Man of the Match</label>
+                                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={scoreForm.motmSelection || ''} onChange={e => {
+                                    const val = e.target.value;
+                                    if (val === '__custom__') {
+                                        setScoreForm(prev => ({ ...prev, motmSelection: '__custom__' }));
+                                    } else {
+                                        setScoreForm(prev => ({ ...prev, motmSelection: val, motmCustom: '' }));
+                                    }
+                                }}>
+                                    <option value="">Not set</option>
+                                    {motmPlayerChoices.map(p => (
+                                        <option key={`motm-pick-${p.id}`} value={`${p.id}`}>{p.firstName} {p.lastName}</option>
+                                    ))}
+                                    <option value="__custom__">Custom entry…</option>
+                                </select>
+                                {scoreForm.motmSelection === '__custom__' && (
+                                    <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" placeholder="Custom name or note" value={scoreForm.motmCustom} onChange={e => setScoreForm(prev => ({ ...prev, motmCustom: e.target.value }))} />
+                                )}
+                                <p className="text-[11px] text-slate-500">Pick someone from the squad or choose custom for guests/opposition.</p>
+                            </div>
                             <button onClick={saveScore} className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">Save Score</button>
                         </div>
                     </Modal>
@@ -3165,7 +3575,7 @@
                     </Modal>
                     
                     {/* Magic Paste Modal */}
-                    <Modal isOpen={isMagicOpen} onClose={() => { setIsMagicOpen(false); setParsedData(null); }} title="Magic Clipboard">
+                    <Modal isOpen={isMagicOpen} onClose={() => { setIsMagicOpen(false); setParsedData(null); setMagicFixtureTarget('new'); }} title="Magic Clipboard">
                         {!parsedData ? (
                             <div className="space-y-4">
                                 <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
@@ -3242,32 +3652,80 @@
                                     Remove any bad rows below. Rows left in yellow are uncertain matches; edit or delete before importing.
                                 </div>
 
+                                <div className="space-y-2 bg-white border border-indigo-100 rounded-xl p-3">
+                                    <div className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide">Apply To Game</div>
+                                    <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                                        <input type="radio" value="new" checked={magicFixtureTarget === 'new'} onChange={e => setMagicFixtureTarget(e.target.value)} />
+                                        Create new game (default)
+                                    </label>
+                                    <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                                        {fixtures.filter(f => f.status === 'PLAYED').sort((a,b)=>new Date(b.date)-new Date(a.date)).map(f => (
+                                            <label key={`magic-fixture-${f.id}`} className={`flex items-start gap-2 p-2 rounded-lg border ${magicFixtureTarget === String(f.id) ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-white'}`}>
+                                                <input type="radio" value={String(f.id)} checked={magicFixtureTarget === String(f.id)} onChange={e => setMagicFixtureTarget(e.target.value)} />
+                                                <div className="text-xs text-slate-600">
+                                                    <div className="font-bold text-slate-900">vs {f.opponent || 'Unknown'} · {new Date(f.date).toLocaleDateString()}</div>
+                                                    <div className="text-[11px] text-slate-500">Score {f.homeScore ?? '-'}:{f.awayScore ?? '-'} · {f.venue || 'Venue TBC'}</div>
+                                                </div>
+                                            </label>
+                                        ))}
+                                        {fixtures.filter(f => f.status === 'PLAYED').length === 0 && (
+                                            <div className="text-[11px] text-slate-400">No previously played games available.</div>
+                                        )}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500">Selecting an existing game replaces its squad list and match-fee entries.</div>
+                                </div>
+
                                 <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
                                     {parsedData.entries.map((entry, idx) => {
                                         const nearest = entry.suggestions && entry.suggestions[0];
+                                        const selectionValue = entry.selectedId !== null && entry.selectedId !== undefined ? String(entry.selectedId) : 'new';
                                         return (
-                                            <div key={idx} className={`p-3 rounded-xl border ${entry.needsReview ? 'border-amber-200 bg-amber-50/60' : 'border-slate-100 bg-white'} space-y-2`}>
-                                                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                                                    <input className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={entry.name} onChange={e => updateEntry(idx, { name: e.target.value })} placeholder="Name" />
-                                                    <input className="w-24 bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={entry.position} onChange={e => updateEntry(idx, { position: e.target.value.toUpperCase() })} placeholder="Pos" />
-                                                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-                                                        <input type="checkbox" checked={entry.isPaid} onChange={e => updateEntry(idx, { isPaid: e.target.checked })} />
-                                                        Paid
-                                                    </label>
+                                            <div key={idx} className={`p-3 rounded-xl border ${entry.needsReview ? 'border-amber-200 bg-amber-50/60' : 'border-slate-100 bg-white'} space-y-3`}>
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="flex-1">
+                                                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wide block mb-1">Player name from sheet</label>
+                                                        <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={entry.name} onChange={e => updateEntry(idx, { name: e.target.value })} placeholder="Player name" />
+                                                    </div>
+                                                    {entry.needsReview && (
+                                                        <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-amber-100 text-amber-700 border border-amber-200">Needs review</span>
+                                                    )}
                                                 </div>
-                                                <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3 gap-2">
-                                <select className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={entry.selectedId !== null && entry.selectedId !== undefined ? String(entry.selectedId) : 'new'} onChange={e => updateEntry(idx, { selectedId: e.target.value === 'new' ? null : parseInt(e.target.value, 10), needsReview: e.target.value === 'new' })}>
-                                    <option value="new">Create new player</option>
-                                    {entry.suggestions?.map((sugg, i) => (
-                                        <option key={i} value={String(sugg.player.id)}>
-                                            {sugg.player.firstName} {sugg.player.lastName} ({Math.round(sugg.score * 100)}%)
-                                        </option>
-                                    ))}
-                                </select>
+                                                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                                    <input type="checkbox" checked={entry.isPaid} onChange={e => updateEntry(idx, { isPaid: e.target.checked })} />
+                                                    Paid already?
+                                                </label>
+                                                <div className="space-y-2">
+                                                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wide block">Link to squad player</label>
+                                                    <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm font-medium" value={selectionValue} onChange={e => updateEntry(idx, { selectedId: e.target.value === 'new' ? null : parseInt(e.target.value, 10), needsReview: e.target.value === 'new' })}>
+                                                        <option value="new">Create new player (adds to squad automatically)</option>
+                                                        {entry.suggestions?.length ? (
+                                                            <optgroup label="Suggested matches">
+                                                                {entry.suggestions.map((sugg, i) => (
+                                                                    <option key={`sugg-${idx}-${i}`} value={String(sugg.player.id)}>
+                                                                        {sugg.player.firstName} {sugg.player.lastName} ({Math.round(sugg.score * 100)}%)
+                                                                    </option>
+                                                                ))}
+                                                            </optgroup>
+                                                        ) : null}
+                                                        <optgroup label="All squad players">
+                                                            {players.map(p => (
+                                                                <option key={`all-${idx}-${p.id}`} value={String(p.id)}>
+                                                                    {p.firstName} {p.lastName}
+                                                                </option>
+                                                            ))}
+                                                        </optgroup>
+                                                    </select>
                                                     <div className="text-[11px] text-slate-500">
                                                         {nearest ? `Nearest match: ${nearest.player.firstName} ${nearest.player.lastName} (${Math.round(nearest.score * 100)}%)` : 'No nearby match found'}
                                                     </div>
-                                                    <button onClick={() => setParsedData(data => ({ ...data, entries: data.entries.filter((_, i) => i !== idx) }))} className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-100 px-2 py-1 rounded-lg">Delete row</button>
+                                                    <div className="text-[10px] text-slate-400">
+                                                        Choosing “Create new player” will add that name to the squad before the fixture is created.
+                                                    </div>
+                                                </div>
+                                                <div className="flex justify-end">
+                                                    <button onClick={() => setParsedData(data => ({ ...data, entries: data.entries.filter((_, i) => i !== idx) }))} className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-100 px-3 py-1 rounded-lg">
+                                                        Delete row
+                                                    </button>
                                                 </div>
                                             </div>
                                         );
@@ -3276,11 +3734,11 @@
                                 </div>
 
                                 <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 p-3 rounded-lg">
-                                    Edit any entries above. Rows in amber are uncertain; we pre-filled the nearest match so you can fix mistakes before importing.
+                                    Edit any entries above. Rows in amber are uncertain; we pre-filled the nearest match so you can fix mistakes before importing. Selecting “Create new player” adds that name to the squad automatically before the game is saved.
                                 </div>
 
                             <div className="flex gap-3 mt-2 pt-2 border-t border-slate-100">
-                                <button onClick={() => setParsedData(null)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-colors">Back</button>
+                                <button onClick={() => { setParsedData(null); setMagicFixtureTarget('new'); }} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl transition-colors">Back</button>
                                 <button onClick={confirmMagic} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-emerald-500/20">
                                     Import All
                                 </button>
@@ -3301,6 +3759,7 @@
             const [players, setPlayers] = useState([]);
             const [fixtures, setFixtures] = useState([]);
             const [isImporting, setIsImporting] = useState(false);
+            const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const [newTx, setNewTx] = useState({ description: '', amount: '', category: 'OTHER', type: 'EXPENSE', date: new Date().toISOString().split('T')[0], playerId: '' });
             const [isAddTxOpen, setIsAddTxOpen] = useState(false);
             const [newTxCategoryName, setNewTxCategoryName] = useState('');
@@ -3362,31 +3821,38 @@
             }, []);
 
             const handleFileUpload = async (e) => {
-                const file = e.target.files[0];
+                const file = e.target.files?.[0];
                 if (!file) return;
+                startImportProgress('Importing ledger entries…');
                 setIsImporting(true);
-                // Reuse existing CSV logic if needed, or implement fresh
-                const text = await file.text();
-                // Simple parser just to make it work for demo
-                const rows = text.split(/\r?\n/).slice(1);
-                const txs = rows.map(row => {
-                     const cols = row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-                     if(cols.length < 5) return null;
-                     return {
-                         date: new Date().toISOString(),
-                         description: cols[1]?.replace(/"/g, ''),
-                         amount: -10, // Placeholder
-                         category: 'OTHER',
-                         type: 'EXPENSE',
-                         isReconciled: true
-                     }
-                }).filter(x => x);
-                // Note: For real import, check the earlier robust logic. 
-                // This is just to satisfy the full file generation requirement without re-pasting 100 lines of regex.
-                
-                setIsImporting(false);
-                e.target.value = null;
-                alert("Import simulation complete");
+                try {
+                    const text = await file.text();
+                    // Simple parser just to make it work for demo
+                    const rows = text.split(/\r?\n/).slice(1);
+                    const txs = rows.map(row => {
+                         const cols = row.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+                         if(cols.length < 5) return null;
+                         return {
+                             date: new Date().toISOString(),
+                             description: cols[1]?.replace(/"/g, ''),
+                             amount: -10, // Placeholder
+                             category: 'OTHER',
+                             type: 'EXPENSE',
+                             isReconciled: true
+                         };
+                    }).filter(x => x);
+                    // Note: For real import, check the earlier robust logic. 
+                    // This is just to satisfy the full file generation requirement without re-pasting 100 lines of regex.
+                    
+                    alert("Import simulation complete");
+                } catch (err) {
+                    console.error(err);
+                    alert("Import failed: " + (err?.message || "Unexpected error"));
+                } finally {
+                    setIsImporting(false);
+                    finishImportProgress();
+                    if (e.target) e.target.value = null;
+                }
             };
             
             // Simple Donut Chart SVG
@@ -3470,6 +3936,147 @@
                 players.forEach(p => { map[p.id] = p; });
                 return map;
             }, [players]);
+
+            const resolvePlayerForRow = (playerId) => {
+                if (playerId === undefined || playerId === null) return null;
+                return playerLookup[playerId] || playerLookup[String(playerId)] || null;
+            };
+
+            const formatDateLabel = (value) => {
+                if (!value) return '';
+                const parsed = new Date(value);
+                if (Number.isNaN(parsed.getTime())) return '';
+                return parsed.toISOString().split('T')[0];
+            };
+
+            const buildLedgerWithRunningBalance = useCallback(() => {
+                if (!transactions.length) return [];
+                const sorted = [...transactions].sort((a, b) => {
+                    const da = new Date(a.date || 0).getTime();
+                    const db = new Date(b.date || 0).getTime();
+                    if (da === db) {
+                        return String(a.id ?? '').localeCompare(String(b.id ?? ''));
+                    }
+                    return da - db;
+                });
+                let running = 0;
+                return sorted.map((original) => {
+                    const amount = Number(original.amount) || 0;
+                    running += amount;
+                    return { ...original, amount, runningBalance: running };
+                });
+            }, [transactions]);
+
+            const escapeCsv = (value) => {
+                if (value === undefined || value === null) return '';
+                const str = String(value).replace(/"/g, '""');
+                return /[",\n]/.test(str) ? `"${str}"` : str;
+            };
+
+            const exportLedgerCsv = useCallback(() => {
+                if (!transactions.length) {
+                    alert('No transactions to export yet.');
+                    return;
+                }
+                const rows = buildLedgerWithRunningBalance();
+                const headers = ['Date', 'Description', 'Category', 'Type', 'Flow', 'Amount (SGD)', 'Running Balance (SGD)', 'Player', 'Payee', 'Fixture', 'Reconciled'];
+                const csvLines = [headers.map(escapeCsv).join(',')];
+                rows.forEach((row) => {
+                    const player = resolvePlayerForRow(row.playerId);
+                    const parts = [
+                        formatDateLabel(row.date),
+                        row.description || '',
+                        row.category || 'Other',
+                        row.type || '',
+                        row.flow || deriveFlow(row.type || ''),
+                        (row.amount || 0).toFixed(2),
+                        (row.runningBalance || 0).toFixed(2),
+                        player ? `${player.firstName} ${player.lastName}`.trim() : '',
+                        row.payee || '',
+                        row.fixtureId ? String(row.fixtureId) : '',
+                        row.isReconciled ? 'Yes' : 'No'
+                    ];
+                    csvLines.push(parts.map(escapeCsv).join(','));
+                });
+                const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `gaffer-ledger-${formatDateLabel(new Date()) || 'today'}.csv`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }, [transactions, buildLedgerWithRunningBalance]);
+
+            const exportLedgerPdf = useCallback(() => {
+                if (!transactions.length) {
+                    alert('No transactions to export yet.');
+                    return;
+                }
+                const rows = buildLedgerWithRunningBalance();
+                const htmlRows = rows.map((row) => {
+                    const player = resolvePlayerForRow(row.playerId);
+                    const playerName = player ? `${player.firstName} ${player.lastName}`.trim() : '—';
+                    const dateLabel = formatDateLabel(row.date) || '—';
+                    return `\n                        <tr>
+                            <td>${dateLabel}</td>
+                            <td>${row.description || ''}</td>
+                            <td>${row.category || 'Other'}</td>
+                            <td>${row.type || ''}</td>
+                            <td>${row.flow || deriveFlow(row.type || '')}</td>
+                            <td>${formatCurrency(row.amount)}</td>
+                            <td>${formatCurrency(row.runningBalance)}</td>
+                            <td>${playerName}</td>
+                            <td>${row.payee || '—'}</td>
+                            <td>${row.isReconciled ? '✔' : 'Pending'}</td>
+                        </tr>`;
+                }).join('');
+                const docHtml = `<!DOCTYPE html>
+                    <html>
+                        <head>
+                            <meta charset="utf-8" />
+                            <title>Ledger Export</title>
+                            <style>
+                                body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 24px; color: #0f172a; }
+                                h1 { font-size: 20px; margin-bottom: 16px; }
+                                table { width: 100%; border-collapse: collapse; font-size: 12px; }
+                                th, td { border: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; }
+                                th { background: #f8fafc; text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em; }
+                                tr:nth-child(even) { background: #fdfdfd; }
+                            </style>
+                        </head>
+                        <body>
+                            <h1>British Exiles · Itemised Ledger</h1>
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Description</th>
+                                        <th>Category</th>
+                                        <th>Type</th>
+                                        <th>Flow</th>
+                                        <th>Amount</th>
+                                        <th>Running Balance</th>
+                                        <th>Player</th>
+                                        <th>Payee</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${htmlRows}</tbody>
+                            </table>
+                        </body>
+                    </html>`;
+                const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+                if (!printWindow) {
+                    alert('Please allow pop-ups to export the PDF view.');
+                    return;
+                }
+                printWindow.document.write(docHtml);
+                printWindow.document.close();
+                printWindow.focus();
+                setTimeout(() => printWindow.print(), 250);
+            }, [transactions, buildLedgerWithRunningBalance]);
 
             const addTransaction = async () => {
                 const amt = Number(newTx.amount);
@@ -3652,15 +4259,23 @@
                             </div>
                         </div>
                         <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                            {transactions.slice(0,10).map(tx => (
-                                <div key={tx.id} className="flex justify-between items-center p-2 rounded-xl border border-slate-100 bg-slate-50">
-                                    <div>
-                                        <div className="text-[12px] font-bold text-slate-900">{tx.description}</div>
-                                        <div className="text-[10px] text-slate-500">{tx.category} · {new Date(tx.date).toLocaleDateString()}</div>
+                            {transactions.slice(0,10).map(tx => {
+                                const player = tx.playerId ? playerLookup[tx.playerId] : null;
+                                const playerName = player ? `${player.firstName} ${player.lastName}` : '';
+                                const feeLabel = tx.category === 'MATCH_FEE'
+                                    ? (tx.amount > 0 ? 'Payment received' : 'Match fee charged')
+                                    : (tx.category || 'Uncategorized');
+                                const contextLabel = playerName || tx.payee || feeLabel;
+                                return (
+                                    <div key={tx.id} className="flex justify-between items-center p-2 rounded-xl border border-slate-100 bg-slate-50">
+                                        <div>
+                                            <div className="text-[12px] font-bold text-slate-900">{tx.description}</div>
+                                            <div className="text-[10px] text-slate-500">{contextLabel} · {new Date(tx.date).toLocaleDateString()}</div>
+                                        </div>
+                                        <div className={`font-bold text-xs ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{tx.amount > 0 ? '+' : ''}{formatCurrency(Math.abs(tx.amount))}</div>
                                     </div>
-                                    <div className={`font-bold text-xs ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{tx.amount > 0 ? '+' : ''}{formatCurrency(Math.abs(tx.amount))}</div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
 
@@ -3684,14 +4299,22 @@
                     </div>
 
                     <div className="space-y-3">
-                        <div className="flex items-center justify-between px-1">
+                        <div className="flex items-center justify-between px-1 flex-wrap gap-2">
                             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ledger</h3>
-                            <div className="flex gap-2 text-[11px] items-center">
+                            <div className="flex gap-2 text-[11px] items-center flex-wrap">
                                 <span className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold">Receivable: {formatCurrency(outstanding.receivable)}</span>
                                 <span className="px-2 py-1 rounded-lg bg-rose-50 text-rose-700 font-bold">Payable: {formatCurrency(Math.abs(outstanding.payable))}</span>
                                 <span className="px-2 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold">Net: {formatCurrency(outstanding.receivable + outstanding.payable)}</span>
                                 <button type="button" onClick={() => setIsBreakdownOpen(true)} className="text-brand-600 font-bold underline">Full breakdown</button>
                             </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2 px-1">
+                            <button type="button" onClick={exportLedgerCsv} className="flex-1 min-w-[120px] bg-slate-900 text-white text-[11px] font-bold py-2 rounded-lg shadow-sm">
+                                Export CSV
+                            </button>
+                            <button type="button" onClick={exportLedgerPdf} className="flex-1 min-w-[140px] bg-white border border-slate-200 text-slate-700 text-[11px] font-bold py-2 rounded-lg">
+                                Print / PDF View
+                            </button>
                         </div>
                         <div className="space-y-1.5 max-h-[380px] overflow-y-auto pr-1">
                             {transactions.map(tx => (
@@ -3786,6 +4409,16 @@
             const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [], outstanding: { receivable: 0, payable: 0 } });
             const [nextFixture, setNextFixture] = useState(null);
             const [lastResult, setLastResult] = useState(null);
+            const [insights, setInsights] = useState({
+                form: [],
+                topScorer: null,
+                motmLeader: null,
+                avgGoals: { for: 0, against: 0 },
+                cleanSheets: 0,
+                debtors: [],
+                recentPayments: [],
+                upcomingBirthdays: []
+            });
             const kitOverview = useMemo(() => {
                 const limit = Math.max(1, Number(kitNumberLimit) || DEFAULT_KIT_NUMBER_LIMIT);
                 const assignedNumbers = new Set(kitDetails
@@ -3804,7 +4437,7 @@
                 const load = async () => {
                     await waitForDb();
                     const txs = await db.transactions.orderBy('date').toArray();
-                    const players = await db.players.count();
+                    const playerList = await db.players.toArray();
                     const fixtures = await db.fixtures.orderBy('date').toArray();
                     
                     const sortedTxs = txs.sort((a,b) => new Date(a.date) - new Date(b.date));
@@ -3815,11 +4448,138 @@
                     const payable = txs.filter(t => !t.isReconciled && (t.flow === 'payable' || t.amount < 0)).reduce((a,b)=>a+b.amount,0);
 
                     const upcoming = fixtures.filter(f => !f.status || f.status !== 'ARCHIVED').sort((a,b)=>new Date(a.date)-new Date(b.date)).find(f => new Date(f.date) >= new Date());
-                    const played = fixtures.filter(f => f.status === 'PLAYED').sort((a,b)=>new Date(b.date)-new Date(a.date))[0] || null;
+                    const playedFixtures = fixtures.filter(f => f.status === 'PLAYED').sort((a,b)=>new Date(b.date)-new Date(a.date));
+                    const lastPlayed = playedFixtures[0] || null;
 
-                    setStats({ balance: running, playerCt: players, fixtureCt: fixtures.length, history: chartData, outstanding: { receivable, payable } });
+                    setStats({ balance: running, playerCt: playerList.length, fixtureCt: fixtures.length, history: chartData, outstanding: { receivable, payable } });
                     setNextFixture(upcoming || null);
-                    setLastResult(played ? { opponent: played.opponent, score: `${played.homeScore ?? '-'}:${played.awayScore ?? '-'}`, date: played.date } : null);
+                    setLastResult(lastPlayed ? { opponent: lastPlayed.opponent, score: `${lastPlayed.homeScore ?? '-'}:${lastPlayed.awayScore ?? '-'}`, date: lastPlayed.date } : null);
+
+                    const playerLookup = {};
+                    playerList.forEach(p => { playerLookup[String(p.id)] = p; });
+                    const perPlayerBalance = {};
+                    playerList.forEach(p => { perPlayerBalance[String(p.id)] = 0; });
+                    txs.forEach(tx => {
+                        if (tx.playerId === undefined || tx.playerId === null) return;
+                        const key = String(tx.playerId);
+                        if (perPlayerBalance[key] === undefined) perPlayerBalance[key] = 0;
+                        perPlayerBalance[key] += tx.amount;
+                    });
+                    const debtors = Object.entries(perPlayerBalance)
+                        .map(([id, balance]) => {
+                            if (balance >= 0) return null;
+                            const player = playerLookup[id];
+                            if (!player) return null;
+                            return {
+                                id,
+                                name: `${player.firstName} ${player.lastName}`.trim(),
+                                balance
+                            };
+                        })
+                        .filter(Boolean)
+                        .sort((a, b) => a.balance - b.balance)
+                        .slice(0, 3);
+                    const now = new Date();
+                    const upcomingBirthdays = playerList
+                        .map((player) => {
+                            if (!player.dateOfBirth) return null;
+                            const dob = new Date(player.dateOfBirth);
+                            if (Number.isNaN(dob.getTime())) return null;
+                            const next = new Date(now.getFullYear(), dob.getMonth(), dob.getDate());
+                            if (next < now) next.setFullYear(next.getFullYear() + 1);
+                            const diffDays = Math.round((next - now) / (1000 * 60 * 60 * 24));
+                            if (diffDays < 0 || diffDays > 60) return null;
+                            const turning = next.getFullYear() - dob.getFullYear();
+                            return {
+                                id: player.id,
+                                name: `${player.firstName} ${player.lastName}`.trim(),
+                                inDays: diffDays,
+                                turning,
+                                dateLabel: next.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                            };
+                        })
+                        .filter(Boolean)
+                        .sort((a, b) => a.inDays - b.inDays)
+                        .slice(0, 3);
+                    const recentPayments = txs
+                        .filter(tx => tx.amount > 0)
+                        .sort((a, b) => new Date(b.date) - new Date(a.date))
+                        .slice(0, 4)
+                        .map(tx => {
+                            const player = tx.playerId !== undefined && tx.playerId !== null ? playerLookup[String(tx.playerId)] : null;
+                            return {
+                                id: tx.id,
+                                description: tx.description || 'Payment received',
+                                amount: tx.amount,
+                                date: tx.date,
+                                playerName: player ? `${player.firstName} ${player.lastName}`.trim() : (tx.payee || '')
+                            };
+                        });
+                    const form = playedFixtures.slice(0, 5).map(f => {
+                        const our = Number(f.homeScore || 0);
+                        const their = Number(f.awayScore || 0);
+                        let result = 'D';
+                        if (our > their) result = 'W';
+                        else if (our < their) result = 'L';
+                        return {
+                            result,
+                            opponent: f.opponent || 'Opponent',
+                            score: `${our}-${their}`,
+                            date: f.date
+                        };
+                    });
+                    const scorerCounts = {};
+                    playedFixtures.forEach(f => {
+                        (f.scorers || []).forEach(scorer => {
+                            if (!scorer || String(scorer).toUpperCase() === 'OG') return;
+                            const key = String(scorer);
+                            scorerCounts[key] = (scorerCounts[key] || 0) + 1;
+                        });
+                    });
+                    let topScorer = null;
+                    Object.entries(scorerCounts).forEach(([key, goals]) => {
+                        const player = playerLookup[key];
+                        const label = player ? `${player.firstName} ${player.lastName}`.trim() : `Player ${key}`;
+                        if (!topScorer || goals > topScorer.goals) {
+                            topScorer = { label, goals };
+                        }
+                    });
+                    const motmTally = {};
+                    playedFixtures.forEach(f => {
+                        const raw = (f.manOfTheMatch ?? '').toString().trim();
+                        if (!raw) return;
+                        const player = playerLookup[raw];
+                        const label = player ? `${player.firstName} ${player.lastName}`.trim() : raw;
+                        motmTally[label] = (motmTally[label] || 0) + 1;
+                    });
+                    let motmLeader = null;
+                    Object.entries(motmTally).forEach(([label, count]) => {
+                        if (!motmLeader || count > motmLeader.count) {
+                            motmLeader = { label, count };
+                        }
+                    });
+                    const goalTotals = playedFixtures.reduce((acc, f) => {
+                        const our = Number(f.homeScore || 0);
+                        const their = Number(f.awayScore || 0);
+                        acc.for += our;
+                        acc.against += their;
+                        if (their === 0) acc.cleanSheets += 1;
+                        return acc;
+                    }, { for: 0, against: 0, cleanSheets: 0 });
+                    const avgGoals = {
+                        for: playedFixtures.length ? goalTotals.for / playedFixtures.length : 0,
+                        against: playedFixtures.length ? goalTotals.against / playedFixtures.length : 0
+                    };
+                    setInsights({
+                        form,
+                        topScorer,
+                        motmLeader,
+                        avgGoals,
+                        cleanSheets: goalTotals.cleanSheets,
+                        debtors,
+                        recentPayments,
+                        upcomingBirthdays
+                    });
                 };
                 load();
                 const handler = (e) => {
@@ -3843,6 +4603,7 @@
                             <button onClick={onOpenSettings} className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-700 hover:bg-slate-100 transition">
                                 <Icon name="Settings" size={18} />
                             </button>
+                            <span className="text-[10px] font-semibold text-slate-400">v{APP_VERSION}</span>
                         </div>
                     </header>
 
@@ -3909,6 +4670,128 @@
                                 Queue {kitOverview.queue}
                             </button>
                         </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Insights</div>
+                        <div className="grid grid-cols-2 gap-3 text-sm text-slate-700">
+                            <div className="col-span-2">
+                                <div className="text-[11px] uppercase font-bold text-slate-400 mb-1">Form (last 5)</div>
+                                {insights.form.length ? (
+                                    <div className="flex gap-1">
+                                        {insights.form.map((item, idx) => (
+                                            <div
+                                                key={`form-${idx}`}
+                                                title={`vs ${item.opponent} · ${item.score}`}
+                                                className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${
+                                                    item.result === 'W'
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : item.result === 'L'
+                                                            ? 'bg-rose-100 text-rose-700'
+                                                            : 'bg-slate-100 text-slate-600'
+                                                }`}
+                                            >
+                                                {item.result}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-[12px] text-slate-400">No played games yet.</div>
+                                )}
+                            </div>
+                            <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1">
+                                <div className="text-[10px] uppercase font-bold text-slate-400">Top Scorer</div>
+                                {insights.topScorer ? (
+                                    <>
+                                        <div className="font-bold text-slate-900 truncate">{insights.topScorer.label}</div>
+                                        <div className="text-[11px] text-slate-500">{insights.topScorer.goals} goal{insights.topScorer.goals === 1 ? '' : 's'}</div>
+                                    </>
+                                ) : (
+                                    <div className="text-[11px] text-slate-400">No goals recorded.</div>
+                                )}
+                            </div>
+                            <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1">
+                                <div className="text-[10px] uppercase font-bold text-slate-400">MOTM Leader</div>
+                                {insights.motmLeader ? (
+                                    <>
+                                        <div className="font-bold text-slate-900 truncate">{insights.motmLeader.label}</div>
+                                        <div className="text-[11px] text-slate-500">{insights.motmLeader.count} award{insights.motmLeader.count === 1 ? '' : 's'}</div>
+                                    </>
+                                ) : (
+                                    <div className="text-[11px] text-slate-400">No awards yet.</div>
+                                )}
+                            </div>
+                            <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1 col-span-2">
+                                <div className="text-[10px] uppercase font-bold text-slate-400">Goals & Clean Sheets</div>
+                                <div className="text-[12px] text-slate-600">
+                                    Scoring {insights.avgGoals.for.toFixed(1)} · Conceding {insights.avgGoals.against.toFixed(1)} per match
+                                </div>
+                                <div className="text-[11px] text-slate-500">Clean sheets: {insights.cleanSheets}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-4">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Financial Pulse</div>
+                        <div className="space-y-3">
+                            <div>
+                                <div className="text-[10px] font-semibold text-rose-500 uppercase tracking-wider mb-1">Debt Watch</div>
+                                {insights.debtors.length ? (
+                                    <div className="space-y-2">
+                                        {insights.debtors.map((debtor) => (
+                                            <div key={debtor.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-rose-50 border border-rose-100">
+                                                <div>
+                                                    <div className="text-sm font-bold text-rose-800">{debtor.name}</div>
+                                                    <div className="text-[11px] text-rose-500">Owes {formatCurrency(Math.abs(debtor.balance), { maximumFractionDigits: 0 })}</div>
+                                                </div>
+                                                <button onClick={() => onNavigate('players')} className="text-[10px] font-bold text-rose-700 underline">Follow up</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-xs text-slate-400">No overdue balances 👏</div>
+                                )}
+                            </div>
+                            <div>
+                                <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider mb-1">Recent Payments</div>
+                                {insights.recentPayments.length ? (
+                                    <div className="space-y-2">
+                                        {insights.recentPayments.map((tx) => (
+                                            <div key={tx.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-100">
+                                                <div>
+                                                    <div className="text-sm font-bold text-emerald-900 truncate">{tx.playerName || 'Unnamed payer'}</div>
+                                                    <div className="text-[11px] text-emerald-600 truncate">{tx.description}</div>
+                                                </div>
+                                                <div className="text-xs font-bold text-emerald-700">{formatCurrency(tx.amount, { maximumFractionDigits: 0 })}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-xs text-slate-400">No payments logged recently.</div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Upcoming Birthdays</div>
+                        {insights.upcomingBirthdays.length ? (
+                            <div className="space-y-2">
+                                {insights.upcomingBirthdays.map((entry) => (
+                                    <div key={entry.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50 border border-slate-100">
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-900">{entry.name}</div>
+                                            <div className="text-[11px] text-slate-500">Turning {entry.turning} on {entry.dateLabel}</div>
+                                        </div>
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-brand-50 text-brand-700 border border-brand-100">
+                                            {entry.inDays === 0 ? 'Today' : `In ${entry.inDays}d`}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-xs text-slate-400">No birthdays in the next 60 days.</div>
+                        )}
                     </div>
 
                     <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
@@ -4320,19 +5203,51 @@
 
         const Kit = ({
             kitDetails = [],
-            setKitDetails,
+            onImportKitDetails,
             kitQueue = [],
-            setKitQueue,
+            onAddQueueEntry,
+            onRemoveQueueEntry,
             kitNumberLimit,
             setKitNumberLimit,
+            kitSizeOptions = [],
             onNavigate = () => {}
         }) => {
             const [players, setPlayers] = useState([]);
             const [queueCandidate, setQueueCandidate] = useState('');
+            const [queueItemType, setQueueItemType] = useState('SHIRT');
+            const [queueShirtSize, setQueueShirtSize] = useState('');
+            const [queueShortSize, setQueueShortSize] = useState('');
+            const [queueNumber, setQueueNumber] = useState('');
+            const [queueNameOnBack, setQueueNameOnBack] = useState('');
+            const [isSavingQueue, setIsSavingQueue] = useState(false);
             const [kitImportRows, setKitImportRows] = useState(null);
             const [kitImportMessage, setKitImportMessage] = useState('');
             const [isImportingKit, setIsImportingKit] = useState(false);
+            const { startImportProgress, finishImportProgress } = useImportProgress();
             const importInputRef = useRef(null);
+            const queueItemOptions = useMemo(() => ([
+                { value: 'SHIRT', label: 'Shirt' },
+                { value: 'SHORTS', label: 'Shorts' },
+                { value: 'FULL_KIT', label: 'Full Kit' }
+            ]), []);
+
+            const releaseKitDetail = useCallback(async (detail) => {
+                if (!detail?.id) return;
+                const playerLabel = detail.playerName || 'this player';
+                const numberLabel = detail.numberAssigned ? `#${detail.numberAssigned}` : 'their number';
+                if (!confirm(`Release kit for ${playerLabel} (${numberLabel})?`)) return;
+                startImportProgress('Releasing kit…');
+                try {
+                    await waitForDb();
+                    await db.kitDetails.delete(detail.id);
+                    setKitImportMessage(`Released kit for ${playerLabel}.`);
+                } catch (err) {
+                    console.error('Unable to release kit', err);
+                    alert('Unable to release kit: ' + (err?.message || 'Unexpected error'));
+                } finally {
+                    finishImportProgress();
+                }
+            }, [finishImportProgress, setKitImportMessage, startImportProgress]);
 
             useEffect(() => {
                 let mounted = true;
@@ -4388,16 +5303,55 @@
                 return list;
             }, [assignedNumbers, kitNumberLimit]);
 
+            const queuedPlayerIds = useMemo(() => {
+                return new Set((kitQueue || []).map(entry => String(entry.playerId)));
+            }, [kitQueue]);
+
             const queueOptions = useMemo(() => {
-                return players.filter(player => !kitQueue.includes(String(player.id)));
-            }, [players, kitQueue]);
+                return players.filter(player => !queuedPlayerIds.has(String(player.id)));
+            }, [players, queuedPlayerIds]);
 
             const queuePlayers = useMemo(() => {
-                return kitQueue.map(id => {
-                    const player = playerLookup[id];
-                    return player ? { ...player, id } : { id, firstName: 'Unknown', lastName: '' };
+                return (kitQueue || []).slice().sort((a, b) => {
+                    return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+                }).map(entry => {
+                    const player = playerLookup[String(entry.playerId)] || { firstName: 'Unknown', lastName: '' };
+                    return {
+                        entry,
+                        player
+                    };
                 });
             }, [kitQueue, playerLookup]);
+
+            const clearPlayerKit = async (detail) => {
+                if (!detail) return;
+                const playerLabel = detail.playerId
+                    ? `${playerLookup[String(detail.playerId)]?.firstName || ''} ${playerLookup[String(detail.playerId)]?.lastName || ''}`.trim()
+                    : detail.playerName || 'player';
+                if (!confirm(`Remove kit record for ${playerLabel}?`)) return;
+                startImportProgress('Removing kit record…');
+                try {
+                    const cleared = {
+                        ...detail,
+                        kitArrived: '',
+                        shirtSize: '',
+                        shortSize: '',
+                        writingOnBack: '',
+                        paid: '',
+                        numberFree: '',
+                        numberRequested: '',
+                        numberRequestedAlt: '',
+                        numberAssigned: ''
+                    };
+                    if (typeof onImportKitDetails === 'function') {
+                        await onImportKitDetails([cleared]);
+                    }
+                } catch (err) {
+                    alert('Unable to remove kit: ' + (err?.message || err));
+                } finally {
+                    finishImportProgress();
+                }
+            };
 
             const handleKitCsvFile = async (event) => {
                 const file = event.target?.files?.[0];
@@ -4444,7 +5398,7 @@
                 });
             };
 
-            const confirmKitImport = () => {
+            const confirmKitImport = async () => {
                 if (!kitImportRows) return;
                 const rows = kitImportRows.filter(row => !row.drop);
                 if (!rows.length) {
@@ -4456,8 +5410,6 @@
                     alert('Assign a player to each row before importing.');
                     return;
                 }
-                const replacedIds = new Set(rows.map(row => row.matchedPlayerId));
-                const remaining = kitDetails.filter(detail => !detail.playerId || !replacedIds.has(detail.playerId));
                 const newRecords = rows.map(row => {
                     const player = playerLookup[row.matchedPlayerId];
                     const resolvedName = player ? `${player.firstName} ${player.lastName}` : row.playerName;
@@ -4476,27 +5428,86 @@
                         numberAssigned: row.fields.numberAssigned
                     };
                 });
-                setKitDetails([...remaining, ...newRecords]);
-                setKitImportMessage(`Imported ${newRecords.length} kit record${newRecords.length === 1 ? '' : 's'}.`);
-                setKitImportRows(null);
+                startImportProgress('Importing kit records…');
+                try {
+                    await onImportKitDetails?.(newRecords);
+                    setKitImportMessage(`Imported ${newRecords.length} kit record${newRecords.length === 1 ? '' : 's'}.`);
+                    setKitImportRows(null);
+                } catch (err) {
+                    alert('Failed to sync kit records: ' + err.message);
+                } finally {
+                    finishImportProgress();
+                }
             };
 
             const cancelKitImport = () => {
                 setKitImportRows(null);
             };
-            
-            const addToQueue = () => {
+            const addToQueue = async () => {
                 if (!queueCandidate) {
                     alert('Choose a player to add to the next order.');
                     return;
                 }
-                if (kitQueue.includes(queueCandidate)) return;
-                setKitQueue([...kitQueue, queueCandidate]);
-                setQueueCandidate('');
+                if (queuedPlayerIds.has(queueCandidate) || !onAddQueueEntry) return;
+
+                const trimmedShirtSize = (queueShirtSize || '').trim();
+                const trimmedShortSize = (queueShortSize || '').trim();
+                const trimmedNumber = (queueNumber || '').trim();
+                const trimmedName = (queueNameOnBack || '').trim();
+                const wantsFullTop = queueItemType === 'SHIRT' || queueItemType === 'FULL_KIT';
+
+                if (wantsFullTop) {
+                    if (!trimmedShirtSize) {
+                        alert('Select a shirt size first.');
+                        return;
+                    }
+                    if (!trimmedShortSize) {
+                        alert('Select a short size first.');
+                        return;
+                    }
+                    if (!trimmedNumber) {
+                        alert('Enter the preferred number for the shirt.');
+                        return;
+                    }
+                    if (!trimmedName) {
+                        alert('Enter the name to print on the back.');
+                        return;
+                    }
+                } else if (!trimmedShortSize) {
+                    alert('Select a short size first.');
+                    return;
+                }
+
+                try {
+                    setIsSavingQueue(true);
+                    await onAddQueueEntry({
+                        playerId: queueCandidate,
+                        requestedItem: queueItemType,
+                        requestedShirtSize: wantsFullTop ? trimmedShirtSize : '',
+                        requestedShortSize: trimmedShortSize,
+                        requestedNumber: wantsFullTop ? trimmedNumber : '',
+                        requestedName: wantsFullTop ? trimmedName : ''
+                    });
+                    setQueueCandidate('');
+                    setQueueItemType('SHIRT');
+                    setQueueShirtSize('');
+                    setQueueShortSize('');
+                    setQueueNumber('');
+                    setQueueNameOnBack('');
+                } catch (err) {
+                    alert('Unable to save queue entry: ' + err.message);
+                } finally {
+                    setIsSavingQueue(false);
+                }
             };
 
-            const removeFromQueue = (playerId) => {
-                setKitQueue(kitQueue.filter(id => id !== playerId));
+            const removeFromQueue = async (entryId) => {
+                if (!entryId || !onRemoveQueueEntry) return;
+                try {
+                    await onRemoveQueueEntry(entryId);
+                } catch (err) {
+                    alert('Unable to remove queue entry: ' + err.message);
+                }
             };
 
             const openPlayer = (playerId) => {
@@ -4535,31 +5546,36 @@
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                {kitEntries.length ? kitEntries.map(detail => {
-                                    const playerLabel = detail.playerId ? `${(playerLookup[detail.playerId]?.firstName || '')} ${(playerLookup[detail.playerId]?.lastName || '')}`.trim() : detail.playerName;
-                                    const displayName = playerLabel || detail.playerName || 'Unknown player';
-                                    return (
-                                        <button key={detail.id} onClick={() => detail.playerId && openPlayer(detail.playerId)} className="w-full text-left p-3 rounded-xl border border-slate-100 bg-slate-50 hover:border-brand-200 transition-colors">
-                                            <div className="flex items-center justify-between gap-3">
-                                                <div>
-                                                    <div className="text-sm font-bold text-slate-900">{displayName}</div>
-                                                    <div className="text-[11px] text-slate-500">Kit: {detail.kitArrived || 'Pending'} · Paid: {detail.paid || 'N/A'}</div>
-                                                </div>
-                                                <div className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                                                    #{detail.numberAssigned || '—'}
-                                                </div>
-                                            </div>
-                                            <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap gap-2">
-                                                {detail.shirtSize && <span>Shirt size: {detail.shirtSize}</span>}
-                                                {detail.shortSize && <span>Short size: {detail.shortSize}</span>}
-                                                {detail.writingOnBack && <span>Back name: {detail.writingOnBack}</span>}
-                                            </div>
+                        {kitEntries.length ? kitEntries.map(detail => {
+                            const playerLabel = detail.playerId ? `${(playerLookup[detail.playerId]?.firstName || '')} ${(playerLookup[detail.playerId]?.lastName || '')}`.trim() : detail.playerName;
+                            const displayName = playerLabel || detail.playerName || 'Unknown player';
+                            return (
+                                <div key={detail.id} role="button" tabIndex={0} onClick={() => detail.playerId && openPlayer(detail.playerId)} className="w-full text-left p-3 rounded-xl border border-slate-100 bg-slate-50 hover:border-brand-200 transition-colors cursor-pointer" onKeyDown={(event) => { if (event.key === 'Enter') { detail.playerId && openPlayer(detail.playerId); } }}>
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-900">{displayName}</div>
+                                            <div className="text-[11px] text-slate-500">Kit: {detail.kitArrived || 'Pending'} · Paid: {detail.paid || 'N/A'}</div>
+                                        </div>
+                                        <div className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                            #{detail.numberAssigned || '—'}
+                                        </div>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap gap-2">
+                                        {detail.shirtSize && <span>Shirt size: {detail.shirtSize}</span>}
+                                        {detail.shortSize && <span>Short size: {detail.shortSize}</span>}
+                                        {detail.writingOnBack && <span>Back name: {detail.writingOnBack}</span>}
+                                    </div>
+                                    <div className="flex justify-end mt-3">
+                                        <button type="button" onClick={(event) => { event.stopPropagation(); releaseKitDetail(detail); }} className="text-[11px] font-bold text-rose-600 border border-rose-200 bg-rose-50 px-3 py-1 rounded-full hover:bg-rose-100 transition">
+                                            Release kit
                                         </button>
-                                    );
-                                }) : (
-                                    <div className="text-sm text-slate-400 text-center">No kit records yet. Upload using the button above.</div>
-                                )}
-                            </div>
+                                    </div>
+                                </div>
+                            );
+                        }) : (
+                            <div className="text-sm text-slate-400 text-center">No kit records yet. Upload using the button above.</div>
+                        )}
+                    </div>
                         </div>
 
                         <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-soft space-y-3">
@@ -4595,25 +5611,87 @@
                                     <div className="text-[11px] text-slate-500">Add players who still need kit.</div>
                                 </div>
                                 <div className="text-[11px] px-2 py-1 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
-                                    {queuePlayers.filter(p => p.firstName).length} tracked
+                                    {queuePlayers.filter(p => p.player.firstName).length} tracked
                                 </div>
                             </div>
-                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                                <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueCandidate} onChange={e => setQueueCandidate(e.target.value)}>
-                                    <option value="">Select player</option>
-                                    {queueOptions.map(p => <option key={p.id} value={String(p.id)}>{p.firstName} {p.lastName}</option>)}
-                                </select>
-                                <button onClick={addToQueue} className="bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm">Add to queue</button>
+                            <div className="space-y-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueCandidate} onChange={e => setQueueCandidate(e.target.value)}>
+                                        <option value="">Select player</option>
+                                        {queueOptions.map(p => <option key={p.id} value={String(p.id)}>{p.firstName} {p.lastName}</option>)}
+                                    </select>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Requested item</span>
+                                        <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueItemType} onChange={e => setQueueItemType(e.target.value)}>
+                                            {queueItemOptions.map(opt => (
+                                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                                {(queueItemType === 'SHIRT' || queueItemType === 'FULL_KIT') && (
+                                    <div className="space-y-2">
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Shirt / full kit details</div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                            <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueShirtSize} onChange={e => setQueueShirtSize(e.target.value)}>
+                                                <option value="">Shirt size</option>
+                                                {kitSizeOptions.map(size => (
+                                                    <option key={`queue-shirt-${size}`} value={size}>{size}</option>
+                                                ))}
+                                            </select>
+                                            <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueShortSize} onChange={e => setQueueShortSize(e.target.value)}>
+                                                <option value="">Short size</option>
+                                                {kitSizeOptions.map(size => (
+                                                    <option key={`queue-short-${size}`} value={size}>{size}</option>
+                                                ))}
+                                            </select>
+                                            <input className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" placeholder="Number requested" value={queueNumber} onChange={e => setQueueNumber(e.target.value)} />
+                                            <input className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" placeholder="Name on back" value={queueNameOnBack} onChange={e => setQueueNameOnBack(e.target.value)} />
+                                        </div>
+                                    </div>
+                                )}
+                                {queueItemType === 'SHORTS' && (
+                                    <div className="space-y-1">
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Shorts details</div>
+                                        <select className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" value={queueShortSize} onChange={e => setQueueShortSize(e.target.value)}>
+                                            <option value="">Short size</option>
+                                            {kitSizeOptions.map(size => (
+                                                <option key={`queue-only-short-${size}`} value={size}>{size}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                                <button onClick={addToQueue} disabled={isSavingQueue} className={`bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm w-full ${isSavingQueue ? 'opacity-70' : ''}`}>
+                                    {isSavingQueue ? 'Adding…' : 'Add to queue'}
+                                </button>
                             </div>
                             <div className="space-y-2">
-                                {queuePlayers.length ? queuePlayers.map(player => (
-                                    <div key={player.id} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
-                                        <button onClick={() => player.firstName && openPlayer(String(player.id))} className="text-sm font-bold text-slate-900 text-left hover:underline">
-                                            {player.firstName} {player.lastName}
-                                        </button>
-                                        <button onClick={() => removeFromQueue(player.id)} className="text-[11px] font-bold text-rose-600 px-3 py-1 rounded-full border border-rose-200 bg-rose-50">Remove</button>
-                                    </div>
-                                )) : (
+                                {queuePlayers.length ? queuePlayers.map(({ entry, player }) => {
+                                    const itemLabel = queueItemOptions.find(opt => opt.value === entry.requestedItem)?.label
+                                        || entry.requestedItem
+                                        || 'Item TBD';
+                                    const shirtSize = entry.requestedShirtSize || '';
+                                    const shortSize = entry.requestedShortSize || entry.requestedSize || '';
+                                    const preferredNumber = entry.requestedNumber || '';
+                                    const nameOnBack = entry.requestedName || '';
+                                    return (
+                                        <div key={entry.id || `queue-${entry.playerId}`} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                            <div className="flex-1">
+                                                <button onClick={() => player.firstName && openPlayer(String(entry.playerId))} className="text-sm font-bold text-slate-900 text-left hover:underline">
+                                                    {player.firstName} {player.lastName}
+                                                </button>
+                                                <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
+                                                    <span className="font-semibold text-slate-700">{itemLabel}</span>
+                                                    {shirtSize && <span>Shirt: {shirtSize}</span>}
+                                                    {shortSize && <span>Shorts: {shortSize}</span>}
+                                                    {preferredNumber && <span>No. {preferredNumber}</span>}
+                                                    {nameOnBack && <span>Name: {nameOnBack}</span>}
+                                                </div>
+                                            </div>
+                                            <button onClick={() => removeFromQueue(entry.id || entry.playerId)} className="text-[11px] font-bold text-rose-600 px-3 py-1 rounded-full border border-rose-200 bg-rose-50">Remove</button>
+                                        </div>
+                                    );
+                                }) : (
                                     <div className="text-sm text-slate-400 text-center">Queue is empty.</div>
                                 )}
                             </div>
@@ -4673,7 +5751,7 @@
                 </div>
             );
         };
-        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, kitSizeOptions = [], setKitSizeOptions, hideHeader = false }) => {
+        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, kitSizeOptions = [], setKitSizeOptions, kitNumberLimit, setKitNumberLimit, hideHeader = false }) => {
             const [newCat, setNewCat] = useState('');
             const [newItemCat, setNewItemCat] = useState('');
             const importInputRef = useRef(null);
@@ -4694,6 +5772,10 @@
             const [positionReassignChoice, setPositionReassignChoice] = useState('');
             const [positionReassignNew, setPositionReassignNew] = useState('');
             const [positionReassignNewLabel, setPositionReassignNewLabel] = useState('');
+            const [isImportAllBusy, setIsImportAllBusy] = useState(false);
+            const [isImportAllDone, setIsImportAllDone] = useState(false);
+            const [importAllStatus, setImportAllStatus] = useState('Preparing files…');
+            const { startImportProgress, finishImportProgress } = useImportProgress();
 
             useEffect(() => {
                 const loadFixtures = async () => {
@@ -4774,6 +5856,7 @@
                     return;
                 }
                 setPositionImporting(true);
+                startImportProgress('Importing position definitions…');
                 try {
                     const text = await file.text();
                     const parsed = JSON.parse(text);
@@ -4793,6 +5876,7 @@
                     alert('Positions import failed: ' + err.message);
                 } finally {
                     setPositionImporting(false);
+                    finishImportProgress();
                     if(positionImportRef.current) positionImportRef.current.value = '';
                 }
             };
@@ -5034,6 +6118,7 @@
 
             const handleLegacyCsv = async (file) => {
                 if(!file) return;
+                startImportProgress('Parsing legacy import…');
                 setLegacyImporting(true);
                 try {
                     const text = await file.text();
@@ -5073,6 +6158,7 @@
                     alert('Legacy import failed: ' + e.message);
                 } finally {
                     setLegacyImporting(false);
+                    finishImportProgress();
                 }
             };
 
@@ -5083,6 +6169,7 @@
             const commitLegacyPreview = async () => {
                 const rows = legacyPreview.filter(r => !r.drop);
                 if(!rows.length) { setLegacyPreview([]); return; }
+                startImportProgress('Importing legacy rows…');
                 try {
                     const newCats = [];
                     const ops = [...opponents];
@@ -5135,6 +6222,8 @@
                     setFixtures(await db.fixtures.toArray());
                 } catch (err) {
                     alert('Commit failed: ' + err.message);
+                } finally {
+                    finishImportProgress();
                 }
             };
 
@@ -5147,6 +6236,8 @@
                     case 'players': data = await db.players.toArray(); break;
                     case 'fixtures': data = await db.fixtures.toArray(); break;
                     case 'referees': data = await db.referees.toArray(); break;
+                    case 'kitDetails': data = await db.kitDetails.toArray(); break;
+                    case 'kitQueue': data = await db.kitQueue.toArray(); break;
                     case 'itemCategories': data = itemCategories; break;
                     case 'categories': data = categories; break;
                     case 'seasonCategories': data = seasonCategories; break;
@@ -5162,6 +6253,18 @@
             };
 
             const importEntityData = async (key, data) => {
+                const runListWithProgress = async (label, list, action) => {
+                    if(!Array.isArray(list) || !list.length) return 0;
+                    const total = list.length;
+                    for(let i = 0; i < total; i++) {
+                        setImportAllStatus(`${label} (${i + 1} of ${total})`);
+                        // Run sequentially so status can be updated per record.
+                        // eslint-disable-next-line no-await-in-loop
+                        await action(list[i], i, total);
+                    }
+                    return total;
+                };
+
                 if(key === 'opponents') {
                     if(!confirm('Replace opponents with this file?')) return;
                     await db.opponents.clear();
@@ -5195,6 +6298,18 @@
                     await db.referees.clear();
                     if(Array.isArray(data) && data.length) await db.referees.bulkAdd(data);
                     setReferees(await db.referees.toArray());
+                } else if(key === 'kitDetails') {
+                    if(!confirm('Replace kit detail records with this file?')) return;
+                    await db.kitDetails.clear();
+                    if(Array.isArray(data) && data.length) await db.kitDetails.bulkPut(data);
+                    alert('Kit detail records imported.');
+                    return;
+                } else if(key === 'kitQueue') {
+                    if(!confirm('Replace kit queue with this file?')) return;
+                    await db.kitQueue.clear();
+                    if(Array.isArray(data) && data.length) await db.kitQueue.bulkPut(data);
+                    alert('Kit queue imported.');
+                    return;
                 } else if(key === 'itemCategories') {
                     if(!confirm('Replace player item categories with this file?')) return;
                     const arr = Array.isArray(data) ? data : [];
@@ -5212,36 +6327,74 @@
                     persistSeasonCategories(arr);
                 } else if(key === 'all') {
                     if(!confirm('Import ALL data and replace current?')) return;
-                    await db.fixtures.clear();
-                    await db.players.clear();
-                    await db.transactions.clear();
-                    await db.participations.clear();
-                    await db.opponents.clear();
-                    await db.venues.clear();
-                    await db.referees.clear();
-                    if(data.players?.length) await db.players.bulkAdd(data.players);
-                    if(data.fixtures?.length) await db.fixtures.bulkAdd(data.fixtures);
-                    if(data.transactions?.length) {
-                        const normalizedTx = data.transactions.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) }));
-                        await db.transactions.bulkAdd(normalizedTx);
+                    setIsImportAllBusy(true);
+                    setIsImportAllDone(false);
+                    setImportAllStatus('Clearing old data…');
+                    try {
+                        await db.fixtures.clear();
+                        await db.players.clear();
+                        await db.transactions.clear();
+                        await db.participations.clear();
+                        await db.opponents.clear();
+                        await db.venues.clear();
+                        await db.referees.clear();
+                        await db.kitDetails.clear();
+                        await db.kitQueue.clear();
+                        const playerCount = await runListWithProgress('Restoring squad', data.players, rec => db.players.add(rec));
+                        const fixtureCount = await runListWithProgress('Restoring fixtures', data.fixtures, rec => db.fixtures.add(rec));
+                        const txCount = await runListWithProgress('Rebuilding ledger entries', data.transactions?.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) })), rec => db.transactions.add(rec));
+                        const participationCount = await runListWithProgress('Linking participations', data.participations, rec => db.participations.add(rec));
+                        await runListWithProgress('Restoring opponents', data.opponents, rec => db.opponents.add(rec));
+                        await runListWithProgress('Restoring venues', data.venues, rec => db.venues.add(rec));
+                        await runListWithProgress('Restoring referees', data.referees, rec => db.referees.add(rec));
+                        await runListWithProgress('Restoring kit holders', data.kitDetails, rec => db.kitDetails.add(rec));
+                        await runListWithProgress('Restoring kit queue', data.kitQueue, rec => db.kitQueue.add(rec));
+                        setImportAllStatus('Applying saved settings…');
+                        const nextCatsAll = Array.isArray(data.categories) ? data.categories : [];
+                        setCategories(nextCatsAll);
+                        persistCategories(nextCatsAll);
+                        const nextItemCatsAll = Array.isArray(data.itemCategories) ? data.itemCategories : [];
+                        setItemCategories(nextItemCatsAll);
+                        persistItemCategories(nextItemCatsAll);
+                        const nextSeasonCatsAll = Array.isArray(data.seasonCategories) ? data.seasonCategories : [];
+                        setSeasonCategories(nextSeasonCatsAll);
+                        persistSeasonCategories(nextSeasonCatsAll);
+                        if(data.refDefaults) { setRefDefaults(data.refDefaults); persistRefDefaults(data.refDefaults); }
+                        if(Number.isFinite(Number(data?.kitNumberLimit))) {
+                            const limit = Math.max(1, Number(data.kitNumberLimit));
+                            setKitNumberLimit(limit);
+                            persistKitNumberLimit(limit);
+                        }
+                        if(Array.isArray(data?.kitSizeOptions)) {
+                            setKitSizeOptions(data.kitSizeOptions);
+                            persistKitSizeOptions(data.kitSizeOptions);
+                        }
+                        if(Array.isArray(data?.positionDefinitions)) {
+                            const cleanedPositions = data.positionDefinitions.map(item => {
+                                const code = (item?.code || '').toString().trim();
+                                const label = (item?.label || '').toString().trim();
+                                return code && label ? { code, label } : null;
+                            }).filter(Boolean);
+                            if(cleanedPositions.length) {
+                                setPositionDefinitions(cleanedPositions);
+                                persistPositionDefinitions(cleanedPositions);
+                            }
+                        }
+                        setOpponents(await db.opponents.toArray());
+                        setVenues(await db.venues.toArray());
+                        setReferees(await db.referees.toArray());
+                        const summaryParts = [
+                            playerCount ? `${playerCount} players` : '',
+                            fixtureCount ? `${fixtureCount} games` : '',
+                            txCount ? `${txCount} ledger rows` : '',
+                            participationCount ? `${participationCount} participations` : ''
+                        ].filter(Boolean);
+                        setImportAllStatus(`Import complete.${summaryParts.length ? ` Imported ${summaryParts.join(', ')}.` : ''}`);
+                        setIsImportAllDone(true);
+                    } finally {
+                        setIsImportAllBusy(false);
                     }
-                    if(data.participations?.length) await db.participations.bulkAdd(data.participations);
-                    if(data.opponents?.length) await db.opponents.bulkAdd(data.opponents);
-                    if(data.venues?.length) await db.venues.bulkAdd(data.venues);
-                    if(data.referees?.length) await db.referees.bulkAdd(data.referees);
-                    const nextCatsAll = Array.isArray(data.categories) ? data.categories : [];
-                    setCategories(nextCatsAll);
-                    persistCategories(nextCatsAll);
-                    const nextItemCatsAll = Array.isArray(data.itemCategories) ? data.itemCategories : [];
-                    setItemCategories(nextItemCatsAll);
-                    persistItemCategories(nextItemCatsAll);
-                    const nextSeasonCatsAll = Array.isArray(data.seasonCategories) ? data.seasonCategories : [];
-                    setSeasonCategories(nextSeasonCatsAll);
-                    persistSeasonCategories(nextSeasonCatsAll);
-                    if(data.refDefaults) { setRefDefaults(data.refDefaults); persistRefDefaults(data.refDefaults); }
-                    setOpponents(await db.opponents.toArray());
-                    setVenues(await db.venues.toArray());
-                    setReferees(await db.referees.toArray());
+                    return;
                 }
                 alert('Import complete.');
             };
@@ -5249,6 +6402,8 @@
             const handleSingleImportFile = async (e) => {
                 const file = e.target.files?.[0];
                 if(!file || !importTarget) return;
+                const label = importTarget === 'all' ? 'Importing everything…' : `Importing ${importTarget}…`;
+                startImportProgress(label);
                 try {
                     const text = await file.text();
                     const json = JSON.parse(text);
@@ -5256,6 +6411,7 @@
                 } catch (err) {
                     alert('Import failed: ' + err.message);
                 } finally {
+                    finishImportProgress();
                     e.target.value = '';
                     setImportTarget(null);
                 }
@@ -5270,6 +6426,11 @@
                     opponents: await db.opponents.toArray(),
                     venues: await db.venues.toArray(),
                     referees: await db.referees.toArray(),
+                    kitDetails: await db.kitDetails.toArray(),
+                    kitQueue: await db.kitQueue.toArray(),
+                    kitNumberLimit,
+                    kitSizeOptions,
+                    positionDefinitions,
                     categories,
                     itemCategories,
                     seasonCategories,
@@ -5286,11 +6447,22 @@
             const handleImportFile = async (e) => {
                 const file = e.target.files?.[0];
                 if(!file) return;
-                setIsImporting(true);
+                let data = null;
                 try {
                     const text = await file.text();
-                    const data = JSON.parse(text);
-                    if(!confirm('Importing will overwrite existing data. Continue?')) return;
+                    data = JSON.parse(text);
+                } catch (err) {
+                    alert('Import failed. Invalid file?');
+                    if(importInputRef.current) importInputRef.current.value = '';
+                    return;
+                }
+                if(!confirm('Importing will overwrite existing data. Continue?')) {
+                    if(importInputRef.current) importInputRef.current.value = '';
+                    return;
+                }
+                startImportProgress('Importing backup data…');
+                setIsImporting(true);
+                try {
                     await db.fixtures.clear();
                     await db.players.clear();
                     await db.transactions.clear();
@@ -5298,6 +6470,8 @@
                     await db.opponents.clear();
                     await db.venues.clear();
                     await db.referees.clear();
+                    await db.kitDetails.clear();
+                    await db.kitQueue.clear();
                     if(data.players?.length) await db.players.bulkAdd(data.players);
                     if(data.fixtures?.length) await db.fixtures.bulkAdd(data.fixtures);
                     if(data.transactions?.length) {
@@ -5308,6 +6482,8 @@
                     if(data.opponents?.length) await db.opponents.bulkAdd(data.opponents);
                     if(data.venues?.length) await db.venues.bulkAdd(data.venues);
                     if(data.referees?.length) await db.referees.bulkAdd(data.referees);
+                    if(data.kitDetails?.length) await db.kitDetails.bulkPut(data.kitDetails);
+                    if(data.kitQueue?.length) await db.kitQueue.bulkPut(data.kitQueue);
                     const nextCats = Array.isArray(data.categories) ? data.categories : [];
                     setCategories(nextCats);
                     persistCategories(nextCats);
@@ -5318,6 +6494,26 @@
                     setSeasonCategories(nextSeasonCats);
                     persistSeasonCategories(nextSeasonCats);
                     if(data.refDefaults) { setRefDefaults(data.refDefaults); persistRefDefaults(data.refDefaults); }
+                    if(Number.isFinite(Number(data?.kitNumberLimit))) {
+                        const limit = Math.max(1, Number(data.kitNumberLimit));
+                        setKitNumberLimit(limit);
+                        persistKitNumberLimit(limit);
+                    }
+                    if(Array.isArray(data?.kitSizeOptions)) {
+                        setKitSizeOptions(data.kitSizeOptions);
+                        persistKitSizeOptions(data.kitSizeOptions);
+                    }
+                    if(Array.isArray(data?.positionDefinitions)) {
+                        const cleanedPositions = data.positionDefinitions.map(item => {
+                            const code = (item?.code || '').toString().trim();
+                            const label = (item?.label || '').toString().trim();
+                            return code && label ? { code, label } : null;
+                        }).filter(Boolean);
+                        if(cleanedPositions.length) {
+                            setPositionDefinitions(cleanedPositions);
+                            persistPositionDefinitions(cleanedPositions);
+                        }
+                    }
                     setOpponents(await db.opponents.toArray());
                     setVenues(await db.venues.toArray());
                     setReferees(await db.referees.toArray());
@@ -5326,6 +6522,7 @@
                     alert('Import failed. Invalid file?');
                 } finally {
                     setIsImporting(false);
+                    finishImportProgress();
                     if(importInputRef.current) importInputRef.current.value = '';
                 }
             };
@@ -5497,6 +6694,8 @@
                             <button onClick={() => exportEntity('players')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Players</button>
                             <button onClick={() => exportEntity('fixtures')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Games</button>
                             <button onClick={() => exportEntity('referees')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Referees</button>
+                            <button onClick={() => exportEntity('kitDetails')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Kit Details</button>
+                            <button onClick={() => exportEntity('kitQueue')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Kit Queue</button>
                             <button onClick={() => exportEntity('itemCategories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Player Items</button>
                             <button onClick={() => exportEntity('categories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Cost Categories</button>
                             <button onClick={() => exportEntity('seasonCategories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Seasons</button>
@@ -5515,7 +6714,9 @@
                             <button onClick={() => { setImportTarget('itemCategories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Player Items</button>
                             <button onClick={() => { setImportTarget('categories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Cost Categories</button>
                             <button onClick={() => { setImportTarget('seasonCategories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Seasons</button>
-                            <button onClick={() => { setImportTarget('all'); importSingleRef.current?.click(); }} className="bg-rose-600 text-white rounded-lg px-3 py-2 text-sm font-bold md:col-span-2">Import ALL</button>
+                            <button onClick={() => { setImportTarget('all'); importSingleRef.current?.click(); }} disabled={isImportAllBusy || isImportAllDone} className={`bg-rose-600 text-white rounded-lg px-3 py-2 text-sm font-bold md:col-span-2 ${(isImportAllBusy || isImportAllDone) ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                                {isImportAllBusy ? 'Importing…' : (isImportAllDone ? 'Completed' : 'Import ALL')}
+                            </button>
                         </div>
                         <input type="file" accept="application/json" ref={importSingleRef} className="hidden" onChange={handleSingleImportFile} />
                         <div className="text-[11px] text-slate-500">Imports replace current data for that list. “ALL” replaces everything.</div>
@@ -5641,6 +6842,26 @@
                         </div>
                     </Modal>
 
+                    {(isImportAllBusy || isImportAllDone) && (
+                        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+                            <div className="bg-white w-80 rounded-2xl shadow-2xl border border-slate-100 p-6 text-center space-y-3 animate-slide-up">
+                                {isImportAllDone ? (
+                                    <div className="mx-auto h-12 w-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl font-bold">✓</div>
+                                ) : (
+                                    <div className="mx-auto h-12 w-12 rounded-full border-4 border-slate-200 border-t-brand-600 animate-spin"></div>
+                                )}
+                                <div className="text-sm font-display font-bold text-slate-900">{isImportAllDone ? 'Import complete' : 'Hang tight…'}</div>
+                                <p className="text-xs text-slate-500">{importAllStatus}</p>
+                                <p className="text-[11px] text-slate-400">Large imports can take a few seconds. Avoid closing this window.</p>
+                                {isImportAllDone && (
+                                    <div className="pt-1">
+                                        <button onClick={() => { setIsImportAllDone(false); setImportAllStatus('Preparing files…'); }} className="w-full bg-slate-900 text-white font-bold py-2 rounded-lg">OK</button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                 </div>
             );
         };
@@ -5655,11 +6876,49 @@
             const [referees, setReferees] = useState([]);
             const [refDefaults, setRefDefaults] = useState(loadRefDefaults());
             const [positionDefinitions, setPositionDefinitions] = useState(loadPositionDefinitions());
-            const [kitDetails, setKitDetails] = useState(loadKitDetails());
-            const [kitQueue, setKitQueue] = useState(loadKitQueue());
+            const [kitDetails, setKitDetails] = useState([]);
+            const [kitQueue, setKitQueue] = useState([]);
             const [kitNumberLimit, setKitNumberLimit] = useState(loadKitNumberLimit());
             const [kitSizeOptions, setKitSizeOptions] = useState(loadKitSizeOptions());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [isVersionMismatch, setIsVersionMismatch] = useState(false);
+            const [importCount, setImportCount] = useState(0);
+            const [importMessage, setImportMessage] = useState('');
+            const [progressDetails, setProgressDetails] = useState([]);
+            const startImportProgress = useCallback((label = 'Updating data…') => {
+                setImportCount(prev => {
+                    if (prev === 0) {
+                        setImportMessage(label);
+                        setProgressDetails([]);
+                    }
+                    return prev + 1;
+                });
+            }, []);
+            const finishImportProgress = useCallback(() => {
+                setImportCount(prev => {
+                    const next = Math.max(prev - 1, 0);
+                    if (next === 0) {
+                        setImportMessage('');
+                        setProgressDetails([]);
+                    }
+                    return next;
+                });
+            }, []);
+            const addProgressDetail = useCallback((line) => {
+                if (!line) return;
+                setProgressDetails(prev => {
+                    const next = [...prev, line];
+                    // Keep last 8 items so the overlay stays compact.
+                    return next.slice(Math.max(next.length - 8, 0));
+                });
+            }, []);
+            const importProgressContext = useMemo(() => ({
+                startImportProgress,
+                finishImportProgress,
+                addProgressDetail,
+                progressDetails,
+                isImporting: importCount > 0
+            }), [startImportProgress, finishImportProgress, addProgressDetail, progressDetails, importCount]);
 
             useEffect(() => {
                 const load = async () => {
@@ -5682,17 +6941,121 @@
                 return () => window.removeEventListener('gaffer-firestore-update', handler);
             }, []);
 
+            const refreshKitDetails = useCallback(async () => {
+                await waitForDb();
+                const list = await db.kitDetails.toArray();
+                setKitDetails(list);
+            }, []);
+
             useEffect(() => {
-                persistKitQueue(kitQueue);
-            }, [kitQueue]);
+                refreshKitDetails();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (e.detail.name === 'kitDetails') {
+                        refreshKitDetails();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, [refreshKitDetails]);
+
+            const refreshKitQueue = useCallback(async () => {
+                await waitForDb();
+                const list = await db.kitQueue.toArray();
+                setKitQueue(list);
+            }, []);
+
+            useEffect(() => {
+                refreshKitQueue();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (e.detail.name === 'kitQueue') {
+                        refreshKitQueue();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, [refreshKitQueue]);
+
+            const saveKitDetail = useCallback(async (detail) => {
+                if (!detail) return;
+                await waitForDb();
+                const payload = { ...detail };
+                if (payload.playerId !== undefined && payload.playerId !== null) {
+                    payload.playerId = String(payload.playerId);
+                }
+                if (payload.id) {
+                    await db.kitDetails.bulkPut([{ ...payload }]);
+                    return;
+                }
+                let existing = null;
+                if (payload.playerId) {
+                    existing = await db.kitDetails.where({ playerId: payload.playerId }).first();
+                }
+                if (existing) {
+                    await db.kitDetails.update(existing.id, { ...existing, ...payload, id: existing.id });
+                } else {
+                    await db.kitDetails.add(payload);
+                }
+            }, []);
+
+            const importKitDetails = useCallback(async (records = []) => {
+                for (const record of records) {
+                    await saveKitDetail(record);
+                }
+            }, [saveKitDetail]);
+
+            const addKitQueueEntry = useCallback(async ({ playerId, requestedItem, requestedNumber, requestedName, requestedShirtSize, requestedShortSize }) => {
+                const normalizedPlayerId = (playerId === undefined || playerId === null) ? '' : String(playerId).trim();
+                if (!normalizedPlayerId) {
+                    throw new Error('Pick a player before adding to the queue.');
+                }
+                const itemType = (requestedItem || '').toUpperCase();
+                const allowedItems = new Set(['SHIRT', 'SHORTS', 'FULL_KIT']);
+                if (!allowedItems.has(itemType)) {
+                    throw new Error('Select a valid kit item.');
+                }
+                const trimmedShirtSize = (requestedShirtSize || '').trim();
+                const trimmedShortSize = (requestedShortSize || '').trim();
+                const trimmedNumber = (requestedNumber || '').trim();
+                const trimmedName = (requestedName || '').trim();
+                const needsTop = itemType === 'SHIRT' || itemType === 'FULL_KIT';
+                if (needsTop) {
+                    if (!trimmedShirtSize) throw new Error('Shirt size is required for shirts or full kits.');
+                    if (!trimmedShortSize) throw new Error('Short size is required for shirts or full kits.');
+                    if (!trimmedNumber) throw new Error('A preferred number is required for shirts or full kits.');
+                    if (!trimmedName) throw new Error('A name on the back is required for shirts or full kits.');
+                } else {
+                    if (!trimmedShortSize) throw new Error('Short size is required for shorts orders.');
+                }
+
+                await waitForDb();
+                const existing = await db.kitQueue.where({ playerId: normalizedPlayerId }).first();
+                const payload = {
+                    playerId: normalizedPlayerId,
+                    requestedItem: itemType,
+                    requestedNumber: needsTop ? trimmedNumber : '',
+                    requestedName: needsTop ? trimmedName : '',
+                    requestedShirtSize: needsTop ? trimmedShirtSize : '',
+                    requestedShortSize: trimmedShortSize,
+                    createdAt: existing?.createdAt || new Date().toISOString()
+                };
+                if (existing) {
+                    await db.kitQueue.update(existing.id, { ...existing, ...payload, id: existing.id });
+                } else {
+                    await db.kitQueue.add(payload);
+                }
+            }, []);
+
+            const removeKitQueueEntry = useCallback(async (entryId) => {
+                if (!entryId) return;
+                await waitForDb();
+                await db.kitQueue.delete(entryId);
+            }, []);
 
             useEffect(() => {
                 persistKitNumberLimit(kitNumberLimit);
             }, [kitNumberLimit]);
-
-            useEffect(() => {
-                persistKitDetails(kitDetails);
-            }, [kitDetails]);
 
             useEffect(() => {
                 persistKitSizeOptions(kitSizeOptions);
@@ -5702,27 +7065,65 @@
                 persistPositionDefinitions(positionDefinitions);
             }, [positionDefinitions]);
 
-            return (
-                <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-brand-100 selection:text-brand-900 relative overflow-hidden">
-                    <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0">
-                         <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] bg-blue-100/50 rounded-full blur-[120px]"></div>
-                         <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-emerald-100/40 rounded-full blur-[120px]"></div>
-                    </div>
+            useEffect(() => {
+                try {
+                    const stored = localStorage.getItem(VERSION_STORAGE_KEY);
+                    if (stored && stored !== APP_VERSION) {
+                        setIsVersionMismatch(true);
+                    }
+                    localStorage.setItem(VERSION_STORAGE_KEY, APP_VERSION);
+                } catch (err) {
+                    console.warn('Unable to record build version', err);
+                }
+            }, []);
 
-                    <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
-                        {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
-                        {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
-                        {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
-                        {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} setKitDetails={setKitDetails} kitSizeOptions={kitSizeOptions} />}
-                        {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
-                        {activeTab === 'kit' && <Kit kitDetails={kitDetails} setKitDetails={setKitDetails} kitQueue={kitQueue} setKitQueue={setKitQueue} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} onNavigate={setActiveTab} />}
-                    </main>
-                    
-                    <Nav activeTab={activeTab} setTab={setActiveTab} />
-                    <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="Settings">
-                        <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} />
-                    </Modal>
-                </div>
+            const handleVersionReload = () => {
+                try {
+                    localStorage.setItem(VERSION_STORAGE_KEY, APP_VERSION);
+                } catch (err) {
+                    console.warn('Unable to persist build version before reload', err);
+                }
+                window.location.reload();
+            };
+
+            return (
+                <ImportProgressContext.Provider value={importProgressContext}>
+                    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-brand-100 selection:text-brand-900 relative overflow-hidden">
+                        <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0">
+                             <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] bg-blue-100/50 rounded-full blur-[120px]"></div>
+                             <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-emerald-100/40 rounded-full blur-[120px]"></div>
+                        </div>
+
+                        {isVersionMismatch && (
+                            <div className="max-w-md mx-auto mt-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-[11px] relative z-10 space-y-2">
+                                <div className="text-xs font-bold text-amber-900 tracking-wide">New build detected</div>
+                                <p>
+                                    Version {APP_VERSION} is live. Hard refresh (Cmd/Ctrl + Shift + R or hold Shift + click reload)
+                                    if you still see stale UI.
+                                </p>
+                                <button onClick={handleVersionReload} className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-white/90 border border-amber-200 text-[11px] font-bold text-amber-800 shadow-sm">
+                                    Reload now
+                                </button>
+                            </div>
+                        )}
+
+                        <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
+                            {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
+                            {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
+                            {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
+                            {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} saveKitDetail={saveKitDetail} kitSizeOptions={kitSizeOptions} />}
+                            {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
+                        {activeTab === 'kit' && <Kit kitDetails={kitDetails} onImportKitDetails={importKitDetails} kitQueue={kitQueue} onAddQueueEntry={addKitQueueEntry} onRemoveQueueEntry={removeKitQueueEntry} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} kitSizeOptions={kitSizeOptions} onNavigate={setActiveTab} />}
+                            <div className="pt-6 text-center text-[10px] text-slate-400">Build {APP_VERSION}</div>
+                        </main>
+                        
+                        <Nav activeTab={activeTab} setTab={setActiveTab} />
+                        <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="Settings">
+                            <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} />
+                        </Modal>
+                    </div>
+                    {importCount > 0 && <ImportProgressOverlay message={importMessage || "Updating data…"} details={progressDetails} />}
+                </ImportProgressContext.Provider>
             );
         };
 
