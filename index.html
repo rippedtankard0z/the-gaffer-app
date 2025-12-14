@@ -4460,6 +4460,7 @@
             const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [], outstanding: { receivable: 0, payable: 0 } });
             const [nextFixture, setNextFixture] = useState(null);
             const [lastResult, setLastResult] = useState(null);
+            const [insights, setInsights] = useState({ form: [], topScorer: null, motmLeader: null, avgGoals: { for: 0, against: 0 }, cleanSheets: 0 });
             const kitOverview = useMemo(() => {
                 const limit = Math.max(1, Number(kitNumberLimit) || DEFAULT_KIT_NUMBER_LIMIT);
                 const assignedNumbers = new Set(kitDetails
@@ -4478,7 +4479,7 @@
                 const load = async () => {
                     await waitForDb();
                     const txs = await db.transactions.orderBy('date').toArray();
-                    const players = await db.players.count();
+                    const playerList = await db.players.toArray();
                     const fixtures = await db.fixtures.orderBy('date').toArray();
                     
                     const sortedTxs = txs.sort((a,b) => new Date(a.date) - new Date(b.date));
@@ -4489,11 +4490,77 @@
                     const payable = txs.filter(t => !t.isReconciled && (t.flow === 'payable' || t.amount < 0)).reduce((a,b)=>a+b.amount,0);
 
                     const upcoming = fixtures.filter(f => !f.status || f.status !== 'ARCHIVED').sort((a,b)=>new Date(a.date)-new Date(b.date)).find(f => new Date(f.date) >= new Date());
-                    const played = fixtures.filter(f => f.status === 'PLAYED').sort((a,b)=>new Date(b.date)-new Date(a.date))[0] || null;
+                    const playedFixtures = fixtures.filter(f => f.status === 'PLAYED').sort((a,b)=>new Date(b.date)-new Date(a.date));
+                    const lastPlayed = playedFixtures[0] || null;
 
-                    setStats({ balance: running, playerCt: players, fixtureCt: fixtures.length, history: chartData, outstanding: { receivable, payable } });
+                    setStats({ balance: running, playerCt: playerList.length, fixtureCt: fixtures.length, history: chartData, outstanding: { receivable, payable } });
                     setNextFixture(upcoming || null);
-                    setLastResult(played ? { opponent: played.opponent, score: `${played.homeScore ?? '-'}:${played.awayScore ?? '-'}`, date: played.date } : null);
+                    setLastResult(lastPlayed ? { opponent: lastPlayed.opponent, score: `${lastPlayed.homeScore ?? '-'}:${lastPlayed.awayScore ?? '-'}`, date: lastPlayed.date } : null);
+
+                    const playerLookup = {};
+                    playerList.forEach(p => { playerLookup[String(p.id)] = p; });
+                    const form = playedFixtures.slice(0, 5).map(f => {
+                        const our = Number(f.homeScore || 0);
+                        const their = Number(f.awayScore || 0);
+                        let result = 'D';
+                        if (our > their) result = 'W';
+                        else if (our < their) result = 'L';
+                        return {
+                            result,
+                            opponent: f.opponent || 'Opponent',
+                            score: `${our}-${their}`,
+                            date: f.date
+                        };
+                    });
+                    const scorerCounts = {};
+                    playedFixtures.forEach(f => {
+                        (f.scorers || []).forEach(scorer => {
+                            if (!scorer || String(scorer).toUpperCase() === 'OG') return;
+                            const key = String(scorer);
+                            scorerCounts[key] = (scorerCounts[key] || 0) + 1;
+                        });
+                    });
+                    let topScorer = null;
+                    Object.entries(scorerCounts).forEach(([key, goals]) => {
+                        const player = playerLookup[key];
+                        const label = player ? `${player.firstName} ${player.lastName}`.trim() : `Player ${key}`;
+                        if (!topScorer || goals > topScorer.goals) {
+                            topScorer = { label, goals };
+                        }
+                    });
+                    const motmTally = {};
+                    playedFixtures.forEach(f => {
+                        const raw = (f.manOfTheMatch ?? '').toString().trim();
+                        if (!raw) return;
+                        const player = playerLookup[raw];
+                        const label = player ? `${player.firstName} ${player.lastName}`.trim() : raw;
+                        motmTally[label] = (motmTally[label] || 0) + 1;
+                    });
+                    let motmLeader = null;
+                    Object.entries(motmTally).forEach(([label, count]) => {
+                        if (!motmLeader || count > motmLeader.count) {
+                            motmLeader = { label, count };
+                        }
+                    });
+                    const goalTotals = playedFixtures.reduce((acc, f) => {
+                        const our = Number(f.homeScore || 0);
+                        const their = Number(f.awayScore || 0);
+                        acc.for += our;
+                        acc.against += their;
+                        if (their === 0) acc.cleanSheets += 1;
+                        return acc;
+                    }, { for: 0, against: 0, cleanSheets: 0 });
+                    const avgGoals = {
+                        for: playedFixtures.length ? goalTotals.for / playedFixtures.length : 0,
+                        against: playedFixtures.length ? goalTotals.against / playedFixtures.length : 0
+                    };
+                    setInsights({
+                        form,
+                        topScorer,
+                        motmLeader,
+                        avgGoals,
+                        cleanSheets: goalTotals.cleanSheets
+                    });
                 };
                 load();
                 const handler = (e) => {
@@ -4583,6 +4650,65 @@
                             <button onClick={() => onNavigate('kit')} className="flex-1 bg-emerald-50 text-emerald-700 text-xs font-bold py-2 rounded-lg border border-emerald-100">
                                 Queue {kitOverview.queue}
                             </button>
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Insights</div>
+                        <div className="grid grid-cols-2 gap-3 text-sm text-slate-700">
+                            <div className="col-span-2">
+                                <div className="text-[11px] uppercase font-bold text-slate-400 mb-1">Form (last 5)</div>
+                                {insights.form.length ? (
+                                    <div className="flex gap-1">
+                                        {insights.form.map((item, idx) => (
+                                            <div
+                                                key={`form-${idx}`}
+                                                title={`vs ${item.opponent} · ${item.score}`}
+                                                className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${
+                                                    item.result === 'W'
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : item.result === 'L'
+                                                            ? 'bg-rose-100 text-rose-700'
+                                                            : 'bg-slate-100 text-slate-600'
+                                                }`}
+                                            >
+                                                {item.result}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-[12px] text-slate-400">No played games yet.</div>
+                                )}
+                            </div>
+                            <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1">
+                                <div className="text-[10px] uppercase font-bold text-slate-400">Top Scorer</div>
+                                {insights.topScorer ? (
+                                    <>
+                                        <div className="font-bold text-slate-900 truncate">{insights.topScorer.label}</div>
+                                        <div className="text-[11px] text-slate-500">{insights.topScorer.goals} goal{insights.topScorer.goals === 1 ? '' : 's'}</div>
+                                    </>
+                                ) : (
+                                    <div className="text-[11px] text-slate-400">No goals recorded.</div>
+                                )}
+                            </div>
+                            <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1">
+                                <div className="text-[10px] uppercase font-bold text-slate-400">MOTM Leader</div>
+                                {insights.motmLeader ? (
+                                    <>
+                                        <div className="font-bold text-slate-900 truncate">{insights.motmLeader.label}</div>
+                                        <div className="text-[11px] text-slate-500">{insights.motmLeader.count} award{insights.motmLeader.count === 1 ? '' : 's'}</div>
+                                    </>
+                                ) : (
+                                    <div className="text-[11px] text-slate-400">No awards yet.</div>
+                                )}
+                            </div>
+                            <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1 col-span-2">
+                                <div className="text-[10px] uppercase font-bold text-slate-400">Goals & Clean Sheets</div>
+                                <div className="text-[12px] text-slate-600">
+                                    Scoring {insights.avgGoals.for.toFixed(1)} · Conceding {insights.avgGoals.against.toFixed(1)} per match
+                                </div>
+                                <div className="text-[11px] text-slate-500">Clean sheets: {insights.cleanSheets}</div>
+                            </div>
                         </div>
                     </div>
 
@@ -5543,7 +5669,7 @@
                 </div>
             );
         };
-        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, kitSizeOptions = [], setKitSizeOptions, hideHeader = false }) => {
+        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, kitSizeOptions = [], setKitSizeOptions, kitNumberLimit, setKitNumberLimit, hideHeader = false }) => {
             const [newCat, setNewCat] = useState('');
             const [newItemCat, setNewItemCat] = useState('');
             const importInputRef = useRef(null);
@@ -6130,6 +6256,8 @@
                         await db.opponents.clear();
                         await db.venues.clear();
                         await db.referees.clear();
+                        await db.kitDetails.clear();
+                        await db.kitQueue.clear();
                         const playerCount = await runListWithProgress('Restoring squad', data.players, rec => db.players.add(rec));
                         const fixtureCount = await runListWithProgress('Restoring fixtures', data.fixtures, rec => db.fixtures.add(rec));
                         const txCount = await runListWithProgress('Rebuilding ledger entries', data.transactions?.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) })), rec => db.transactions.add(rec));
@@ -6137,6 +6265,8 @@
                         await runListWithProgress('Restoring opponents', data.opponents, rec => db.opponents.add(rec));
                         await runListWithProgress('Restoring venues', data.venues, rec => db.venues.add(rec));
                         await runListWithProgress('Restoring referees', data.referees, rec => db.referees.add(rec));
+                        await runListWithProgress('Restoring kit holders', data.kitDetails, rec => db.kitDetails.add(rec));
+                        await runListWithProgress('Restoring kit queue', data.kitQueue, rec => db.kitQueue.add(rec));
                         setImportAllStatus('Applying saved settings…');
                         const nextCatsAll = Array.isArray(data.categories) ? data.categories : [];
                         setCategories(nextCatsAll);
@@ -6148,6 +6278,26 @@
                         setSeasonCategories(nextSeasonCatsAll);
                         persistSeasonCategories(nextSeasonCatsAll);
                         if(data.refDefaults) { setRefDefaults(data.refDefaults); persistRefDefaults(data.refDefaults); }
+                        if(Number.isFinite(Number(data?.kitNumberLimit))) {
+                            const limit = Math.max(1, Number(data.kitNumberLimit));
+                            setKitNumberLimit(limit);
+                            persistKitNumberLimit(limit);
+                        }
+                        if(Array.isArray(data?.kitSizeOptions)) {
+                            setKitSizeOptions(data.kitSizeOptions);
+                            persistKitSizeOptions(data.kitSizeOptions);
+                        }
+                        if(Array.isArray(data?.positionDefinitions)) {
+                            const cleanedPositions = data.positionDefinitions.map(item => {
+                                const code = (item?.code || '').toString().trim();
+                                const label = (item?.label || '').toString().trim();
+                                return code && label ? { code, label } : null;
+                            }).filter(Boolean);
+                            if(cleanedPositions.length) {
+                                setPositionDefinitions(cleanedPositions);
+                                persistPositionDefinitions(cleanedPositions);
+                            }
+                        }
                         setOpponents(await db.opponents.toArray());
                         setVenues(await db.venues.toArray());
                         setReferees(await db.referees.toArray());
@@ -6196,6 +6346,9 @@
                     referees: await db.referees.toArray(),
                     kitDetails: await db.kitDetails.toArray(),
                     kitQueue: await db.kitQueue.toArray(),
+                    kitNumberLimit,
+                    kitSizeOptions,
+                    positionDefinitions,
                     categories,
                     itemCategories,
                     seasonCategories,
@@ -6259,6 +6412,26 @@
                     setSeasonCategories(nextSeasonCats);
                     persistSeasonCategories(nextSeasonCats);
                     if(data.refDefaults) { setRefDefaults(data.refDefaults); persistRefDefaults(data.refDefaults); }
+                    if(Number.isFinite(Number(data?.kitNumberLimit))) {
+                        const limit = Math.max(1, Number(data.kitNumberLimit));
+                        setKitNumberLimit(limit);
+                        persistKitNumberLimit(limit);
+                    }
+                    if(Array.isArray(data?.kitSizeOptions)) {
+                        setKitSizeOptions(data.kitSizeOptions);
+                        persistKitSizeOptions(data.kitSizeOptions);
+                    }
+                    if(Array.isArray(data?.positionDefinitions)) {
+                        const cleanedPositions = data.positionDefinitions.map(item => {
+                            const code = (item?.code || '').toString().trim();
+                            const label = (item?.label || '').toString().trim();
+                            return code && label ? { code, label } : null;
+                        }).filter(Boolean);
+                        if(cleanedPositions.length) {
+                            setPositionDefinitions(cleanedPositions);
+                            persistPositionDefinitions(cleanedPositions);
+                        }
+                    }
                     setOpponents(await db.opponents.toArray());
                     setVenues(await db.venues.toArray());
                     setReferees(await db.referees.toArray());
@@ -6864,7 +7037,7 @@
                         
                         <Nav activeTab={activeTab} setTab={setActiveTab} />
                         <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="Settings">
-                            <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} />
+                            <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} />
                         </Modal>
                     </div>
                     {importCount > 0 && <ImportProgressOverlay message={importMessage || "Updating data…"} details={progressDetails} />}
