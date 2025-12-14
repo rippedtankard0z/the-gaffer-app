@@ -2,6 +2,8 @@
         const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
         const APP_VERSION = window.GAFFER_BUILD_VERSION || 'dev';
         const READ_ONLY = !!window.GAFFER_READ_ONLY;
+console.log('[Gaffer] READ_ONLY =', READ_ONLY);
+
         const VERSION_STORAGE_KEY = 'gaffer:lastBuildVersion';
         console.info('[Gaffer] Loaded build version:', APP_VERSION);
 
