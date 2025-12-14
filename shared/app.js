@@ -55,6 +55,7 @@
             }
             return withoutPrefix || 'latest';
         };
+        const TEAM_LOGO_SRC = window.GAFFER_LOGO_SRC || '/assets/images/Exiles-Logo.jpg';
 
         // Turn categories like MATCH_FEE into "Match Fee" for UI/WhatsApp output.
         const formatCategoryLabel = (value = '') => {
@@ -4278,9 +4279,12 @@
             return (
                 <div className="space-y-6 pb-28 animate-slide-up">
                     <header className="flex justify-between items-center pt-2 px-1">
-                        <div>
-                            <div className="text-brand-600 font-display font-bold text-lg tracking-tight">THE BRITISH EXILES</div>
-                            <div className="text-slate-400 text-xs font-medium uppercase tracking-widest">Manager Dashboard</div>
+                        <div className="flex items-center gap-3">
+                            <img src={TEAM_LOGO_SRC} alt="The British Exiles crest" className="h-12 w-12 rounded-2xl border border-white shadow-glass object-cover" />
+                            <div>
+                                <div className="text-brand-600 font-display font-bold text-lg tracking-tight">THE BRITISH EXILES</div>
+                                <div className="text-slate-400 text-xs font-medium uppercase tracking-widest">Manager Dashboard</div>
+                            </div>
                         </div>
                         <div className="flex items-center gap-2">
                             <button onClick={onOpenSettings} className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-700 hover:bg-slate-100 transition">
