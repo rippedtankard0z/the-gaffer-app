@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>The Gaffer | British Exiles</title>
+    <script>
+        window.GAFFER_BUILD_VERSION = '2024.12.06-07';
+    </script>
+    
+    <!-- React & DOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    
+    <!-- Styles & Icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Firebase config (replace with your keys when rotating) -->
+    <script>
+        window.GAFFER_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyDUUv9wyXMzGBL3Taf9hUl7tFIqZWDX2WA",
+            authDomain: "the-gaffer-581d8.firebaseapp.com",
+            projectId: "the-gaffer-581d8",
+            storageBucket: "the-gaffer-581d8.firebasestorage.app",
+            messagingSenderId: "1001996489848",
+            appId: "1:1001996489848:web:dd5978d553f7314f06c98d"
+        };
+    </script>
+
+    <!-- Firebase SDKs & Firestore bridge -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
+        import { 
+            getFirestore, collection, doc, setDoc, addDoc, updateDoc, deleteDoc, 
+            getDocs, onSnapshot 
+        } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+
+        const firebaseConfig = window.GAFFER_FIREBASE_CONFIG;
+
+        const numericOrId = (val) => {
+            const asNum = Number(val);
+            return Number.isNaN(asNum) ? val : asNum;
+        };
+
+        const ensureFirebaseConfig = (cfg) => {
+            const required = ['apiKey', 'authDomain', 'projectId', 'appId'];
+            if (!cfg || required.some(k => !cfg[k] || String(cfg[k]).startsWith('YOUR_'))) {
+                const missing = required.filter(k => !cfg || !cfg[k] || String(cfg[k]).startsWith('YOUR_'));
+                throw new Error(`GAFFER_FIREBASE_CONFIG is missing/placeholder for: ${missing.join(', ')}. Set window.GAFFER_FIREBASE_CONFIG before loading the app.`);
+            }
+            return cfg;
+        };
+
+        try {
+            const validatedConfig = ensureFirebaseConfig(firebaseConfig);
+            const app = initializeApp(validatedConfig);
+            const auth = getAuth(app);
+            const fs = getFirestore(app);
+
+            const cache = {
+                players: [],
+                fixtures: [],
+                transactions: [],
+                participations: [],
+                opponents: [],
+                venues: [],
+                referees: [],
+                kitDetails: [],
+                kitQueue: []
+            };
+
+            const ready = (async () => {
+                try {
+                    await signInAnonymously(auth);
+                } catch (err) {
+                    console.error("Anon auth failed", err);
+                }
+                const names = Object.keys(cache);
+                await Promise.all(names.map(async (name) => {
+                    const snap = await getDocs(collection(fs, name));
+                    cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
+                }));
+                names.forEach((name) => {
+                    const colRef = collection(fs, name);
+                    onSnapshot(colRef, (snap) => {
+                        cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
+                        window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name } }));
+                    });
+                });
+            })();
+
+            const docRef = (name, id) => doc(fs, name, String(id));
+
+            const nextId = (name) => {
+                const items = cache[name] || [];
+                const max = items.reduce((m, item) => {
+                    const n = Number(item.id);
+                    return Number.isNaN(n) ? m : Math.max(m, n);
+                }, 0);
+                return String(max + 1 || 1);
+            };
+
+            const createRunner = (name, filterFn = () => true, opts = { reverse: false }) => ({
+                and(extraFn) { return createRunner(name, (item) => filterFn(item) && extraFn(item), opts); },
+                reverse() { return createRunner(name, filterFn, { ...opts, reverse: !opts.reverse }); },
+                async toArray() {
+                    await ready;
+                    const arr = (cache[name] || []).filter(filterFn);
+                    return opts.reverse ? [...arr].reverse() : arr;
+                },
+                async first() {
+                    const arr = await this.toArray();
+                    return arr[0];
+                },
+                async count() {
+                    const arr = await this.toArray();
+                    return arr.length;
+                },
+                async delete() {
+                    const arr = await this.toArray();
+                    await Promise.all(arr.map(item => deleteDoc(docRef(name, item.id))));
+                },
+                async modify(patch) {
+                    const arr = await this.toArray();
+                    await Promise.all(arr.map(item => {
+                        const data = typeof patch === 'function' ? patch(item) : patch;
+                        return updateDoc(docRef(name, item.id), data);
+                    }));
+                },
+                async sortBy(field) {
+                    const arr = await this.toArray();
+                    const sorted = [...arr].sort((a, b) => {
+                        const av = a?.[field] ?? '';
+                        const bv = b?.[field] ?? '';
+                        if (av === bv) return 0;
+                        return av > bv ? 1 : -1;
+                    });
+                    return opts.reverse ? sorted.reverse() : sorted;
+                }
+            });
+
+            const createTable = (name) => {
+                const colRef = collection(fs, name);
+                return {
+                    async toArray() { await ready; return [...cache[name]]; },
+                    async count() { await ready; return cache[name].length; },
+                    async add(data) {
+                        await ready;
+                        const id = nextId(name);
+                        await setDoc(docRef(name, id), { ...data, id: numericOrId(id) });
+                        return numericOrId(id);
+                    },
+                    async bulkAdd(items) {
+                        await ready;
+                        const ids = [];
+                        for (const item of items) {
+                            const id = nextId(name);
+                            await setDoc(docRef(name, id), { ...item, id: numericOrId(id) });
+                            ids.push(numericOrId(id));
+                        }
+                        return ids;
+                    },
+                    async bulkPut(items) {
+                        await ready;
+                        await Promise.all(items.map(item => {
+                            if (!item.id) return addDoc(colRef, item);
+                            return setDoc(docRef(name, item.id), item, { merge: true });
+                        }));
+                    },
+                    async update(id, data) { await ready; await updateDoc(docRef(name, id), data); },
+                    async delete(id) { await ready; await deleteDoc(docRef(name, id)); },
+                    async bulkDelete(ids) { await ready; await Promise.all(ids.map(i => deleteDoc(docRef(name, i)))); },
+                    async clear() { await ready; await this.bulkDelete(cache[name].map(x => x.id)); },
+                    filter(predicate) {
+                        const fn = typeof predicate === 'function' ? predicate : () => true;
+                        return createRunner(name, fn);
+                    },
+                    toCollection() {
+                        return {
+                            primaryKeys: async () => { await ready; return cache[name].map(x => x.id); }
+                        };
+                    },
+                    where(fieldOrFilter) {
+                        if (typeof fieldOrFilter === 'object' && fieldOrFilter !== null) {
+                            const filters = Object.entries(fieldOrFilter);
+                            return createRunner(name, (item) => filters.every(([key, value]) => item?.[key] === value));
+                        }
+                        return {
+                            equals(val) { return createRunner(name, (item) => item?.[fieldOrFilter] === val); },
+                            anyOf(values) {
+                                const arr = Array.isArray(values) ? values : Array.from(arguments);
+                                return createRunner(name, (item) => arr.some(val => item?.[fieldOrFilter] === val));
+                            }
+                        };
+                    },
+                    orderBy(field) {
+                        const base = async (rev) => {
+                            await ready;
+                            const arr = [...cache[name]].sort((a, b) => {
+                                const av = a?.[field] ?? '';
+                                const bv = b?.[field] ?? '';
+                                if (av === bv) return 0;
+                                return av > bv ? 1 : -1;
+                            });
+                            return rev ? arr.reverse() : arr;
+                        };
+                        return {
+                            toArray: () => base(false),
+                            reverse() { return { toArray: () => base(true) }; }
+                        };
+                    }
+                };
+            };
+
+            window.firebaseReady = ready;
+            const releaseKitDetail = async ({ id, playerId } = {}) => {
+                await ready;
+                let targetId = id;
+                if (!targetId && playerId) {
+                    const normalized = String(playerId);
+                    const existing = cache.kitDetails.find(detail => String(detail.playerId) === normalized);
+                    targetId = existing?.id;
+                }
+                if (!targetId) {
+                    console.warn('releaseKitDetail: no kit detail found to release', { playerId, id });
+                    return false;
+                }
+                try {
+                    await deleteDoc(docRef('kitDetails', targetId));
+                    return true;
+                } catch (err) {
+                    console.error('releaseKitDetail failed', err);
+                    return false;
+                }
+            };
+
+            window.db = {
+                players: createTable('players'),
+                fixtures: createTable('fixtures'),
+                transactions: createTable('transactions'),
+                participations: createTable('participations'),
+                opponents: createTable('opponents'),
+                venues: createTable('venues'),
+                referees: createTable('referees'),
+                kitDetails: createTable('kitDetails'),
+                kitQueue: createTable('kitQueue'),
+                releaseKitDetail
+            };
+        } catch (err) {
+            console.error('Firebase init failed. Provide a valid GAFFER_FIREBASE_CONFIG to continue.', err);
+            window.firebaseReady = Promise.reject(err);
+            window.db = null;
+            throw err;
+        }
+    </script>
+
+    <!-- App Configuration -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 500: '#2563eb', 600: '#1d4ed8' }, // Royal Blue
+                        surface: { 
+                            50: '#f8fafc', 
+                            100: '#f1f5f9', 
+                            200: '#e2e8f0',
+                            white: '#ffffff'
+                        },
+                        accent: {
+                            green: '#10b981', // Emerald
+                            red: '#ef4444',   // Rose
+                            blue: '#3b82f6',  // Sky
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        display: ['Space Grotesk', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+                        'glass': '0 8px 32px 0 rgba(31, 38, 135, 0.07)',
+                        'float': '0 10px 40px -10px rgba(0,0,0,0.08)'
+                    },
+                    animation: {
+                        'slide-up': 'slideUp 0.3s ease-out',
+                        'fade-in': 'fadeIn 0.2s ease-out',
+                    },
+                    keyframes: {
+                        slideUp: {
+                            '0%': { transform: 'translateY(10px)', opacity: '0' },
+                            '100%': { transform: 'translateY(0)', opacity: '1' },
+                        },
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { 
+            background-color: #f8fafc; 
+            color: #0f172a; 
+            -webkit-tap-highlight-color: transparent; 
+        }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+
+        .pt-safe { padding-top: max(20px, env(safe-area-inset-top)); }
+        .pb-safe { padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+<script type="text/babel" src="../shared/app.js"></script>
+
+</body>
+</html>
