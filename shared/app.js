@@ -55,7 +55,7 @@
             }
             return withoutPrefix || 'latest';
         };
-        const TEAM_LOGO_SRC = window.GAFFER_LOGO_SRC || '/assets/images/Exiles-Logo.jpg';
+        const TEAM_LOGO_SRC = window.GAFFER_LOGO_SRC || '/assets/images/Exiles-Logo.jpg.webp';
 
         // Turn categories like MATCH_FEE into "Match Fee" for UI/WhatsApp output.
         const formatCategoryLabel = (value = '') => {
@@ -4283,7 +4283,7 @@
                             <img src={TEAM_LOGO_SRC} alt="The British Exiles crest" className="h-12 w-12 rounded-2xl border border-white shadow-glass object-cover" />
                             <div>
                                 <div className="text-brand-600 font-display font-bold text-lg tracking-tight">THE BRITISH EXILES</div>
-                                <div className="text-slate-400 text-xs font-medium uppercase tracking-widest">Manager Dashboard</div>
+                                <div className="text-slate-400 text-xs font-display font-medium uppercase tracking-widest">Manager Dashboard</div>
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
