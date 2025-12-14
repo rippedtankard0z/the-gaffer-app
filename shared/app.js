@@ -1,6 +1,6 @@
 'use strict';
         const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
-        const MASTER_BUILD_VERSION = '2024.12.06-07';
+        const MASTER_BUILD_VERSION = '2024.12.06-08';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -4107,7 +4107,7 @@
         };
         // --- DASHBOARD MODULE ---
         const Dashboard = ({ onNavigate, kitDetails = [], kitQueue = [], kitNumberLimit = DEFAULT_KIT_NUMBER_LIMIT, onOpenSettings = () => {} }) => {
-            const buildLabel = READ_ONLY ? formatBuildLabel(APP_VERSION, true) : formatBuildLabel(APP_VERSION, false);
+            const buildInfo = READ_ONLY ? formatBuildLabel(APP_VERSION, true) : formatBuildLabel(APP_VERSION, false);
             const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [], outstanding: { receivable: 0, payable: 0 } });
             const [nextFixture, setNextFixture] = useState(null);
             const [lastResult, setLastResult] = useState(null);
@@ -4308,7 +4308,10 @@
                             <button onClick={onOpenSettings} className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-700 hover:bg-slate-100 transition">
                                 <Icon name="Settings" size={18} />
                             </button>
-                            <span className="text-[10px] font-semibold text-slate-400">{buildLabel}</span>
+                            <span className="text-[10px] font-semibold text-slate-400 leading-tight text-right">
+                                {buildInfo.label}
+                                {buildInfo.version && <span className="block">{buildInfo.version}</span>}
+                            </span>
                         </div>
                     </header>
 
