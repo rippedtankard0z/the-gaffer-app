@@ -1,6 +1,6 @@
 'use strict';
         const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
-        const MASTER_BUILD_VERSION = '2024.12.06-09';
+        const MASTER_BUILD_VERSION = '2024.12.06-10';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -5493,6 +5493,32 @@
             };
         };
 
+        const NUKE_ITEMS = [
+            { key: 'fixtures', label: 'Fixtures' },
+            { key: 'players', label: 'Players' },
+            { key: 'transactions', label: 'Transactions' },
+            { key: 'participations', label: 'Participations' },
+            { key: 'opponents', label: 'Opponents' },
+            { key: 'venues', label: 'Venues' },
+            { key: 'referees', label: 'Referees' },
+            { key: 'kitDetails', label: 'Kit holders' },
+            { key: 'kitQueue', label: 'Kit queue' },
+            { key: 'settings', label: 'Settings reset' }
+        ];
+
+        const IMPORT_ITEMS = [
+            { key: 'players', label: 'Players' },
+            { key: 'fixtures', label: 'Fixtures' },
+            { key: 'transactions', label: 'Transactions' },
+            { key: 'participations', label: 'Participations' },
+            { key: 'opponents', label: 'Opponents' },
+            { key: 'venues', label: 'Venues' },
+            { key: 'referees', label: 'Referees' },
+            { key: 'kitDetails', label: 'Kit holders' },
+            { key: 'kitQueue', label: 'Kit queue' },
+            { key: 'settings', label: 'Settings & tags' }
+        ];
+
         const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, kitSizeOptions = [], setKitSizeOptions, kitNumberLimit, setKitNumberLimit, hideHeader = false }) => {
             const [newCat, setNewCat] = useState('');
             const [newItemCat, setNewItemCat] = useState('');
@@ -5524,6 +5550,12 @@
             const [importPreviewData, setImportPreviewData] = useState(null);
             const [importPreviewSummary, setImportPreviewSummary] = useState({});
             const [importPreviewName, setImportPreviewName] = useState('');
+            const [isNuking, setIsNuking] = useState(false);
+            const [nukeSteps, setNukeSteps] = useState([]);
+            const [isNukeDone, setIsNukeDone] = useState(false);
+            const [isImportingAllModal, setIsImportingAllModal] = useState(false);
+            const [importSteps, setImportSteps] = useState([]);
+            const [isImportStepsDone, setIsImportStepsDone] = useState(false);
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
 
             useEffect(() => {
@@ -5827,41 +5859,88 @@
                 alert('All accounts cleared.');
             };
 
+            const resetNukeSteps = () => setNukeSteps(NUKE_ITEMS.map(item => ({ ...item, status: 'pending', note: '' })));
+
+            const markNukeStep = (key, status, note = '') => {
+                setNukeSteps(prev => prev.map(step => step.key === key ? { ...step, status, note } : step));
+            };
+
+            const resetImportSteps = () => setImportSteps(IMPORT_ITEMS.map(item => ({ ...item, status: 'pending', note: '' })));
+
+            const markImportStep = (key, status, note = '') => {
+                setImportSteps(prev => prev.map(step => step.key === key ? { ...step, status, note } : step));
+            };
+
             const clearAll = async () => {
                 const warning = [
                     'Delete EVERYTHING?',
                     'This removes fixtures, players, transactions, participations, opponents, venues, referees, kit holders/queue, and resets categories, positions, kit settings, and referee defaults.',
                     'Make sure you have a backup before continuing.'
                 ].join('\n');
-                if(!confirm(warning)) return;
-                await db.fixtures.clear();
-                await db.players.clear();
-                await db.transactions.clear();
-                await db.participations.clear();
-                await db.opponents.clear();
-                await db.venues.clear();
-                await db.referees.clear();
-                await db.kitDetails.clear();
-                await db.kitQueue.clear();
+                resetNukeSteps();
+                setIsNukeDone(false);
+                setIsNuking(true);
+                if(!confirm(warning)) {
+                    setIsNuking(false);
+                    setNukeSteps([]);
+                    return;
+                }
                 const defaultRefs = { total: 85, split: 42.5 };
-                setCategories(DEFAULT_CATEGORIES);
-                persistCategories(DEFAULT_CATEGORIES);
-                setItemCategories(DEFAULT_ITEM_CATEGORIES);
-                persistItemCategories(DEFAULT_ITEM_CATEGORIES);
-                setSeasonCategories(DEFAULT_SEASON_CATEGORIES);
-                persistSeasonCategories(DEFAULT_SEASON_CATEGORIES);
-                setPositionDefinitions([...DEFAULT_POSITION_DEFINITIONS]);
-                persistPositionDefinitions([...DEFAULT_POSITION_DEFINITIONS]);
-                setKitNumberLimit(DEFAULT_KIT_NUMBER_LIMIT);
-                persistKitNumberLimit(DEFAULT_KIT_NUMBER_LIMIT);
-                setKitSizeOptions([...DEFAULT_KIT_SIZE_OPTIONS]);
-                persistKitSizeOptions([...DEFAULT_KIT_SIZE_OPTIONS]);
-                setRefDefaults(defaultRefs);
-                persistRefDefaults(defaultRefs);
-                setOpponents([]);
-                setVenues([]);
-                setReferees([]);
-                alert('All data and settings cleared. You can restore using a full backup.');
+                const runStep = async (key, action) => {
+                    markNukeStep(key, 'running');
+                    await action();
+                    markNukeStep(key, 'done');
+                };
+                try {
+                    await runStep('fixtures', async () => {
+                        const ids = await db.fixtures.toCollection().primaryKeys();
+                        await db.fixtures.clear();
+                        if(ids.length) {
+                            await db.participations.where('fixtureId').anyOf(ids).delete();
+                            await db.transactions.where('fixtureId').anyOf(ids).delete();
+                        }
+                    });
+                    await runStep('players', async () => {
+                        const ids = await db.players.toCollection().primaryKeys();
+                        await db.players.clear();
+                        if(ids.length) {
+                            await db.participations.where('playerId').anyOf(ids).delete();
+                            await db.transactions.where('playerId').anyOf(ids).delete();
+                        }
+                    });
+                    await runStep('transactions', async () => db.transactions.clear());
+                    await runStep('participations', async () => db.participations.clear());
+                    await runStep('opponents', async () => { await db.opponents.clear(); setOpponents([]); });
+                    await runStep('venues', async () => { await db.venues.clear(); setVenues([]); });
+                    await runStep('referees', async () => { await db.referees.clear(); setReferees([]); });
+                    await runStep('kitDetails', async () => db.kitDetails.clear());
+                    await runStep('kitQueue', async () => db.kitQueue.clear());
+                    await runStep('settings', async () => {
+                        setCategories(DEFAULT_CATEGORIES);
+                        persistCategories(DEFAULT_CATEGORIES);
+                        setItemCategories(DEFAULT_ITEM_CATEGORIES);
+                        persistItemCategories(DEFAULT_ITEM_CATEGORIES);
+                        setSeasonCategories(DEFAULT_SEASON_CATEGORIES);
+                        persistSeasonCategories(DEFAULT_SEASON_CATEGORIES);
+                        setPositionDefinitions([...DEFAULT_POSITION_DEFINITIONS]);
+                        persistPositionDefinitions([...DEFAULT_POSITION_DEFINITIONS]);
+                        setKitNumberLimit(DEFAULT_KIT_NUMBER_LIMIT);
+                        persistKitNumberLimit(DEFAULT_KIT_NUMBER_LIMIT);
+                        setKitSizeOptions([...DEFAULT_KIT_SIZE_OPTIONS]);
+                        persistKitSizeOptions([...DEFAULT_KIT_SIZE_OPTIONS]);
+                        setRefDefaults(defaultRefs);
+                        persistRefDefaults(defaultRefs);
+                    });
+                    setIsNukeDone(true);
+                    alert('All data and settings cleared. You can restore using a full backup.');
+                } catch (err) {
+                    const message = err?.message || 'Unexpected error';
+                    setNukeSteps(prev => prev.map(step => {
+                        if (step.status === 'done') return step;
+                        return { ...step, status: 'error', note: message };
+                    }));
+                    alert('Nuke failed: ' + message);
+                }
             };
 
             const removeCategory = async () => {
@@ -6110,9 +6189,18 @@
                     persistSeasonCategories(arr);
                 } else if(key === 'all') {
                     if(!confirm('Import ALL data and replace current?')) return;
+                    resetImportSteps();
+                    setIsImportStepsDone(false);
+                    setIsImportingAllModal(true);
                     setIsImportAllBusy(true);
                     setIsImportAllDone(false);
                     setImportAllStatus('Clearing old data…');
+                    const runStep = async (stepKey, fn) => {
+                        markImportStep(stepKey, 'running');
+                        const result = await fn();
+                        markImportStep(stepKey, 'done');
+                        return result;
+                    };
                     try {
                         await db.fixtures.clear();
                         await db.players.clear();
@@ -6123,15 +6211,15 @@
                         await db.referees.clear();
                         await db.kitDetails.clear();
                         await db.kitQueue.clear();
-                        const playerCount = await runListWithProgress('Restoring squad', data.players, rec => db.players.add(rec));
-                        const fixtureCount = await runListWithProgress('Restoring fixtures', data.fixtures, rec => db.fixtures.add(rec));
-                        const txCount = await runListWithProgress('Rebuilding ledger entries', data.transactions?.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) })), rec => db.transactions.add(rec));
-                        const participationCount = await runListWithProgress('Linking participations', data.participations, rec => db.participations.add(rec));
-                        await runListWithProgress('Restoring opponents', data.opponents, rec => db.opponents.add(rec));
-                        await runListWithProgress('Restoring venues', data.venues, rec => db.venues.add(rec));
-                        await runListWithProgress('Restoring referees', data.referees, rec => db.referees.add(rec));
-                        await runListWithProgress('Restoring kit holders', data.kitDetails, rec => db.kitDetails.add(rec));
-                        await runListWithProgress('Restoring kit queue', data.kitQueue, rec => db.kitQueue.add(rec));
+                        const playerCount = await runStep('players', async () => runListWithProgress('Restoring squad', data.players, rec => db.players.add(rec))) || 0;
+                        const fixtureCount = await runStep('fixtures', async () => runListWithProgress('Restoring fixtures', data.fixtures, rec => db.fixtures.add(rec))) || 0;
+                        const txCount = await runStep('transactions', async () => runListWithProgress('Rebuilding ledger entries', data.transactions?.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) })), rec => db.transactions.add(rec))) || 0;
+                        const participationCount = await runStep('participations', async () => runListWithProgress('Linking participations', data.participations, rec => db.participations.add(rec))) || 0;
+                        await runStep('opponents', async () => runListWithProgress('Restoring opponents', data.opponents, rec => db.opponents.add(rec)));
+                        await runStep('venues', async () => runListWithProgress('Restoring venues', data.venues, rec => db.venues.add(rec)));
+                        await runStep('referees', async () => runListWithProgress('Restoring referees', data.referees, rec => db.referees.add(rec)));
+                        await runStep('kitDetails', async () => runListWithProgress('Restoring kit holders', data.kitDetails, rec => db.kitDetails.add(rec)));
+                        await runStep('kitQueue', async () => runListWithProgress('Restoring kit queue', data.kitQueue, rec => db.kitQueue.add(rec)));
                         setImportAllStatus('Applying saved settings…');
                         const nextCatsAll = Array.isArray(data.categories) ? data.categories : [];
                         setCategories(nextCatsAll);
@@ -6163,6 +6251,7 @@
                                 persistPositionDefinitions(cleanedPositions);
                             }
                         }
+                        markImportStep('settings', 'done');
                         setOpponents(await db.opponents.toArray());
                         setVenues(await db.venues.toArray());
                         setReferees(await db.referees.toArray());
@@ -6174,6 +6263,14 @@
                         ].filter(Boolean);
                         setImportAllStatus(`Import complete.${summaryParts.length ? ` Imported ${summaryParts.join(', ')}.` : ''}`);
                         setIsImportAllDone(true);
+                        setIsImportStepsDone(true);
+                    } catch (err) {
+                        const msg = err?.message || 'Import failed';
+                        setImportSteps(prev => prev.map(step => {
+                            if (step.status === 'done') return step;
+                            if (step.status === 'running') return { ...step, status: 'error', note: msg };
+                            return step;
+                        }));
                     } finally {
                         setIsImportAllBusy(false);
                     }
@@ -6301,10 +6398,18 @@
                     setIsImportPreviewOpen(false);
                     return;
                 }
+                resetImportSteps();
+                setIsImportStepsDone(false);
+                setIsImportingAllModal(true);
                 const data = importPreviewData;
                 setIsImportPreviewOpen(false);
                 startImportProgress('Importing backup data…');
                 setIsImporting(true);
+                const runStep = async (key, fn) => {
+                    markImportStep(key, 'running');
+                    await fn();
+                    markImportStep(key, 'done');
+                };
                 try {
                     addProgressDetail('Clearing existing records…');
                     await db.fixtures.clear();
@@ -6316,88 +6421,115 @@
                     await db.referees.clear();
                     await db.kitDetails.clear();
                     await db.kitQueue.clear();
-                    if(data.players?.length) {
-                        addProgressDetail(`Restoring ${data.players.length} players…`);
-                        await db.players.bulkAdd(data.players);
-                    }
-                    if(data.fixtures?.length) {
-                        addProgressDetail(`Restoring ${data.fixtures.length} fixtures…`);
-                        await db.fixtures.bulkAdd(data.fixtures);
-                    }
-                    if(data.transactions?.length) {
-                        addProgressDetail(`Importing ${data.transactions.length} ledger rows…`);
-                        const normalizedTx = data.transactions.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) }));
-                        await db.transactions.bulkAdd(normalizedTx);
-                    }
-                    if(data.participations?.length) {
-                        addProgressDetail(`Linking ${data.participations.length} participations…`);
-                        await db.participations.bulkAdd(data.participations);
-                    }
-                    if(data.opponents?.length) {
-                        addProgressDetail(`Adding ${data.opponents.length} opponents…`);
-                        await db.opponents.bulkAdd(data.opponents);
-                    }
-                    if(data.venues?.length) {
-                        addProgressDetail(`Adding ${data.venues.length} venues…`);
-                        await db.venues.bulkAdd(data.venues);
-                    }
-                    if(data.referees?.length) {
-                        addProgressDetail(`Adding ${data.referees.length} referees…`);
-                        await db.referees.bulkAdd(data.referees);
-                    }
-                    if(data.kitDetails?.length) {
-                        addProgressDetail(`Restoring ${data.kitDetails.length} kit holders…`);
-                        await db.kitDetails.bulkPut(data.kitDetails);
-                    }
-                    if(data.kitQueue?.length) {
-                        addProgressDetail(`Restoring ${data.kitQueue.length} kit queue entries…`);
-                        await db.kitQueue.bulkPut(data.kitQueue);
-                    }
-                    const nextCats = Array.isArray(data.categories) ? data.categories : [];
-                    if(nextCats.length) addProgressDetail('Updating cost categories…');
-                    setCategories(nextCats);
-                    persistCategories(nextCats);
-                    const nextItemCats = Array.isArray(data.itemCategories) ? data.itemCategories : [];
-                    if(nextItemCats.length) addProgressDetail('Updating player item categories…');
-                    setItemCategories(nextItemCats);
-                    persistItemCategories(nextItemCats);
-                    const nextSeasonCats = Array.isArray(data.seasonCategories) ? data.seasonCategories : [];
-                    if(nextSeasonCats.length) addProgressDetail('Updating seasons…');
-                    setSeasonCategories(nextSeasonCats);
-                    persistSeasonCategories(nextSeasonCats);
-                    if(data.refDefaults) {
-                        addProgressDetail('Restoring referee defaults…');
-                        setRefDefaults(data.refDefaults);
-                        persistRefDefaults(data.refDefaults);
-                    }
-                    if(Number.isFinite(Number(data?.kitNumberLimit))) {
-                        const limit = Math.max(1, Number(data.kitNumberLimit));
-                        addProgressDetail(`Setting kit number limit to ${limit}…`);
-                        setKitNumberLimit(limit);
-                        persistKitNumberLimit(limit);
-                    }
-                    if(Array.isArray(data?.kitSizeOptions)) {
-                        addProgressDetail('Updating kit sizes…');
-                        setKitSizeOptions(data.kitSizeOptions);
-                        persistKitSizeOptions(data.kitSizeOptions);
-                    }
-                    if(Array.isArray(data?.positionDefinitions)) {
-                        addProgressDetail('Restoring position definitions…');
-                        const cleanedPositions = data.positionDefinitions.map(item => {
-                            const code = (item?.code || '').toString().trim();
-                            const label = (item?.label || '').toString().trim();
-                            return code && label ? { code, label } : null;
-                        }).filter(Boolean);
-                        if(cleanedPositions.length) {
-                            setPositionDefinitions(cleanedPositions);
-                            persistPositionDefinitions(cleanedPositions);
+                    await runStep('players', async () => {
+                        if(data.players?.length) {
+                            addProgressDetail(`Restoring ${data.players.length} players…`);
+                            await db.players.bulkAdd(data.players);
                         }
-                    }
+                    });
+                    await runStep('fixtures', async () => {
+                        if(data.fixtures?.length) {
+                            addProgressDetail(`Restoring ${data.fixtures.length} fixtures…`);
+                            await db.fixtures.bulkAdd(data.fixtures);
+                        }
+                    });
+                    await runStep('transactions', async () => {
+                        if(data.transactions?.length) {
+                            addProgressDetail(`Importing ${data.transactions.length} ledger rows…`);
+                            const normalizedTx = data.transactions.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) }));
+                            await db.transactions.bulkAdd(normalizedTx);
+                        }
+                    });
+                    await runStep('participations', async () => {
+                        if(data.participations?.length) {
+                            addProgressDetail(`Linking ${data.participations.length} participations…`);
+                            await db.participations.bulkAdd(data.participations);
+                        }
+                    });
+                    await runStep('opponents', async () => {
+                        if(data.opponents?.length) {
+                            addProgressDetail(`Adding ${data.opponents.length} opponents…`);
+                            await db.opponents.bulkAdd(data.opponents);
+                        }
+                    });
+                    await runStep('venues', async () => {
+                        if(data.venues?.length) {
+                            addProgressDetail(`Adding ${data.venues.length} venues…`);
+                            await db.venues.bulkAdd(data.venues);
+                        }
+                    });
+                    await runStep('referees', async () => {
+                        if(data.referees?.length) {
+                            addProgressDetail(`Adding ${data.referees.length} referees…`);
+                            await db.referees.bulkAdd(data.referees);
+                        }
+                    });
+                    await runStep('kitDetails', async () => {
+                        if(data.kitDetails?.length) {
+                            addProgressDetail(`Restoring ${data.kitDetails.length} kit holders…`);
+                            await db.kitDetails.bulkPut(data.kitDetails);
+                        }
+                    });
+                    await runStep('kitQueue', async () => {
+                        if(data.kitQueue?.length) {
+                            addProgressDetail(`Restoring ${data.kitQueue.length} kit queue entries…`);
+                            await db.kitQueue.bulkPut(data.kitQueue);
+                        }
+                    });
+                    await runStep('settings', async () => {
+                        const nextCats = Array.isArray(data.categories) ? data.categories : [];
+                        if(nextCats.length) addProgressDetail('Updating cost categories…');
+                        setCategories(nextCats);
+                        persistCategories(nextCats);
+                        const nextItemCats = Array.isArray(data.itemCategories) ? data.itemCategories : [];
+                        if(nextItemCats.length) addProgressDetail('Updating player item categories…');
+                        setItemCategories(nextItemCats);
+                        persistItemCategories(nextItemCats);
+                        const nextSeasonCats = Array.isArray(data.seasonCategories) ? data.seasonCategories : [];
+                        if(nextSeasonCats.length) addProgressDetail('Updating seasons…');
+                        setSeasonCategories(nextSeasonCats);
+                        persistSeasonCategories(nextSeasonCats);
+                        if(data.refDefaults) {
+                            addProgressDetail('Restoring referee defaults…');
+                            setRefDefaults(data.refDefaults);
+                            persistRefDefaults(data.refDefaults);
+                        }
+                        if(Number.isFinite(Number(data?.kitNumberLimit))) {
+                            const limit = Math.max(1, Number(data.kitNumberLimit));
+                            addProgressDetail(`Setting kit number limit to ${limit}…`);
+                            setKitNumberLimit(limit);
+                            persistKitNumberLimit(limit);
+                        }
+                        if(Array.isArray(data?.kitSizeOptions)) {
+                            addProgressDetail('Updating kit sizes…');
+                            setKitSizeOptions(data.kitSizeOptions);
+                            persistKitSizeOptions(data.kitSizeOptions);
+                        }
+                        if(Array.isArray(data?.positionDefinitions)) {
+                            addProgressDetail('Restoring position definitions…');
+                            const cleanedPositions = data.positionDefinitions.map(item => {
+                                const code = (item?.code || '').toString().trim();
+                                const label = (item?.label || '').toString().trim();
+                                return code && label ? { code, label } : null;
+                            }).filter(Boolean);
+                            if(cleanedPositions.length) {
+                                setPositionDefinitions(cleanedPositions);
+                                persistPositionDefinitions(cleanedPositions);
+                            }
+                        }
+                    });
                     setOpponents(await db.opponents.toArray());
                     setVenues(await db.venues.toArray());
                     setReferees(await db.referees.toArray());
+                    setIsImportStepsDone(true);
                     alert('Import complete');
                 } catch (err) {
+                    const msg = err?.message || 'Import failed. Invalid file?';
+                    setImportSteps(prev => prev.map(step => {
+                        if (step.status === 'done') return step;
+                        if (step.status === 'running') return { ...step, status: 'error', note: msg };
+                        return step;
+                    }));
                     alert('Import failed. Invalid file?');
                 } finally {
                     setIsImporting(false);
@@ -6648,6 +6780,100 @@
                         </div>
                         <div className="text-[11px] text-slate-500">These actions are destructive and local; backups include kit, queue, and settings—export one before wiping.</div>
                     </div>
+
+                    {isNuking && (
+                        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+                            <div className="bg-white w-96 max-w-[90vw] rounded-2xl shadow-2xl border border-slate-100 p-6 space-y-4 animate-slide-up">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="text-sm font-display font-bold text-slate-900">
+                                        {nukeSteps.some(step => step.status === 'error') ? 'Nuke failed' : (isNukeDone ? 'Nuke complete' : 'Nuking data…')}
+                                    </div>
+                                    <div className={`h-9 w-9 rounded-full flex items-center justify-center border ${isNukeDone ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : (nukeSteps.some(step => step.status === 'error') ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-slate-50 text-slate-300 border-slate-200')}`}>
+                                        {isNukeDone ? '✓' : (nukeSteps.some(step => step.status === 'error') ? '!' : <span className="h-4 w-4 border-2 border-slate-200 border-t-brand-600 rounded-full animate-spin"></span>)}
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-slate-500">We clear each list one by one. Wait for every item to show a check before closing.</p>
+                                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                    {nukeSteps.map(step => {
+                                        const status = step.status;
+                                        const isDone = status === 'done';
+                                        const isRunning = status === 'running';
+                                        const isError = status === 'error';
+                                        return (
+                                            <div key={step.key} className="flex items-center gap-3 p-2 rounded-lg border border-slate-100 bg-slate-50">
+                                                <div className={`h-6 w-6 rounded-full border flex items-center justify-center ${isDone ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : isRunning ? 'bg-blue-50 text-blue-600 border-blue-100' : isError ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-white text-slate-400 border-slate-200'}`}>
+                                                    {isDone ? '✓' : isError ? '!' : (isRunning ? <span className="h-3 w-3 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin"></span> : '•')}
+                                                </div>
+                                                <div className="flex-1">
+                                                    <div className="text-sm font-semibold text-slate-800">{step.label}</div>
+                                                    <div className="text-[11px] text-slate-500">
+                                                        {isDone ? 'Cleared' : isRunning ? 'Clearing…' : isError ? 'Failed' : 'Queued'}
+                                                    </div>
+                                                    {step.note && <div className="text-[11px] text-rose-500">{step.note}</div>}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => { setIsNuking(false); setNukeSteps([]); setIsNukeDone(false); }}
+                                        disabled={!isNukeDone && !nukeSteps.some(step => step.status === 'error')}
+                                        className={`flex-1 rounded-lg px-4 py-2 font-bold ${(!isNukeDone && !nukeSteps.some(step => step.status === 'error')) ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                                    >
+                                        {nukeSteps.some(step => step.status === 'error') ? 'Close' : (isNukeDone ? 'All cleared' : 'Working…')}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {isImportingAllModal && (
+                        <div className="fixed inset-0 z-[145] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+                            <div className="bg-white w-96 max-w-[90vw] rounded-2xl shadow-2xl border border-slate-100 p-6 space-y-4 animate-slide-up">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="text-sm font-display font-bold text-slate-900">
+                                        {importSteps.some(step => step.status === 'error') ? 'Import failed' : (isImportStepsDone ? 'Import complete' : 'Importing data…')}
+                                    </div>
+                                    <div className={`h-9 w-9 rounded-full flex items-center justify-center border ${isImportStepsDone ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : (importSteps.some(step => step.status === 'error') ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-slate-50 text-slate-300 border-slate-200')}`}>
+                                        {isImportStepsDone ? '✓' : (importSteps.some(step => step.status === 'error') ? '!' : <span className="h-4 w-4 border-2 border-slate-200 border-t-brand-600 rounded-full animate-spin"></span>)}
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-slate-500">We import each list one by one. Keep this open until every row shows a check.</p>
+                                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                    {importSteps.map(step => {
+                                        const status = step.status;
+                                        const isDone = status === 'done';
+                                        const isRunning = status === 'running';
+                                        const isError = status === 'error';
+                                        return (
+                                            <div key={step.key} className="flex items-center gap-3 p-2 rounded-lg border border-slate-100 bg-slate-50">
+                                                <div className={`h-6 w-6 rounded-full border flex items-center justify-center ${isDone ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : isRunning ? 'bg-blue-50 text-blue-600 border-blue-100' : isError ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-white text-slate-400 border-slate-200'}`}>
+                                                    {isDone ? '✓' : isError ? '!' : (isRunning ? <span className="h-3 w-3 border-2 border-blue-200 border-t-blue-600 rounded-full animate-spin"></span> : '•')}
+                                                </div>
+                                                <div className="flex-1">
+                                                    <div className="text-sm font-semibold text-slate-800">{step.label}</div>
+                                                    <div className="text-[11px] text-slate-500">
+                                                        {isDone ? 'Imported' : isRunning ? 'Importing…' : isError ? 'Failed' : 'Queued'}
+                                                    </div>
+                                                    {step.note && <div className="text-[11px] text-rose-500">{step.note}</div>}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => { setIsImportingAllModal(false); setImportSteps([]); setIsImportStepsDone(false); }}
+                                        disabled={!isImportStepsDone && !importSteps.some(step => step.status === 'error')}
+                                        className={`flex-1 rounded-lg px-4 py-2 font-bold ${(!isImportStepsDone && !importSteps.some(step => step.status === 'error')) ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                                    >
+                                        {importSteps.some(step => step.status === 'error') ? 'Close' : (isImportStepsDone ? 'All imported' : 'Working…')}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     <Modal isOpen={isImportPreviewOpen} onClose={() => { if(!isImporting) cancelImportPreview(); }} title="Import Contents">
                         {importPreviewName && (
