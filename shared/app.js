@@ -2329,6 +2329,15 @@
                 const selectedPlayers = players.filter(p => squad[p.id]);
                 return selectedPlayers.length ? selectedPlayers : players;
             }, [players, squad]);
+            const sortedPlayersForSelection = useMemo(() => {
+                const fullName = (p = {}) => `${p.firstName || ''} ${p.lastName || ''}`.trim().toLowerCase();
+                return [...players].sort((a, b) => {
+                    const aSel = squad[a.id] ? 1 : 0;
+                    const bSel = squad[b.id] ? 1 : 0;
+                    if (aSel !== bSel) return bSel - aSel;
+                    return fullName(a).localeCompare(fullName(b));
+                });
+            }, [players, squad]);
 
             const fixtureTotals = useMemo(() => {
                 if(!selectedFixture) return { cost: 0, ref: 0 };
@@ -3031,7 +3040,7 @@
                             </div>
                             <div className="text-[11px] text-slate-500">Competition: {selectedFixture.competitionType || 'LEAGUE'}</div>
                             <div className="grid md:grid-cols-2 gap-2">
-                                {players.map(p => (
+                                {sortedPlayersForSelection.map(p => (
                                     <div key={p.id} onClick={() => togglePlayer(p.id)} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${squad[p.id] ? 'bg-brand-50 border-brand-200' : 'bg-slate-50 border-slate-100'}`}>
                                         <div className="flex items-center gap-3">
                                             <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${squad[p.id] ? 'bg-brand-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>
