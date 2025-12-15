@@ -5828,12 +5828,40 @@
             };
 
             const clearAll = async () => {
-                if(!confirm('Delete ALL data (fixtures, players, transactions, participations)?')) return;
+                const warning = [
+                    'Delete EVERYTHING?',
+                    'This removes fixtures, players, transactions, participations, opponents, venues, referees, kit holders/queue, and resets categories, positions, kit settings, and referee defaults.',
+                    'Make sure you have a backup before continuing.'
+                ].join('\n');
+                if(!confirm(warning)) return;
                 await db.fixtures.clear();
                 await db.players.clear();
                 await db.transactions.clear();
                 await db.participations.clear();
-                alert('All data cleared.');
+                await db.opponents.clear();
+                await db.venues.clear();
+                await db.referees.clear();
+                await db.kitDetails.clear();
+                await db.kitQueue.clear();
+                const defaultRefs = { total: 85, split: 42.5 };
+                setCategories(DEFAULT_CATEGORIES);
+                persistCategories(DEFAULT_CATEGORIES);
+                setItemCategories(DEFAULT_ITEM_CATEGORIES);
+                persistItemCategories(DEFAULT_ITEM_CATEGORIES);
+                setSeasonCategories(DEFAULT_SEASON_CATEGORIES);
+                persistSeasonCategories(DEFAULT_SEASON_CATEGORIES);
+                setPositionDefinitions([...DEFAULT_POSITION_DEFINITIONS]);
+                persistPositionDefinitions([...DEFAULT_POSITION_DEFINITIONS]);
+                setKitNumberLimit(DEFAULT_KIT_NUMBER_LIMIT);
+                persistKitNumberLimit(DEFAULT_KIT_NUMBER_LIMIT);
+                setKitSizeOptions([...DEFAULT_KIT_SIZE_OPTIONS]);
+                persistKitSizeOptions([...DEFAULT_KIT_SIZE_OPTIONS]);
+                setRefDefaults(defaultRefs);
+                persistRefDefaults(defaultRefs);
+                setOpponents([]);
+                setVenues([]);
+                setReferees([]);
+                alert('All data and settings cleared. You can restore using a full backup.');
             };
 
             const removeCategory = async () => {
@@ -6616,9 +6644,9 @@
                             <button onClick={() => { if(confirm('Delete player item categories?')) { setItemCategories([]); persistItemCategories([]); }}} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Player Items</button>
                             <button onClick={() => { if(confirm('Delete cost categories?')) { setCategories([]); persistCategories([]); }}} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Cost Categories</button>
                             <button onClick={() => { if(confirm('Delete season categories?')) { setSeasonCategories([]); persistSeasonCategories([]); }}} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Seasons</button>
-                            <button onClick={clearAll} className="bg-rose-600 text-white font-bold rounded-lg px-3 py-2 text-sm md:col-span-3">Clear EVERYTHING</button>
+                            <button onClick={clearAll} className="bg-rose-600 text-white font-bold rounded-lg px-3 py-2 text-sm md:col-span-3">Nuke all data & settings</button>
                         </div>
-                        <div className="text-[11px] text-slate-500">These actions are destructive and local; consider exporting a backup first.</div>
+                        <div className="text-[11px] text-slate-500">These actions are destructive and local; backups include kit, queue, and settings—export one before wiping.</div>
                     </div>
 
                     <Modal isOpen={isImportPreviewOpen} onClose={() => { if(!isImporting) cancelImportPreview(); }} title="Import Contents">

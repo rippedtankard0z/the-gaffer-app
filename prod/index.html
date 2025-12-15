@@ -155,30 +155,57 @@
 
             const createTable = (name) => {
                 const colRef = collection(fs, name);
+                let generatedMax = null;
+                const currentNumericMax = () => {
+                    const fromCache = (cache[name] || []).reduce((max, item) => {
+                        const num = Number(item.id);
+                        return Number.isNaN(num) ? max : Math.max(max, num);
+                    }, 0);
+                    const inFlight = typeof generatedMax === 'number' ? generatedMax : 0;
+                    return Math.max(fromCache, inFlight);
+                };
+                const normalizeId = (raw) => {
+                    if (raw === undefined || raw === null) return null;
+                    const str = `${raw}`.trim();
+                    if (!str) return null;
+                    return numericOrId(str);
+                };
+                const allocateId = (item = {}) => {
+                    const provided = normalizeId(item.id);
+                    if (provided !== null) {
+                        if (typeof provided === 'number') {
+                            generatedMax = Math.max(currentNumericMax(), provided);
+                        }
+                        return provided;
+                    }
+                    const next = currentNumericMax() + 1;
+                    generatedMax = next;
+                    return numericOrId(next);
+                };
                 return {
                     async toArray() { await ready; return [...cache[name]]; },
                     async count() { await ready; return cache[name].length; },
                     async add(data) {
                         await ready;
-                        const id = nextId(name);
-                        await setDoc(docRef(name, id), { ...data, id: numericOrId(id) });
-                        return numericOrId(id);
+                        const id = allocateId(data);
+                        await setDoc(docRef(name, id), { ...data, id });
+                        return id;
                     },
-                    async bulkAdd(items) {
+                    async bulkAdd(items = []) {
                         await ready;
                         const ids = [];
                         for (const item of items) {
-                            const id = nextId(name);
-                            await setDoc(docRef(name, id), { ...item, id: numericOrId(id) });
-                            ids.push(numericOrId(id));
+                            const id = allocateId(item);
+                            await setDoc(docRef(name, id), { ...item, id });
+                            ids.push(id);
                         }
                         return ids;
                     },
-                    async bulkPut(items) {
+                    async bulkPut(items = []) {
                         await ready;
-                        await Promise.all(items.map(item => {
-                            if (!item.id) return addDoc(colRef, item);
-                            return setDoc(docRef(name, item.id), item, { merge: true });
+                        await Promise.all(items.map(async (item) => {
+                            const id = allocateId(item);
+                            return setDoc(docRef(name, id), { ...item, id }, { merge: true });
                         }));
                     },
                     async update(id, data) { await ready; await updateDoc(docRef(name, id), data); },
