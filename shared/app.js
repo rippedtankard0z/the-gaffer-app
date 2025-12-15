@@ -1,6 +1,6 @@
 'use strict';
         const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
-        const MASTER_BUILD_VERSION = '2024.12.06-11';
+        const MASTER_BUILD_VERSION = '2024.12.06-12';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -4900,9 +4900,12 @@
             const editOpponent = async (opponent) => {
                 const name = prompt('Edit opponent name', opponent.name);
                 if(name === null) return;
-                const payee = (prompt('Edit payee / bank', opponent.payee || '') ?? opponent.payee) || '';
-                const contact = (prompt('Edit contact person', opponent.contact || '') ?? opponent.contact) || '';
-                const phone = (prompt('Edit contact phone', opponent.phone || '') ?? opponent.phone) || '';
+                const payeeInput = prompt('Edit payee / bank', opponent.payee || '');
+                const contactInput = prompt('Edit contact person', opponent.contact || '');
+                const phoneInput = prompt('Edit contact phone', opponent.phone || '');
+                const payee = (payeeInput === null ? opponent.payee : payeeInput) || '';
+                const contact = (contactInput === null ? opponent.contact : contactInput) || '';
+                const phone = (phoneInput === null ? opponent.phone : phoneInput) || '';
                 const cleanName = name.trim();
                 if(!cleanName) return;
                 const payload = {
