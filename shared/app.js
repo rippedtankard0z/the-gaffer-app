@@ -685,7 +685,21 @@
         };
 
         // --- PLAYERS MODULE ---
-        const Players = ({ itemCategories, positionDefinitions, kitDetails = [], saveKitDetail, kitSizeOptions = [] }) => {
+        const Players = ({
+            itemCategories,
+            positionDefinitions,
+            kitDetails = [],
+            saveKitDetail,
+            kitSizeOptions = [],
+            kitQueue = [],
+            onAddQueueEntry,
+            onRemoveQueueEntry,
+            kitNumberLimit,
+            setKitNumberLimit,
+            onImportKitDetails,
+            squadTab = 'players',
+            setSquadTab = () => {}
+        }) => {
             const [players, setPlayers] = useState([]);
             const [balances, setBalances] = useState({});
             const [selectedPlayer, setSelectedPlayer] = useState(null);
@@ -727,6 +741,18 @@
             const [isDupScanning, setIsDupScanning] = useState(false);
             const [dupScanProgress, setDupScanProgress] = useState({ phase: '', checked: 0, total: 0, found: 0, lastFound: '' });
             const [isReleasingKit, setIsReleasingKit] = useState(false);
+            const [localSquadTab, setLocalSquadTab] = useState(squadTab || 'players');
+            useEffect(() => {
+                setLocalSquadTab(squadTab || 'players');
+            }, [squadTab]);
+            const handleSquadTab = (tab) => {
+                setLocalSquadTab(tab);
+                setSquadTab(tab);
+                if (tab === 'players') {
+                    setSelectedPlayer(null);
+                }
+            };
+            const isKitTab = (localSquadTab || 'players') === 'kit';
             const selectedPlayerKit = useMemo(() => {
                 if (!selectedPlayer) return null;
                 return kitDetails.find(detail => detail?.playerId && String(detail.playerId) === String(selectedPlayer.id)) || null;
@@ -1458,11 +1484,43 @@
                 link.click();
             };
 
+            if (isKitTab) {
+                return (
+                    <div className="space-y-6 pb-28 animate-fade-in">
+                        <header className="px-1 space-y-3">
+                            <div>
+                                <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Squad</h1>
+                                <p className="text-slate-500 text-sm font-medium">Manage roster & kit</p>
+                            </div>
+                            <div className="bg-white p-2 rounded-2xl border border-slate-100 flex gap-2 text-sm font-bold">
+                                <button onClick={() => handleSquadTab('players')} className={`flex-1 py-2 rounded-xl ${!isKitTab ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Players</button>
+                                <button onClick={() => handleSquadTab('kit')} className={`flex-1 py-2 rounded-xl ${isKitTab ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Kit</button>
+                            </div>
+                        </header>
+                        <Kit
+                            kitDetails={kitDetails}
+                            onImportKitDetails={onImportKitDetails}
+                            kitQueue={kitQueue}
+                            onAddQueueEntry={onAddQueueEntry}
+                            onRemoveQueueEntry={onRemoveQueueEntry}
+                            kitNumberLimit={kitNumberLimit}
+                            setKitNumberLimit={setKitNumberLimit}
+                            kitSizeOptions={kitSizeOptions}
+                            onNavigate={(dest) => { if (dest === 'players') handleSquadTab('players'); }}
+                        />
+                    </div>
+                );
+            }
+
             return (
                 <div className="space-y-6 pb-28 animate-fade-in">
                     <header className="px-1">
                         <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Squad</h1>
                         <p className="text-slate-500 text-sm font-medium">Manage roster & debts</p>
+                        <div className="bg-white p-2 rounded-2xl border border-slate-100 flex gap-2 text-sm font-bold mt-3">
+                            <button onClick={() => handleSquadTab('players')} className={`flex-1 py-2 rounded-xl ${isKitTab ? 'bg-slate-50 text-slate-700' : 'bg-slate-900 text-white'}`}>Players</button>
+                            <button onClick={() => handleSquadTab('kit')} className={`flex-1 py-2 rounded-xl ${isKitTab ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Kit</button>
+                        </div>
                         <div className="flex gap-2 mt-2 flex-wrap">
                             <button onClick={() => setIsWallOpen(true)} className="text-xs font-bold bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg border border-rose-100 flex items-center gap-1">
                                 <Icon name="AlertTriangle" size={14} /> Wall of Shame
@@ -4565,9 +4623,9 @@
                                 <span className="font-mono text-slate-900">{kitOverview.queue}</span>
                             </div>
                         </div>
-                        <div className="text-[11px] text-slate-500">Open the Kit tab to update assignments and queue.</div>
+                        <div className="text-[11px] text-slate-500">Open Kit inside the Squad screen to update assignments and queue.</div>
                         <div className="flex gap-2">
-                            <button onClick={() => onNavigate('kit')} className="flex-1 bg-slate-900 text-white text-xs font-bold py-2 rounded-lg">Open Kit tab</button>
+                            <button onClick={() => onNavigate('kit')} className="flex-1 bg-slate-900 text-white text-xs font-bold py-2 rounded-lg">Open Kit view</button>
                             <button onClick={() => onNavigate('kit')} className="flex-1 bg-emerald-50 text-emerald-700 text-xs font-bold py-2 rounded-lg border border-emerald-100">
                                 Queue {kitOverview.queue}
                             </button>
@@ -4728,7 +4786,6 @@
                 { id: 'players', icon: 'Users', label: 'Squad' },
                 { id: 'opponents', icon: 'Shield', label: 'League' },
                 { id: 'finances', icon: 'Wallet', label: 'Bank' },
-                { id: 'kit', icon: 'Box', label: 'Kit' },
             ];
 
             return (
@@ -6820,7 +6877,7 @@
                     <div className="bg-blue-50 p-4 rounded-2xl shadow-soft border border-blue-100 space-y-2">
                         <div className="text-xs font-bold text-blue-600 uppercase tracking-wider">Kit workflow</div>
                         <p className="text-sm text-blue-700">
-                            The new Kit tab now stores who currently has gear, what numbers remain free, and who to include in the next order. Keep everything here, and use the Squad tab for payments and ledger work.
+                            The Kit view inside Squad stores who currently has gear, what numbers remain free, and who to include in the next order. Keep everything here, and use the Squad list for payments and ledger work.
                         </p>
                     </div>
 
@@ -7287,6 +7344,7 @@
             const [kitQueue, setKitQueue] = useState([]);
             const [kitNumberLimit, setKitNumberLimit] = useState(loadKitNumberLimit());
             const [kitSizeOptions, setKitSizeOptions] = useState(loadKitSizeOptions());
+            const [squadTab, setSquadTab] = useState('players');
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [isVersionMismatch, setIsVersionMismatch] = useState(false);
             const [importCount, setImportCount] = useState(0);
@@ -7493,6 +7551,18 @@
                 window.location.reload();
             };
 
+            const navigate = useCallback((tab) => {
+                if (tab === 'kit') {
+                    setSquadTab('kit');
+                    setActiveTab('players');
+                    return;
+                }
+                if (tab === 'players') {
+                    setSquadTab('players');
+                }
+                setActiveTab(tab);
+            }, [setActiveTab, setSquadTab]);
+
             return (
                 <ImportProgressContext.Provider value={importProgressContext}>
                     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-brand-100 selection:text-brand-900 relative overflow-hidden">
@@ -7515,12 +7585,27 @@
                         )}
 
                         <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
-{activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
+{activeTab === 'dashboard' && <Dashboard onNavigate={navigate} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
                             {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
-                            {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={setActiveTab} />}
-                            {activeTab === 'players' && <Players itemCategories={itemCategories} positionDefinitions={positionDefinitions} kitDetails={kitDetails} saveKitDetail={saveKitDetail} kitSizeOptions={kitSizeOptions} />}
-                            {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={setActiveTab} />}
-                        {activeTab === 'kit' && <Kit kitDetails={kitDetails} onImportKitDetails={importKitDetails} kitQueue={kitQueue} onAddQueueEntry={addKitQueueEntry} onRemoveQueueEntry={removeKitQueueEntry} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} kitSizeOptions={kitSizeOptions} onNavigate={setActiveTab} />}
+                            {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={navigate} />}
+                            {activeTab === 'players' && (
+                                <Players
+                                    itemCategories={itemCategories}
+                                    positionDefinitions={positionDefinitions}
+                                    kitDetails={kitDetails}
+                                    saveKitDetail={saveKitDetail}
+                                    kitSizeOptions={kitSizeOptions}
+                                    kitQueue={kitQueue}
+                                    onAddQueueEntry={addKitQueueEntry}
+                                    onRemoveQueueEntry={removeKitQueueEntry}
+                                    kitNumberLimit={kitNumberLimit}
+                                    setKitNumberLimit={setKitNumberLimit}
+                                    onImportKitDetails={importKitDetails}
+                                    squadTab={squadTab}
+                                    setSquadTab={setSquadTab}
+                                />
+                            )}
+                            {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={navigate} />}
                             <div className="pt-6 text-center text-[10px] text-slate-400">
                                 {(() => {
                                     const formatted = READ_ONLY ? formatBuildLabel(APP_VERSION, true) : formatBuildLabel(APP_VERSION, false);
@@ -7534,7 +7619,7 @@
                             </div>
                         </main>
                         
-                        <Nav activeTab={activeTab} setTab={setActiveTab} />
+                        <Nav activeTab={activeTab} setTab={navigate} />
                         <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="Settings">
                             <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} />
                         </Modal>
