@@ -1907,7 +1907,10 @@
             const [feeEdits, setFeeEdits] = useState({});
             const [newCost, setNewCost] = useState({ description: '', amount: '', category: 'Referee Fee', flow: 'payable' });
             const [payee, setPayee] = useState({ type: 'referee', value: '' });
+            const [showAvailablePlayers, setShowAvailablePlayers] = useState(false);
+            const [isPaymentsOpen, setIsPaymentsOpen] = useState(false);
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
+            const matchDayRef = useRef(null);
             const payeeOptions = useMemo(() => {
                 const cat = (newCost.category || '').toLowerCase();
                 const opts = [];
@@ -1949,6 +1952,32 @@
                     setNewCost(c => ({ ...c, flow: 'payable' }));
                 }
             }, [payee]);
+            useEffect(() => {
+                if (!selectedFixture) return;
+                setNewCost(prev => {
+                    const hasAmount = prev.amount !== '' && prev.amount !== null && prev.amount !== undefined;
+                    if (hasAmount) return prev;
+                    if (isSiaVenue) {
+                        if (prev.category === 'Referee Fee') {
+                            return { ...prev, amount: 85, flow: 'payable' };
+                        }
+                        if (payee.type === 'opponent' || prev.flow === 'receivable') {
+                            return { ...prev, amount: 187, flow: 'receivable' };
+                        }
+                        if (homeVenueForMatch && payee.type === 'venue' && String(homeVenueForMatch.id) === String(payee.value)) {
+                            return { ...prev, amount: 374, flow: 'payable' };
+                        }
+                    }
+                    if (prev.category === 'Referee Fee') {
+                        return { ...prev, amount: refDefaults.total };
+                    }
+                    return prev;
+                });
+            }, [selectedFixture, isSiaVenue, payee, refDefaults.total, homeVenueForMatch, newCost.category, newCost.flow]);
+            useEffect(() => {
+                setShowAvailablePlayers(false);
+                setIsPaymentsOpen(false);
+            }, [selectedFixture?.id]);
             
             // Magic Paste State
             const [isMagicOpen, setIsMagicOpen] = useState(false);
@@ -1964,6 +1993,13 @@
             const [quickVenue, setQuickVenue] = useState({ name: '', price: '', address: '', payee: '', contact: '' });
             const [selectedSeason, setSelectedSeason] = useState(seasonCategories?.[0] || '2025/2026 Season');
             const [magicFixtureTarget, setMagicFixtureTarget] = useState('new');
+            const homeVenueForMatch = useMemo(() => {
+                if (!selectedFixture?.venue) return null;
+                return venues.find(v => (v.name || '').toLowerCase() === (selectedFixture.venue || '').toLowerCase()) || null;
+            }, [venues, selectedFixture]);
+            const isSiaVenue = useMemo(() => {
+                return (selectedFixture?.venue || '').toLowerCase().includes('sia sports club');
+            }, [selectedFixture]);
             const playerLookup = useMemo(() => players.reduce((acc, p) => { acc[p.id] = p; return acc; }, {}), [players]);
             const getPlayerByMotmValue = useCallback((value) => {
                 if (value === undefined || value === null) return null;
@@ -2238,7 +2274,7 @@
 
             const addCost = async () => {
                 if(!selectedFixture) return;
-                const amt = Number(newCost.amount || (newCost.category === 'Referee Fee' ? refDefaults.split : 0));
+                const amt = Number(newCost.amount || (newCost.category === 'Referee Fee' ? refDefaults.total : 0));
                 if(isNaN(amt) || !amt) return;
                 const categoryToUse = newCost.category || (categories[0] || 'Other');
                 let payeeName = '';
@@ -2306,6 +2342,45 @@
                 reloadSelected();
             };
 
+            const applySiaCostPreset = useCallback((preset) => {
+                if (!selectedFixture || !isSiaVenue) return;
+                if (preset === 'opposition') {
+                    setNewCost({
+                        description: `Match fee for ${selectedFixture.opponent || 'opposition'}`,
+                        amount: 187,
+                        category: 'Match Fee',
+                        flow: 'receivable'
+                    });
+                    setPayee({ type: 'opponent', value: selectedFixture.opponent || '' });
+                    return;
+                }
+                if (preset === 'referee') {
+                    const refTarget = payeeOptions.find(p => p.type === 'referee');
+                    setNewCost({
+                        description: `Referee fee for ${selectedFixture.opponent || 'game'}`,
+                        amount: 85,
+                        category: 'Referee Fee',
+                        flow: 'payable'
+                    });
+                    if (refTarget) {
+                        setPayee({ type: refTarget.type, value: refTarget.value });
+                    } else {
+                        setPayee({ type: 'custom', value: '' });
+                    }
+                    return;
+                }
+                if (preset === 'home' && homeVenueForMatch) {
+                    const defaultCategory = categories.includes('Match Fee') ? 'Match Fee' : (categories[0] || 'Match Fee');
+                    setNewCost({
+                        description: `Match payment to ${homeVenueForMatch.name}`,
+                        amount: 374,
+                        category: defaultCategory,
+                        flow: 'payable'
+                    });
+                    setPayee({ type: 'venue', value: String(homeVenueForMatch.id) });
+                }
+            }, [categories, homeVenueForMatch, isSiaVenue, payeeOptions, selectedFixture]);
+
             const settleCost = async (tx) => {
                 if(tx.isReconciled) return;
                 await db.transactions.update(tx.id, { isReconciled: true });
@@ -2338,6 +2413,14 @@
                     return fullName(a).localeCompare(fullName(b));
                 });
             }, [players, squad]);
+            const selectedPlayersList = useMemo(() => sortedPlayersForSelection.filter(p => squad[p.id]), [sortedPlayersForSelection, squad]);
+            const availablePlayersList = useMemo(() => sortedPlayersForSelection.filter(p => !squad[p.id]), [sortedPlayersForSelection, squad]);
+            const paymentSummary = useMemo(() => {
+                const paid = participantRows.filter(r => r.isPaid).length;
+                const total = participantRows.length;
+                return { paid, unpaid: total - paid, total };
+            }, [participantRows]);
+            const shouldShowAvailablePlayers = showAvailablePlayers || !selectedPlayersList.length;
 
             const fixtureTotals = useMemo(() => {
                 if(!selectedFixture) return { cost: 0, ref: 0 };
@@ -2413,6 +2496,13 @@
                 link.href = canvas.toDataURL('image/png');
                 link.click();
             };
+            const scrollToTop = useCallback(() => {
+                if (matchDayRef.current) {
+                    matchDayRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                } else {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+            }, []);
 
             const handleAdd = async (e) => {
                 e.preventDefault();
@@ -2960,7 +3050,7 @@
                     </Modal>
 
                     {selectedFixture && (
-                        <div className="fixed inset-0 z-[60] bg-white overflow-y-auto pb-28 sm:pb-10">
+                        <div ref={matchDayRef} className="fixed inset-0 z-[60] bg-white overflow-y-auto pb-28 sm:pb-10">
                             <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
                                 <div className="flex items-center justify-between">
                                     <div>
@@ -3028,79 +3118,134 @@
                                     </div>
                                 </div>
 
-                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
-                                    <div className="flex justify-between items-center">
+                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
+                                    <div className="flex justify-between items-start gap-3">
                                         <div>
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Squad Selection</div>
                                             <p className="text-xs text-slate-500">Tap to add/remove</p>
+                                            <p className="text-[11px] text-slate-500 mt-1">Selected {selectedPlayersList.length} · Available {availablePlayersList.length}</p>
                                         </div>
-                                <button onClick={generateFees} className="text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-100 flex items-center gap-1">
-                                    <Icon name="Banknote" size={14} /> Generate Fees
-                                </button>
-                            </div>
-                            <div className="text-[11px] text-slate-500">Competition: {selectedFixture.competitionType || 'LEAGUE'}</div>
-                            <div className="grid md:grid-cols-2 gap-2">
-                                {sortedPlayersForSelection.map(p => (
-                                    <div key={p.id} onClick={() => togglePlayer(p.id)} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${squad[p.id] ? 'bg-brand-50 border-brand-200' : 'bg-slate-50 border-slate-100'}`}>
-                                        <div className="flex items-center gap-3">
-                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${squad[p.id] ? 'bg-brand-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>
-                                                        {squad[p.id] && <Icon name="Check" size={14} />}
+                                        <button onClick={generateFees} className="text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-100 flex items-center gap-1">
+                                            <Icon name="Banknote" size={14} /> Generate Fees
+                                        </button>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500">Competition: {selectedFixture.competitionType || 'LEAGUE'}</div>
+                                    <div className="space-y-3">
+                                        <div className="space-y-2">
+                                            <div className="text-[11px] font-bold text-slate-600 uppercase">Selected Players</div>
+                                            <div className="grid md:grid-cols-2 gap-2">
+                                                {selectedPlayersList.map(p => (
+                                                    <div key={`selected-${p.id}`} onClick={() => togglePlayer(p.id)} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${squad[p.id] ? 'bg-brand-50 border-brand-200' : 'bg-slate-50 border-slate-100'}`}>
+                                                        <div className="flex items-center gap-3">
+                                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${squad[p.id] ? 'bg-brand-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>
+                                                                {squad[p.id] && <Icon name="Check" size={14} />}
+                                                            </div>
+                                                            <span className={`text-sm font-medium ${squad[p.id] ? 'text-brand-900' : 'text-slate-600'}`}>{p.firstName} {p.lastName}</span>
+                                                        </div>
+                                                        <span className="text-xs text-slate-400 font-medium">{p.position}</span>
                                                     </div>
-                                                    <span className={`text-sm font-medium ${squad[p.id] ? 'text-brand-900' : 'text-slate-600'}`}>{p.firstName} {p.lastName}</span>
-                                                </div>
-                                                <span className="text-xs text-slate-400 font-medium">{p.position}</span>
+                                                ))}
                                             </div>
-                                        ))}
+                                            {selectedPlayersList.length === 0 && <div className="text-sm text-slate-400">No players selected yet.</div>}
+                                        </div>
+                                        <div className="space-y-2">
+                                            <button onClick={() => setShowAvailablePlayers(v => !v)} className="w-full flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-semibold text-slate-700">
+                                                <span>Available players ({availablePlayersList.length})</span>
+                                                <Icon name={shouldShowAvailablePlayers ? 'ChevronUp' : 'ChevronDown'} size={14} />
+                                            </button>
+                                            {shouldShowAvailablePlayers && (
+                                                <div className="grid md:grid-cols-2 gap-2">
+                                                    {availablePlayersList.map(p => (
+                                                        <div key={`available-${p.id}`} onClick={() => togglePlayer(p.id)} className="flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all bg-slate-50 border-slate-100 hover:border-brand-200 hover:bg-brand-50/60">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-white text-slate-400 border border-slate-200">
+                                                                    {squad[p.id] && <Icon name="Check" size={14} />}
+                                                                </div>
+                                                                <span className="text-sm font-medium text-slate-600">{p.firstName} {p.lastName}</span>
+                                                            </div>
+                                                            <span className="text-xs text-slate-400 font-medium">{p.position}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
 
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
-                                    <div className="flex justify-between items-center">
+                                    <div className="flex justify-between items-start gap-3">
                                         <div>
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments</div>
                                             <div className="text-[11px] text-slate-500">Mark paid / adjust fee / remove</div>
+                                            <div className="text-[11px] text-slate-600 mt-1">Paid {paymentSummary.paid} · Unpaid {paymentSummary.unpaid} · Total {paymentSummary.total}</div>
                                         </div>
-                                        <div className="text-right">
-                                            <div className="text-xs text-slate-500">Total cost</div>
-                                            <div className="text-sm font-bold text-slate-900">{formatCurrency(Math.abs(fixtureTotals.cost))}</div>
-                                            <div className="text-[11px] text-slate-500">Ref: {formatCurrency(Math.abs(fixtureTotals.ref))}</div>
-                                        </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                        {participantRows.map(row => (
-                                            <div key={row.player.id} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
-                                                <div className="flex justify-between items-center">
-                                                    <div>
-                                                        <div className="text-sm font-bold text-slate-900">{row.player.firstName} {row.player.lastName}</div>
-                                                        <div className="text-[11px] text-slate-500">Due {formatCurrency(row.due)} · Paid {formatCurrency(row.paid)}</div>
-                                                    </div>
-                                                    <div className={`text-xs font-bold px-2 py-1 rounded-lg ${row.isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                                        {row.isPaid ? 'PAID' : 'UNPAID'}
-                                                    </div>
-                                                </div>
-                                                <div className="flex flex-col md:flex-row gap-2 mt-2">
-                                                    <input type="number" min="0" step="1" className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" value={feeEdits[row.player.id] ?? row.due} onChange={e => setFeeEdits({ ...feeEdits, [row.player.id]: Number(e.target.value) })} />
-                                                    <button onClick={() => updateFeeForPlayer(row.player.id)} className="bg-white border border-slate-200 text-slate-800 font-bold px-3 py-2 rounded-lg text-sm">Save amount</button>
-                                                    <button onClick={() => togglePayment(row.player.id)} className={`font-bold px-3 py-2 rounded-lg text-sm ${row.isPaid ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-600 text-white'}`}>
-                                                        {row.isPaid ? 'Mark unpaid' : 'Mark paid'}
-                                                    </button>
-                                                    <button onClick={() => removePlayerFromFixture(row.player.id)} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold px-3 py-2 rounded-lg text-sm">Remove</button>
-                                                </div>
+                                        <div className="flex items-start gap-3">
+                                            <div className="text-right">
+                                                <div className="text-xs text-slate-500">Total cost</div>
+                                                <div className="text-sm font-bold text-slate-900">{formatCurrency(Math.abs(fixtureTotals.cost))}</div>
+                                                <div className="text-[11px] text-slate-500">Ref: {formatCurrency(Math.abs(fixtureTotals.ref))}</div>
                                             </div>
-                                        ))}
-                                            {participantRows.length === 0 && <div className="text-center text-sm text-slate-400">No squad selected yet.</div>}
+                                            <button onClick={() => setIsPaymentsOpen(v => !v)} className="text-xs font-bold bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-lg flex items-center gap-1">
+                                                <Icon name={isPaymentsOpen ? 'ChevronUp' : 'ChevronDown'} size={14} /> {isPaymentsOpen ? 'Hide' : 'Show'}
+                                            </button>
+                                        </div>
                                     </div>
+                                    {isPaymentsOpen && (
+                                        <div className="space-y-2">
+                                            {participantRows.map(row => (
+                                                <div key={row.player.id} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                                    <div className="flex justify-between items-center">
+                                                        <div>
+                                                            <div className="text-sm font-bold text-slate-900">{row.player.firstName} {row.player.lastName}</div>
+                                                            <div className="text-[11px] text-slate-500">Due {formatCurrency(row.due)} · Paid {formatCurrency(row.paid)}</div>
+                                                        </div>
+                                                        <div className={`text-xs font-bold px-2 py-1 rounded-lg ${row.isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                            {row.isPaid ? 'PAID' : 'UNPAID'}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex flex-col md:flex-row gap-2 mt-2">
+                                                        <input type="number" min="0" step="1" className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" value={feeEdits[row.player.id] ?? row.due} onChange={e => setFeeEdits({ ...feeEdits, [row.player.id]: Number(e.target.value) })} />
+                                                        <button onClick={() => updateFeeForPlayer(row.player.id)} className="bg-white border border-slate-200 text-slate-800 font-bold px-3 py-2 rounded-lg text-sm">Save amount</button>
+                                                        <button onClick={() => togglePayment(row.player.id)} className={`font-bold px-3 py-2 rounded-lg text-sm ${row.isPaid ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-600 text-white'}`}>
+                                                            {row.isPaid ? 'Mark unpaid' : 'Mark paid'}
+                                                        </button>
+                                                        <button onClick={() => removePlayerFromFixture(row.player.id)} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold px-3 py-2 rounded-lg text-sm">Remove</button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {participantRows.length === 0 && <div className="text-center text-sm text-slate-400">No squad selected yet.</div>}
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
-                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fees & Costs</div>
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fees & Costs</div>
+                                        {isSiaVenue && <div className="text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-1 rounded-lg">SIA defaults ready</div>}
+                                    </div>
+                                    {isSiaVenue && (
+                                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                                            <div className="text-[11px] font-bold text-slate-600 uppercase">SIA Sports Club defaults</div>
+                                            <div className="flex flex-wrap gap-2">
+                                                <button onClick={() => applySiaCostPreset('opposition')} className="px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-bold flex items-center gap-2">
+                                                    <Icon name="Coins" size={14} /> Opposition pays $187
+                                                </button>
+                                                <button onClick={() => applySiaCostPreset('referee')} className="px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-bold flex items-center gap-2">
+                                                    <Icon name="Gavel" size={14} /> Referee $85 (we pay)
+                                                </button>
+                                                <button onClick={() => applySiaCostPreset('home')} className="px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-2">
+                                                    <Icon name="Home" size={14} /> Home payment $374
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                                         <input className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" placeholder={`${newCost.category} for ${selectedFixture?.opponent || 'game'}`} value={newCost.description} onChange={e => setNewCost({ ...newCost, description: e.target.value })} />
                                         <select className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" value={newCost.category} onChange={e => setNewCost({ ...newCost, category: e.target.value })}>
                                             {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                                             <option value="Other">Other</option>
                                         </select>
-                                        <input className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" type="number" placeholder={`Amount (ref default ${formatCurrency(refDefaults.split)})`} value={newCost.amount} onChange={e => setNewCost({ ...newCost, amount: e.target.value })} />
+                                        <input className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" type="number" placeholder={isSiaVenue ? 'Amount (SIA: 187 / 85 / 374)' : `Amount (ref default ${formatCurrency(refDefaults.total)})`} value={newCost.amount} onChange={e => setNewCost({ ...newCost, amount: e.target.value })} />
                                         <select className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" value={newCost.flow} onChange={e => setNewCost({ ...newCost, flow: e.target.value })}>
                                             <option value="payable">We pay</option>
                                             <option value="receivable">Opposition owes us</option>
@@ -3116,7 +3261,9 @@
                                         {payee.type === 'custom' && (
                                             <input className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm col-span-2" placeholder="Payee name / phone" value={payee.value} onChange={e => setPayee({ ...payee, value: e.target.value })} />
                                         )}
-                                        <button onClick={addCost} className="bg-slate-900 text-white font-bold rounded-lg text-sm px-3 col-span-2 md:col-span-1">Add cost</button>
+                                        <button onClick={addCost} className="bg-slate-900 text-white font-bold rounded-lg text-sm px-3 py-3 col-span-2 md:col-span-1 w-full flex items-center justify-center gap-2 shadow-sm">
+                                            <Icon name="PlusCircle" size={16} /> Add cost
+                                        </button>
                                     </div>
                                     <div className="space-y-2">
                                         {fixtureTx.filter(tx => tx.fixtureId === selectedFixture?.id && tx.category !== 'MATCH_FEE').map(tx => {
@@ -3148,6 +3295,9 @@
                                 </div>
 
                                 <div className="flex flex-col md:flex-row gap-2 pb-6">
+                                    <button onClick={async () => { await saveFixtureDetails(); setSelectedFixture(null); }} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
+                                        <Icon name="Save" size={18} /> Save & Close
+                                    </button>
                                     <button onClick={copySquadToClipboard} className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
                                         <Icon name="Copy" size={18} /> Copy Squad (WhatsApp)
                                     </button>
@@ -3156,6 +3306,9 @@
                                     </button>
                                 </div>
                             </div>
+                            <button onClick={scrollToTop} className="fixed bottom-4 right-4 z-[65] bg-white/90 backdrop-blur border border-slate-200 shadow-lg rounded-full px-4 py-2 text-sm font-bold text-slate-700 flex items-center gap-2">
+                                <Icon name="ArrowUp" size={14} /> Top
+                            </button>
                         </div>
                     )}
 
