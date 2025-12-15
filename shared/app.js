@@ -4900,9 +4900,9 @@
             const editOpponent = async (opponent) => {
                 const name = prompt('Edit opponent name', opponent.name);
                 if(name === null) return;
-                const payee = prompt('Edit payee / bank', opponent.payee || '') ?? opponent.payee || '';
-                const contact = prompt('Edit contact person', opponent.contact || '') ?? opponent.contact || '';
-                const phone = prompt('Edit contact phone', opponent.phone || '') ?? opponent.phone || '';
+                const payee = (prompt('Edit payee / bank', opponent.payee || '') ?? opponent.payee) || '';
+                const contact = (prompt('Edit contact person', opponent.contact || '') ?? opponent.contact) || '';
+                const phone = (prompt('Edit contact phone', opponent.phone || '') ?? opponent.phone) || '';
                 const cleanName = name.trim();
                 if(!cleanName) return;
                 const payload = {
