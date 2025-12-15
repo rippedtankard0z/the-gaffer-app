@@ -2053,6 +2053,14 @@
                 });
                 return { total, wins, draws, losses, thisYear, lastYear, bySeason };
             }, [fixtures]);
+            const fixtureNetLookup = useMemo(() => {
+                if(!allTx.length) return {};
+                return allTx.reduce((acc, tx) => {
+                    if(!tx.fixtureId) return acc;
+                    acc[tx.fixtureId] = (acc[tx.fixtureId] || 0) + (Number(tx.amount) || 0);
+                    return acc;
+                }, {});
+            }, [allTx]);
             const motmBoard = useMemo(() => {
                 if (!fixtures.length) return [];
                 return fixtures
@@ -2133,6 +2141,12 @@
                     newFeeEdits[pid] = fee;
                 });
                 setFeeEdits(newFeeEdits);
+            };
+
+            const formatNetValue = (val = 0) => {
+                if (val > 0) return `+${formatCurrency(Math.abs(val))}`;
+                if (val < 0) return `-${formatCurrency(Math.abs(val))}`;
+                return formatCurrency(0);
             };
 
             const togglePlayer = async (playerId) => {
@@ -2428,6 +2442,10 @@
                 const cost = fxTx.reduce((a,b)=>a+b.amount,0);
                 const ref = fxTx.filter(tx => (tx.category || '').toUpperCase().includes('REF')).reduce((a,b)=>a+b.amount,0);
                 return { cost, ref };
+            }, [fixtureTx, selectedFixture]);
+            const selectedFixtureNet = useMemo(() => {
+                if(!selectedFixture) return 0;
+                return fixtureTx.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
             }, [fixtureTx, selectedFixture]);
 
             const copySquadToClipboard = async () => {
@@ -2969,8 +2987,17 @@
 
                     <div className="space-y-3">
                         {fixtures.map(f => (
-                            <div key={f.id} onClick={() => openMatchMode(f)} className="bg-white p-5 rounded-2xl shadow-soft border border-slate-100 flex flex-col gap-3 cursor-pointer hover:border-brand-200 transition-colors group">
+                            <div key={f.id} onClick={() => openMatchMode(f)} className="relative bg-white p-5 rounded-2xl shadow-soft border border-slate-100 flex flex-col gap-3 cursor-pointer hover:border-brand-200 transition-colors group">
                                 <div className="flex justify-between items-start">
+                                    {(() => {
+                                        const net = fixtureNetLookup[f.id] || 0;
+                                        const netClass = net > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : net < 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-50 text-slate-600 border-slate-200';
+                                        return (
+                                            <div className={`absolute -mt-3 right-5 px-3 py-1 rounded-full border text-[11px] font-bold ${netClass}`}>
+                                                P/L {formatNetValue(net)}
+                                            </div>
+                                        );
+                                    })()}
                                     <div>
                                         <div className="text-xs font-bold text-brand-600 uppercase tracking-wider mb-1">{(f.competitionType || 'LEAGUE').replace('_',' ')}</div>
                                         <div className="text-lg font-bold text-slate-900 group-hover:text-brand-600 transition-colors">vs {f.opponent}</div>
@@ -3055,7 +3082,12 @@
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-xs uppercase font-bold text-slate-400">Match Day</div>
-                                        <div className="text-xl font-display font-bold text-slate-900">vs {selectedFixture.opponent}</div>
+                                        <div className="flex items-center gap-3">
+                                            <div className="text-xl font-display font-bold text-slate-900">vs {selectedFixture.opponent}</div>
+                                            <div className={`text-[11px] font-bold px-3 py-1 rounded-full border ${selectedFixtureNet > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : selectedFixtureNet < 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                                P/L {formatNetValue(selectedFixtureNet)}
+                                            </div>
+                                        </div>
                                     </div>
                                     <div className="flex gap-2">
                                         <button onClick={() => setIsScoreOpen(true)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm font-bold">Score</button>
