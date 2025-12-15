@@ -1,6 +1,6 @@
 'use strict';
         const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
-        const MASTER_BUILD_VERSION = '2024.12.06-10';
+        const MASTER_BUILD_VERSION = '2024.12.06-11';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -1989,7 +1989,7 @@
             const [resultsPreview, setResultsPreview] = useState([]);
             const [isScoreOpen, setIsScoreOpen] = useState(false);
             const [scoreForm, setScoreForm] = useState({ our: 0, their: 0, scorersArr: [], motmSelection: '', motmCustom: '' });
-            const [quickOpponent, setQuickOpponent] = useState({ name: '', payee: '', contact: '' });
+            const [quickOpponent, setQuickOpponent] = useState({ name: '', payee: '', contact: '', phone: '' });
             const [quickVenue, setQuickVenue] = useState({ name: '', price: '', address: '', payee: '', contact: '' });
             const [selectedSeason, setSelectedSeason] = useState(seasonCategories?.[0] || '2025/2026 Season');
             const [magicFixtureTarget, setMagicFixtureTarget] = useState('new');
@@ -2198,10 +2198,16 @@
             const createQuickOpponent = async () => {
                 const name = quickOpponent.name.trim();
                 if(!name) return null;
-                const id = await db.opponents.add({ ...quickOpponent });
-                const newOpp = { id, ...quickOpponent };
+                const payload = {
+                    name,
+                    payee: (quickOpponent.payee || '').trim(),
+                    contact: (quickOpponent.contact || '').trim(),
+                    phone: (quickOpponent.phone || '').trim()
+                };
+                const id = await db.opponents.add(payload);
+                const newOpp = { id, ...payload };
                 setOpponents([...opponents, newOpp]);
-                setQuickOpponent({ name: '', payee: '', contact: '' });
+                setQuickOpponent({ name: '', payee: '', contact: '', phone: '' });
                 return newOpp;
             };
 
@@ -3039,7 +3045,8 @@
                                     <div className="space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
                                         <input placeholder="Opponent name" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickOpponent.name} onChange={e => setQuickOpponent({ ...quickOpponent, name: e.target.value })} />
                                         <input placeholder="Payee / bank" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickOpponent.payee} onChange={e => setQuickOpponent({ ...quickOpponent, payee: e.target.value })} />
-                                        <input placeholder="Contact" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickOpponent.contact} onChange={e => setQuickOpponent({ ...quickOpponent, contact: e.target.value })} />
+                                        <input placeholder="Contact name/email" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickOpponent.contact} onChange={e => setQuickOpponent({ ...quickOpponent, contact: e.target.value })} />
+                                        <input placeholder="Phone number" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickOpponent.phone} onChange={e => setQuickOpponent({ ...quickOpponent, phone: e.target.value })} />
                                         <button type="button" onClick={async () => { const opp = await createQuickOpponent(); if(opp) setNewFixture({ ...newFixture, opponent: opp.name }); }} className="w-full bg-slate-900 text-white font-bold rounded-lg py-2 text-sm">Save Opponent</button>
                                     </div>
                                 )}
@@ -4744,7 +4751,7 @@
         };
 
         const Opponents = ({ opponents, setOpponents, venues, setVenues, referees, setReferees, onNavigate }) => {
-            const [newOpponent, setNewOpponent] = useState({ name: '', contact: '', payee: '' });
+            const [newOpponent, setNewOpponent] = useState({ name: '', contact: '', phone: '', payee: '' });
             const [newVenue, setNewVenue] = useState({ name: '', price: '', homeTeamId: null, address: '', notes: '', payee: '', contact: '' });
             const [newRef, setNewRef] = useState({ name: '', phone: '' });
             const [reassignEntity, setReassignEntity] = useState({ open: false, type: '', item: null, count: 0 });
@@ -4811,9 +4818,15 @@
             const addOpponent = async () => {
                 const name = newOpponent.name.trim();
                 if(!name) return;
-                const id = await db.opponents.add({ name, contact: newOpponent.contact, payee: newOpponent.payee });
-                setOpponents([...opponents, { id, ...newOpponent }]);
-                setNewOpponent({ name: '', contact: '', payee: '' });
+                const payload = {
+                    name,
+                    contact: (newOpponent.contact || '').trim(),
+                    phone: (newOpponent.phone || '').trim(),
+                    payee: (newOpponent.payee || '').trim()
+                };
+                const id = await db.opponents.add(payload);
+                setOpponents([...opponents, { id, ...payload }]);
+                setNewOpponent({ name: '', contact: '', phone: '', payee: '' });
             };
 
             const deleteOpponent = async (opponent) => {
@@ -4829,9 +4842,20 @@
 
             const editOpponent = async (opponent) => {
                 const name = prompt('Edit opponent name', opponent.name);
-                if(!name) return;
-                await db.opponents.update(opponent.id, { name });
-                setOpponents(opponents.map(o => o.id === opponent.id ? { ...o, name } : o));
+                if(name === null) return;
+                const payee = prompt('Edit payee / bank', opponent.payee || '') ?? opponent.payee || '';
+                const contact = prompt('Edit contact person', opponent.contact || '') ?? opponent.contact || '';
+                const phone = prompt('Edit contact phone', opponent.phone || '') ?? opponent.phone || '';
+                const cleanName = name.trim();
+                if(!cleanName) return;
+                const payload = {
+                    name: cleanName,
+                    payee: (payee || '').trim(),
+                    contact: (contact || '').trim(),
+                    phone: (phone || '').trim()
+                };
+                await db.opponents.update(opponent.id, payload);
+                setOpponents(opponents.map(o => o.id === opponent.id ? { ...o, ...payload } : o));
             };
 
             const addVenue = async () => {
@@ -4875,16 +4899,17 @@
                             ))}</div>
                             {(() => {
                                 const opp = opponents.find(o => o.name === name);
-                                if(!opp) return null;
-                                return (
-                                    <>
-                                        {opp.payee && <div className="text-[11px] text-slate-500">Payee: {opp.payee}</div>}
-                                        {opp.contact && <div className="text-[11px] text-slate-500">Contact: {opp.contact}</div>}
-                                    </>
-                                );
-                            })()}
-                        </div>
-                    ))}
+                            if(!opp) return null;
+                            return (
+                                <>
+                                    {opp.payee && <div className="text-[11px] text-slate-500">Payee: {opp.payee}</div>}
+                                    {opp.contact && <div className="text-[11px] text-slate-500">Contact: {opp.contact}</div>}
+                                    {opp.phone && <div className="text-[11px] text-slate-500">Phone: {opp.phone}</div>}
+                                </>
+                            );
+                        })()}
+                    </div>
+                ))}
                 </div>
             );
 
@@ -5015,7 +5040,8 @@
                             <div className="grid grid-cols-2 gap-2">
                                 <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Opponent name" value={newOpponent.name} onChange={e => setNewOpponent({ ...newOpponent, name: e.target.value })} />
                                 <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Payee / bank" value={newOpponent.payee} onChange={e => setNewOpponent({ ...newOpponent, payee: e.target.value })} />
-                                <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm col-span-2" placeholder="Contact phone/email" value={newOpponent.contact} onChange={e => setNewOpponent({ ...newOpponent, contact: e.target.value })} />
+                                <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Contact name/email" value={newOpponent.contact} onChange={e => setNewOpponent({ ...newOpponent, contact: e.target.value })} />
+                                <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Phone number" value={newOpponent.phone} onChange={e => setNewOpponent({ ...newOpponent, phone: e.target.value })} />
                                 <div className="col-span-2 flex justify-end">
                                     <button onClick={addOpponent} className="bg-slate-900 text-white font-bold rounded-lg px-4 py-2">Add</button>
                                 </div>
