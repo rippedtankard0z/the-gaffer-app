@@ -693,6 +693,13 @@
             return parsed;
         };
 
+        const overrideIfValue = (raw, existing) => {
+            if (raw === undefined || raw === null) return existing;
+            const str = raw.toString().trim();
+            if (str === '') return existing;
+            return str;
+        };
+
         const formatDateForInput = (value) => {
             if (!value) return '';
             if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -808,10 +815,6 @@
             });
             const [playerStats, setPlayerStats] = useState({});
             const [newCharge, setNewCharge] = useState({ item: itemCategories[0] || 'Other', amount: '' });
-            const importInputRef = useRef(null);
-            const [isImportingPlayers, setIsImportingPlayers] = useState(false);
-            const [importSummary, setImportSummary] = useState('');
-            const [playerImportRows, setPlayerImportRows] = useState(null);
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const [playerPositionSelection, setPlayerPositionSelection] = useState('');
             const [playerCustomPositionInput, setPlayerCustomPositionInput] = useState('');
@@ -1161,13 +1164,6 @@
                 refresh();
             };
 
-            const overrideIfValue = (raw, existing) => {
-                if (raw === undefined || raw === null) return existing;
-                const str = raw.toString().trim();
-                if (str === '') return existing;
-                return str;
-            };
-
             const persistPlayerPositions = async (positions) => {
                 if (!selectedPlayer) return;
                 const normalized = Array.from(new Set(positions.map(token => normalizePositionToken(token)).filter(Boolean)));
@@ -1198,140 +1194,11 @@
                 const current = collectPlayerPositions(selectedPlayer).filter(pos => pos !== normalized);
                 await persistPlayerPositions(current);
             };
-
-            const handlePlayerCsvFile = async (event) => {
-                const file = event.target?.files?.[0];
-                if (!file) return;
-                setIsImportingPlayers(true);
-                setImportSummary('');
-                setPlayerImportRows(null);
-                try {
-                    const content = await file.text();
-                    const rows = parsePlayerImportRows(content, players);
-                    setPlayerImportRows(rows);
-                } catch (err) {
-                    alert('Import failed: ' + err.message);
-                } finally {
-                    setIsImportingPlayers(false);
-                    if (importInputRef.current) importInputRef.current.value = '';
-                }
-            };
-
-            const updatePlayerImportRow = (index, changes) => {
-                setPlayerImportRows(prev => {
-                    if (!prev) return prev;
-                    return prev.map((row, idx) => idx === index ? { ...row, ...changes } : row);
-                });
-            };
-
-            const addPositionToImportRow = (index, code) => {
-                if (!code) return;
-                const normalized = normalizePositionToken(code);
-                if (!normalized) return;
-                setPlayerImportRows(prev => {
-                    if (!prev) return prev;
-                    return prev.map((row, idx) => {
-                        if (idx !== index) return row;
-                        if (row.selectedPositions.includes(normalized)) {
-                            return { ...row, customPositionInput: '' };
-                        }
-                        return {
-                            ...row,
-                            selectedPositions: [...row.selectedPositions, normalized],
-                            customPositionInput: ''
-                        };
-                    });
-                });
-            };
-
-            const removePositionFromImportRow = (index, code) => {
-                if (!code) return;
-                const normalized = normalizePositionToken(code);
-                if (!normalized) return;
-                setPlayerImportRows(prev => {
-                    if (!prev) return prev;
-                    return prev.map((row, idx) => {
-                        if (idx !== index) return row;
-                        return { ...row, selectedPositions: row.selectedPositions.filter(pos => pos !== normalized) };
-                    });
-                });
-            };
-
-            const togglePlayerImportRowDrop = (index) => {
-                setPlayerImportRows(prev => {
-                    if (!prev) return prev;
-                    return prev.map((row, idx) => idx === index ? { ...row, drop: !row.drop } : row);
-                });
-            };
-
-            const cancelPlayerImport = () => {
-                setPlayerImportRows(null);
-            };
-
-            const confirmPlayerImport = async () => {
-                if (!playerImportRows) return;
-                const rows = playerImportRows.filter(row => !row.drop);
-                if (!rows.length) {
-                    setPlayerImportRows(null);
-                    return;
-                }
-                const missing = rows.filter(row => row.selectedPositions.length === 0);
-                if (missing.length) {
-                    alert('Each row must have at least one selected position.');
-                    return;
-                }
-                startImportProgress('Importing players…');
-                try {
-                    const existingPlayers = await db.players.toArray();
-                    const nameIndex = {};
-                    existingPlayers.forEach(player => {
-                        const key = sanitizeNameKey(`${player.firstName} ${player.lastName}`);
-                        if (key) nameIndex[key] = player;
-                    });
-                    let created = 0;
-                    let updated = 0;
-                    for (const row of rows) {
-                        const key = sanitizeNameKey(`${row.firstName} ${row.lastName}`);
-                        const existing = row.matchedPlayerId ? existingPlayers.find(p => String(p.id) === row.matchedPlayerId) : (key ? nameIndex[key] : null);
-                        const positionsText = row.selectedPositions.join(', ');
-                        const primaryPosition = row.selectedPositions[0] || existing?.position || 'MID';
-                        const preferredPosition = row.selectedPositions[1] || existing?.preferredPosition || primaryPosition;
-                        const currentRaw = (row.currentPlayer || '').toLowerCase();
-                        const hasCurrent = row.currentPlayer !== undefined && row.currentPlayer !== '';
-                        const isActive = hasCurrent ? CURRENT_PLAYER_TRUE.has(currentRaw) : (existing?.isActive !== false);
-                        const payload = {
-                            firstName: row.firstName,
-                            lastName: row.lastName,
-                            position: primaryPosition,
-                            preferredPosition,
-                            phone: overrideIfValue(row.record.phone, existing?.phone || ''),
-                            age: row.record.age ? Number(row.record.age) : (existing?.age ?? null),
-                            dateOfBirth: overrideIfValue(row.record.dateOfBirth, existing?.dateOfBirth || ''),
-                            positions: positionsText,
-                            shirtNumber: overrideIfValue(row.record.shirtNumber, existing?.shirtNumber || ''),
-                            isActive
-                        };
-                        if (existing) {
-                            await db.players.update(existing.id, payload);
-                            updated++;
-                        } else {
-                            await db.players.add(payload);
-                            created++;
-                        }
-                    }
-                    refresh();
-                    setPlayerImportRows(null);
-                    setImportSummary(`Imported ${created} new player${created === 1 ? '' : 's'} · updated ${updated} record${updated === 1 ? '' : 's'}.`);
-                } finally {
-                    finishImportProgress();
-                }
-            };
             const topDebtors = useMemo(() => {
                 return [...players]
                     .map(p => ({ ...p, balance: balances[p.id] || 0 }))
                     .filter(p => p.balance < 0)
-                    .sort((a,b) => a.balance - b.balance)
-                    .slice(0, 5);
+                    .sort((a,b) => a.balance - b.balance);
             }, [players, balances]);
             const selectedPlayerPositions = selectedPlayer ? collectPlayerPositions(selectedPlayer) : [];
             const sortedPlayers = useMemo(() => {
@@ -1361,7 +1228,14 @@
                         return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
                     });
                 } else {
-                    sorted = arr.sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
+                    sorted = arr.sort((a, b) => {
+                        const actA = a.isActive === false ? 0 : 1;
+                        const actB = b.isActive === false ? 0 : 1;
+                        if (actA !== actB) return actB - actA;
+                        const nameCompare = `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+                        return sortDirection === 'desc' ? -nameCompare : nameCompare;
+                    });
+                    return sorted;
                 }
                 return sortDirection === 'desc' ? [...sorted].reverse() : sorted;
             }, [players, sortPlayersBy, balances, sortDirection]);
@@ -1408,8 +1282,12 @@
 
             const generateWallImage = () => {
                 const canvas = document.createElement('canvas');
+                const listStart = 250;
+                const rowHeight = 170;
+                const footerHeight = 200;
+                const rowCount = Math.max(topDebtors.length, 1);
                 canvas.width = 900;
-                canvas.height = 1200;
+                canvas.height = Math.max(1200, listStart + (rowCount * rowHeight) + footerHeight);
                 const ctx = canvas.getContext('2d');
 
                 // Background
@@ -1430,7 +1308,7 @@
                 ctx.fillRect(60, 180, canvas.width - 120, 2);
 
                 topDebtors.forEach((p, idx) => {
-                    const y = 250 + idx * 170;
+                    const y = listStart + idx * rowHeight;
                     ctx.fillStyle = '#94a3b8';
                     ctx.font = '18px "Inter", sans-serif';
                     ctx.fillText(`#${idx + 1}`, 60, y);
@@ -1829,7 +1707,7 @@
 
                     <Modal isOpen={isWallOpen} onClose={() => setIsWallOpen(false)} title="Wall of Shame">
                         <div className="space-y-3">
-                            <div className="text-xs text-slate-500">Top debtors. Tap download to drop this image into WhatsApp.</div>
+                            <div className="text-xs text-slate-500">All debtors. Tap download to drop this image into WhatsApp.</div>
                             {topDebtors.map((p, i) => (
                                 <div key={p.id} className="flex items-center justify-between p-3 rounded-xl border border-rose-100 bg-rose-50/60">
                                     <div>
@@ -5200,6 +5078,20 @@
             const [isReassigning, setIsReassigning] = useState(false);
             const [facts, setFacts] = useState({ opponentFacts: {}, venueFacts: {} });
             const [viewTab, setViewTab] = useState('opponents');
+            const emptyOpponentForm = { name: '', contact: '', phone: '', payee: '' };
+            const [selectedOpponent, setSelectedOpponent] = useState(null);
+            const [opponentForm, setOpponentForm] = useState(emptyOpponentForm);
+            const [opponentFixtures, setOpponentFixtures] = useState([]);
+            const [opponentTransactions, setOpponentTransactions] = useState([]);
+            const [isOpponentLoading, setIsOpponentLoading] = useState(false);
+            const [opponentSaveStatus, setOpponentSaveStatus] = useState('idle');
+            const opponentSaveTimerRef = useRef(null);
+            const clearOpponentSaveTimer = () => {
+                if (opponentSaveTimerRef.current) {
+                    clearTimeout(opponentSaveTimerRef.current);
+                    opponentSaveTimerRef.current = null;
+                }
+            };
             useEffect(() => {
                 if(reassignEntity.open && reassignEntity.item) {
                     const list = reassignEntity.type === 'venue' ? venues : opponents;
@@ -5208,6 +5100,15 @@
                     setReassignNew('');
                 }
             }, [reassignEntity, opponents, venues]);
+            useEffect(() => {
+                return () => {
+                    clearOpponentSaveTimer();
+                };
+            }, []);
+            useEffect(() => {
+                clearOpponentSaveTimer();
+                setOpponentSaveStatus('idle');
+            }, [selectedOpponent?.id]);
 
             useEffect(() => {
                 const loadFacts = async () => {
@@ -5255,6 +5156,69 @@
                 loadFacts();
             }, [opponents, venues]);
 
+            const jumpToOpponentGames = (name) => {
+                if (!name) return;
+                localStorage.setItem('gaffer:focusFixtureOpponent', name);
+                onNavigate && onNavigate('fixtures');
+            };
+
+            const openOpponentSheet = (opponent) => {
+                if (!opponent) return;
+                setSelectedOpponent(opponent);
+                setOpponentForm({
+                    name: opponent.name || '',
+                    contact: opponent.contact || '',
+                    phone: opponent.phone || '',
+                    payee: opponent.payee || ''
+                });
+            };
+
+            const closeOpponentSheet = () => {
+                setSelectedOpponent(null);
+                setOpponentForm({ ...emptyOpponentForm });
+                setOpponentFixtures([]);
+                setOpponentTransactions([]);
+                setIsOpponentLoading(false);
+                clearOpponentSaveTimer();
+                setOpponentSaveStatus('idle');
+            };
+
+            useEffect(() => {
+                if (!selectedOpponent) return;
+                let active = true;
+                const loadOpponentSheet = async () => {
+                    setIsOpponentLoading(true);
+                    await waitForDb();
+                    const [fixtures, txs] = await Promise.all([
+                        db.fixtures.toArray(),
+                        db.transactions.toArray()
+                    ]);
+                    if (!active) return;
+                    const lowerName = (selectedOpponent.name || '').toLowerCase();
+                    const oppFixtures = fixtures
+                        .filter(f => f.opponentId === selectedOpponent.id || (f.opponent || '').toLowerCase() === lowerName)
+                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+                    const fixtureIdSet = new Set(oppFixtures.map(f => f.id));
+                    const oppTxs = txs
+                        .filter(tx => {
+                            const payee = (tx.payee || '').trim().toLowerCase();
+                            const payeeMatch = payee && payee === lowerName;
+                            const fixtureMatch = tx.fixtureId && fixtureIdSet.has(tx.fixtureId);
+                            const isClubTx = tx.playerId === undefined || tx.playerId === null;
+                            const payeeMissing = !payee;
+                            return payeeMatch || (isClubTx && payeeMissing && fixtureMatch);
+                        })
+                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+                    setOpponentFixtures(oppFixtures);
+                    setOpponentTransactions(oppTxs);
+                    setIsOpponentLoading(false);
+                };
+                loadOpponentSheet();
+                return () => {
+                    active = false;
+                };
+            }, [selectedOpponent?.id, selectedOpponent?.name]);
+
             const addOpponent = async () => {
                 const name = newOpponent.name.trim();
                 if(!name) return;
@@ -5280,25 +5244,63 @@
                 setOpponents(opponents.filter(o => o.id !== opponent.id));
             };
 
-            const editOpponent = async (opponent) => {
-                const name = prompt('Edit opponent name', opponent.name);
-                if(name === null) return;
-                const payeeInput = prompt('Edit payee / bank', opponent.payee || '');
-                const contactInput = prompt('Edit contact person', opponent.contact || '');
-                const phoneInput = prompt('Edit contact phone', opponent.phone || '');
-                const payee = (payeeInput === null ? opponent.payee : payeeInput) || '';
-                const contact = (contactInput === null ? opponent.contact : contactInput) || '';
-                const phone = (phoneInput === null ? opponent.phone : phoneInput) || '';
-                const cleanName = name.trim();
-                if(!cleanName) return;
+            const saveOpponentDetails = async () => {
+                if (!selectedOpponent) return;
+                const cleanName = (opponentForm?.name || '').trim();
+                if (!cleanName) {
+                    alert('Opponent name is required.');
+                    return;
+                }
                 const payload = {
                     name: cleanName,
-                    payee: (payee || '').trim(),
-                    contact: (contact || '').trim(),
-                    phone: (phone || '').trim()
+                    payee: (opponentForm?.payee || '').trim(),
+                    contact: (opponentForm?.contact || '').trim(),
+                    phone: (opponentForm?.phone || '').trim()
                 };
-                await db.opponents.update(opponent.id, payload);
-                setOpponents(opponents.map(o => o.id === opponent.id ? { ...o, ...payload } : o));
+                const duplicate = opponents.find(o => o.id !== selectedOpponent.id && (o.name || '').trim().toLowerCase() === cleanName.toLowerCase());
+                if (duplicate) {
+                    if (!confirm(`"${cleanName}" already exists. Update this opponent anyway?`)) return;
+                }
+                clearOpponentSaveTimer();
+                setOpponentSaveStatus('saving');
+                try {
+                    const prevName = (selectedOpponent.name || '').trim();
+                    await db.opponents.update(selectedOpponent.id, payload);
+                    const nameChanged = prevName !== cleanName;
+                    if (nameChanged) {
+                        const fixtures = await db.fixtures.toArray();
+                        const affected = fixtures.filter(f => f.opponentId === selectedOpponent.id || (f.opponent || '').toLowerCase() === prevName.toLowerCase());
+                        if (affected.length) {
+                            await db.fixtures.bulkPut(affected.map(f => ({ ...f, opponent: cleanName, opponentId: selectedOpponent.id })));
+                        }
+                        try {
+                            await db.transactions.where('payee').equals(prevName).modify({ payee: cleanName });
+                        } catch (err) {
+                            await db.transactions.filter(t => (t.payee || '').toLowerCase() === prevName.toLowerCase()).modify({ payee: cleanName });
+                        }
+                    }
+                    setOpponents(opponents.map(o => o.id === selectedOpponent.id ? { ...o, ...payload } : o));
+                    setSelectedOpponent(prev => prev ? { ...prev, ...payload } : prev);
+                    setOpponentForm({ ...payload });
+                    setOpponentSaveStatus('saved');
+                    opponentSaveTimerRef.current = setTimeout(() => {
+                        setOpponentSaveStatus('idle');
+                    }, 1200);
+                } catch (err) {
+                    console.error('Unable to update opponent', err);
+                    setOpponentSaveStatus('error');
+                    opponentSaveTimerRef.current = setTimeout(() => {
+                        setOpponentSaveStatus('idle');
+                    }, 2000);
+                    alert('Unable to save opponent: ' + (err?.message || 'Unexpected error'));
+                }
+            };
+
+            const handleOpponentDelete = async () => {
+                if (!selectedOpponent) return;
+                const target = selectedOpponent;
+                closeOpponentSheet();
+                await deleteOpponent(target);
             };
 
             const addVenue = async () => {
@@ -5328,13 +5330,99 @@
                 setVenues(venues.map(v => v.id === venue.id ? { ...v, name, notes, payee, contact } : v));
             };
 
+            const opponentFixtureLookup = useMemo(() => {
+                return opponentFixtures.reduce((acc, fixture) => {
+                    acc[String(fixture.id)] = fixture;
+                    return acc;
+                }, {});
+            }, [opponentFixtures]);
+
+            const opponentStats = useMemo(() => {
+                const summary = {
+                    total: opponentFixtures.length,
+                    played: 0,
+                    wins: 0,
+                    draws: 0,
+                    losses: 0,
+                    goalsFor: 0,
+                    goalsAgainst: 0,
+                    lastPlayed: null,
+                    nextFixture: null
+                };
+                if (!opponentFixtures.length) return summary;
+                const byDateDesc = [...opponentFixtures].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+                const byDateAsc = [...opponentFixtures].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+                const now = new Date();
+                byDateDesc.forEach(f => {
+                    const hasScore = typeof f.homeScore === 'number' && typeof f.awayScore === 'number';
+                    if (!hasScore) return;
+                    summary.played += 1;
+                    const our = Number(f.homeScore || 0);
+                    const their = Number(f.awayScore || 0);
+                    summary.goalsFor += our;
+                    summary.goalsAgainst += their;
+                    if (our > their) summary.wins += 1;
+                    else if (our === their) summary.draws += 1;
+                    else summary.losses += 1;
+                });
+                summary.lastPlayed = byDateDesc.find(f => typeof f.homeScore === 'number' && typeof f.awayScore === 'number') || null;
+                summary.nextFixture = byDateAsc.find(f => {
+                    const dateValue = new Date(f.date || 0);
+                    if (Number.isNaN(dateValue.getTime())) return false;
+                    return dateValue >= now && (!f.status || f.status !== 'PLAYED');
+                }) || null;
+                return summary;
+            }, [opponentFixtures]);
+
+            const opponentPaymentSummary = useMemo(() => {
+                const summary = { total: 0, outstandingReceivable: 0, outstandingPayable: 0, netOutstanding: 0 };
+                opponentTransactions.forEach(tx => {
+                    const amount = Number(tx.amount) || 0;
+                    summary.total += amount;
+                    if (!tx.isReconciled) {
+                        if (amount > 0 || tx.flow === 'receivable') summary.outstandingReceivable += amount;
+                        if (amount < 0 || tx.flow === 'payable') summary.outstandingPayable += amount;
+                    }
+                });
+                summary.netOutstanding = summary.outstandingReceivable + summary.outstandingPayable;
+                return summary;
+            }, [opponentTransactions]);
+
+            const opponentIsDirty = useMemo(() => {
+                if (!selectedOpponent) return false;
+                const clean = (value) => (value ?? '').toString().trim();
+                return (
+                    clean(opponentForm?.name) !== clean(selectedOpponent.name) ||
+                    clean(opponentForm?.payee) !== clean(selectedOpponent.payee) ||
+                    clean(opponentForm?.contact) !== clean(selectedOpponent.contact) ||
+                    clean(opponentForm?.phone) !== clean(selectedOpponent.phone)
+                );
+            }, [opponentForm, selectedOpponent]);
+
+            const opponentSaveLabel = opponentSaveStatus === 'saved'
+                ? 'Saved'
+                : opponentSaveStatus === 'error'
+                    ? 'Save failed'
+                    : '';
+            const opponentSaveTone = opponentSaveStatus === 'saved'
+                ? 'text-emerald-600'
+                : 'text-rose-600';
+            const opponentDisplayName = (opponentForm?.name || selectedOpponent?.name || '').trim() || 'Opponent';
+            const opponentOutstandingTone = opponentPaymentSummary.netOutstanding >= 0 ? 'text-emerald-700' : 'text-rose-700';
+
             const renderOpponentFacts = () => (
                 <div className="space-y-2">
                     {Object.entries(facts.opponentFacts).map(([name, info]) => (
                         <div key={name} className="p-3 bg-white border border-slate-100 rounded-xl shadow-sm">
                             <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                                <span>{name}</span>
-                                <button onClick={() => { localStorage.setItem('gaffer:focusFixtureOpponent', name); onNavigate && onNavigate('fixtures'); }} className="text-[10px] text-brand-600 underline">View games</button>
+                                {(() => {
+                                    const opp = opponents.find(o => o.name === name);
+                                    if (!opp) return <span>{name}</span>;
+                                    return (
+                                        <button onClick={() => openOpponentSheet(opp)} className="underline">{name}</button>
+                                    );
+                                })()}
+                                <button onClick={() => jumpToOpponentGames(name)} className="text-[10px] text-brand-600 underline">View games</button>
                             </div>
                             <div className="text-[11px] text-slate-500">Games: {info.count} · Dates: {info.dates.map(d => new Date(d).toLocaleDateString()).join(', ') || '—'}</div>
                             <div className="text-[11px] text-slate-500">Players vs them: {info.players.map(n => (
@@ -5342,15 +5430,15 @@
                             ))}</div>
                             {(() => {
                                 const opp = opponents.find(o => o.name === name);
-                            if(!opp) return null;
-                            return (
-                                <>
-                                    {opp.payee && <div className="text-[11px] text-slate-500">Payee: {opp.payee}</div>}
-                                    {opp.contact && <div className="text-[11px] text-slate-500">Contact: {opp.contact}</div>}
-                                    {opp.phone && <div className="text-[11px] text-slate-500">Phone: {opp.phone}</div>}
-                                </>
-                            );
-                        })()}
+                                if(!opp) return null;
+                                return (
+                                    <>
+                                        {opp.payee && <div className="text-[11px] text-slate-500">Payee: {opp.payee}</div>}
+                                        {opp.contact && <div className="text-[11px] text-slate-500">Contact: {opp.contact}</div>}
+                                        {opp.phone && <div className="text-[11px] text-slate-500">Phone: {opp.phone}</div>}
+                                    </>
+                                );
+                            })()}
                     </div>
                 ))}
                 </div>
@@ -5474,9 +5562,9 @@
                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Opponents List</div>
                             <div className="flex flex-wrap gap-2">
                                 {opponents.map(o => (
-                                    <div key={o.id} className="px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2">
-                                        <button onClick={() => editOpponent(o)} className="underline">{o.name}</button>
-                                        <button onClick={() => deleteOpponent(o)} className="text-rose-600">✕</button>
+                                    <div key={o.id} onClick={() => openOpponentSheet(o)} className="px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2 cursor-pointer hover:border-brand-200">
+                                        <span className="underline">{o.name}</span>
+                                        <button onClick={(e) => { e.stopPropagation(); deleteOpponent(o); }} className="text-rose-600">✕</button>
                                     </div>
                                 ))}
                             </div>
@@ -5541,6 +5629,160 @@
                             </div>
                         </div>
                     )}
+
+                    <Modal isOpen={!!selectedOpponent} onClose={closeOpponentSheet} title={opponentDisplayName}>
+                        {selectedOpponent && (
+                            <div className="space-y-4">
+                                <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 text-white p-4 shadow-soft">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-white/60">Opponent Sheet</div>
+                                    <div className="text-2xl font-display font-bold">{opponentDisplayName}</div>
+                                    <div className="text-[11px] text-white/70">Games {opponentStats.total} · Record W{opponentStats.wins} D{opponentStats.draws} L{opponentStats.losses}</div>
+                                    {opponentStats.lastPlayed && (
+                                        <div className="text-[11px] text-white/60 mt-1">
+                                            Last played {new Date(opponentStats.lastPlayed.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · Exiles {opponentStats.lastPlayed.homeScore ?? '-'}-{opponentStats.lastPlayed.awayScore ?? '-'}
+                                        </div>
+                                    )}
+                                    {opponentStats.nextFixture && (
+                                        <div className="text-[11px] text-white/60">
+                                            Next: {new Date(opponentStats.nextFixture.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · {opponentStats.nextFixture.venue || 'Venue TBC'}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                        <div className="text-[10px] font-bold uppercase text-slate-500">Games</div>
+                                        <div className="text-xl font-display font-bold text-slate-900">{opponentStats.total}</div>
+                                        <div className="text-[11px] text-slate-500">Played {opponentStats.played}</div>
+                                    </div>
+                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                        <div className="text-[10px] font-bold uppercase text-slate-500">Record</div>
+                                        <div className="text-xl font-display font-bold text-slate-900">{opponentStats.wins}-{opponentStats.draws}-{opponentStats.losses}</div>
+                                        <div className="text-[11px] text-slate-500">W-D-L</div>
+                                    </div>
+                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                        <div className="text-[10px] font-bold uppercase text-slate-500">Goals</div>
+                                        <div className="text-xl font-display font-bold text-slate-900">{opponentStats.goalsFor}</div>
+                                        <div className="text-[11px] text-slate-500">For · {opponentStats.goalsAgainst} Against</div>
+                                    </div>
+                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                        <div className="text-[10px] font-bold uppercase text-slate-500">Outstanding</div>
+                                        <div className={`text-xl font-display font-bold ${opponentOutstandingTone}`}>{formatCurrency(opponentPaymentSummary.netOutstanding)}</div>
+                                        <div className="text-[11px] text-slate-500">Recv {formatCurrency(opponentPaymentSummary.outstandingReceivable)} · Pay {formatCurrency(Math.abs(opponentPaymentSummary.outstandingPayable))}</div>
+                                    </div>
+                                </div>
+
+                                <div className="grid sm:grid-cols-2 gap-4">
+                                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Edit Details</div>
+                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Opponent name" value={opponentForm.name} onChange={e => setOpponentForm(prev => ({ ...prev, name: e.target.value }))} />
+                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Payee / bank" value={opponentForm.payee} onChange={e => setOpponentForm(prev => ({ ...prev, payee: e.target.value }))} />
+                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Contact name/email" value={opponentForm.contact} onChange={e => setOpponentForm(prev => ({ ...prev, contact: e.target.value }))} />
+                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Phone number" value={opponentForm.phone} onChange={e => setOpponentForm(prev => ({ ...prev, phone: e.target.value }))} />
+                                        <div className="flex items-center gap-2">
+                                            <button onClick={handleOpponentDelete} className="flex-1 bg-rose-50 text-rose-700 font-bold py-2 rounded-lg border border-rose-200">Delete</button>
+                                            <button onClick={saveOpponentDetails} disabled={!opponentIsDirty || opponentSaveStatus === 'saving'} className={`flex-1 font-bold py-2 rounded-lg ${opponentIsDirty ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'} disabled:opacity-60`}>
+                                                {opponentSaveStatus === 'saving' ? 'Saving...' : 'Save'}
+                                            </button>
+                                        </div>
+                                        {opponentSaveLabel && (
+                                            <div className={`text-[11px] font-bold ${opponentSaveTone}`}>{opponentSaveLabel}</div>
+                                        )}
+                                    </div>
+                                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments</div>
+                                            {isOpponentLoading && <div className="text-[10px] text-slate-400">Loading...</div>}
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 text-[11px]">
+                                            <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold">Receivable: {formatCurrency(opponentPaymentSummary.outstandingReceivable)}</span>
+                                            <span className="px-2 py-1 rounded-full bg-rose-50 text-rose-700 font-bold">Payable: {formatCurrency(Math.abs(opponentPaymentSummary.outstandingPayable))}</span>
+                                            <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 font-bold">Net: {formatCurrency(opponentPaymentSummary.netOutstanding)}</span>
+                                        </div>
+                                        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                                            {opponentTransactions.length ? opponentTransactions.slice(0, 8).map(tx => {
+                                                const fixture = tx.fixtureId ? opponentFixtureLookup[String(tx.fixtureId)] : null;
+                                                const dateSource = fixture?.date || tx.date;
+                                                const dateLabel = dateSource ? new Date(dateSource).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+                                                const hasScore = fixture && typeof fixture.homeScore === 'number' && typeof fixture.awayScore === 'number';
+                                                const scoreLabel = hasScore ? `Exiles ${fixture.homeScore}-${fixture.awayScore}` : '';
+                                                const metaParts = [];
+                                                if (dateLabel) metaParts.push(dateLabel);
+                                                if (fixture?.venue) metaParts.push(fixture.venue);
+                                                if (scoreLabel) metaParts.push(scoreLabel);
+                                                const meta = metaParts.join(' · ');
+                                                const label = tx.description || formatCategoryLabel(tx.category) || 'Payment';
+                                                const prefix = tx.amount > 0 ? '+' : tx.amount < 0 ? '-' : '';
+                                                const amountLabel = `${prefix}${formatCurrency(Math.abs(tx.amount))}`;
+                                                const tone = tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600';
+                                                const badgeTone = tx.isReconciled
+                                                    ? 'bg-slate-100 text-slate-600 border-slate-200'
+                                                    : tx.amount > 0
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                                        : 'bg-rose-50 text-rose-700 border-rose-100';
+                                                return (
+                                                    <div key={tx.id} className="flex justify-between items-start gap-2 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                                        <div>
+                                                            <div className="text-xs font-bold text-slate-900">{label}</div>
+                                                            {meta && <div className="text-[10px] text-slate-500">{meta}</div>}
+                                                            {!meta && dateLabel && <div className="text-[10px] text-slate-500">{dateLabel}</div>}
+                                                        </div>
+                                                        <div className="flex flex-col items-end gap-1">
+                                                            <div className={`text-xs font-bold ${tone}`}>{amountLabel}</div>
+                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeTone}`}>
+                                                                {tx.isReconciled ? 'Settled' : (tx.amount > 0 ? 'Receivable' : 'Payable')}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }) : (
+                                                <div className="text-sm text-slate-400 text-center">{isOpponentLoading ? 'Loading payments...' : 'No payments recorded yet.'}</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Games & Scores</div>
+                                        <button onClick={() => jumpToOpponentGames(selectedOpponent.name)} className="text-[11px] text-brand-600 underline">Open games</button>
+                                    </div>
+                                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                        {opponentFixtures.length ? opponentFixtures.slice(0, 8).map(f => {
+                                            const dateLabel = f.date ? new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Date TBC';
+                                            const hasScore = typeof f.homeScore === 'number' && typeof f.awayScore === 'number';
+                                            const result = hasScore ? (f.homeScore > f.awayScore ? 'W' : f.homeScore === f.awayScore ? 'D' : 'L') : '';
+                                            const resultTone = result === 'W'
+                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                                : result === 'D'
+                                                    ? 'bg-amber-50 text-amber-700 border-amber-100'
+                                                    : 'bg-rose-50 text-rose-700 border-rose-100';
+                                            return (
+                                                <div key={f.id} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-white">
+                                                    <div>
+                                                        <div className="text-xs font-bold text-slate-900">{dateLabel} · {(f.competitionType || 'LEAGUE').replace('_',' ')}</div>
+                                                        <div className="text-[11px] text-slate-500">{f.venue || 'Venue TBC'}</div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        {hasScore ? (
+                                                            <>
+                                                                <div className="text-sm font-bold text-slate-900">Exiles {f.homeScore}-{f.awayScore}</div>
+                                                                <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${resultTone}`}>{result}</span>
+                                                            </>
+                                                        ) : (
+                                                            <div className="text-[11px] text-slate-400">Score TBC</div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        }) : (
+                                            <div className="text-sm text-slate-400 text-center">{isOpponentLoading ? 'Loading games...' : 'No games recorded yet.'}</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
 
                     <Modal isOpen={reassignEntity.open} onClose={() => setReassignEntity({ open:false, type:'', item:null, count:0 })} title={`Reassign ${reassignEntity.type === 'venue' ? 'Venue' : 'Opponent'}`}>
                         <div className="space-y-3">
