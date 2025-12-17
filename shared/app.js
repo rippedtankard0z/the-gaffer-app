@@ -107,82 +107,55 @@
             return clean;
         };
 
+        const isWriteOffTx = (tx) => !!(tx && tx.isWriteOff);
+
+        const chargeMatchesTx = (charge, tx) => {
+            if (!charge || !tx) return false;
+            if (tx.playerId !== charge.playerId) return false;
+            if (tx.category !== charge.category) return false;
+            if (charge.fixtureId && tx.fixtureId !== charge.fixtureId) return false;
+            return true;
+        };
+
+        const writeOffCoversCharge = (charge, tx) => {
+            if (!isWriteOffTx(tx) || !charge) return false;
+            if (tx.amount <= 0) return false;
+            if (tx.writeOffOf !== undefined && tx.writeOffOf !== null && charge.id !== undefined && charge.id !== null) {
+                return String(tx.writeOffOf) === String(charge.id);
+            }
+            return chargeMatchesTx(charge, tx) && Math.abs(tx.amount) >= Math.abs(charge.amount);
+        };
+
+        const paymentCoversCharge = (charge, tx) => {
+            if (!charge || !tx || isWriteOffTx(tx) || tx.amount <= 0) return false;
+            return chargeMatchesTx(charge, tx) && Math.abs(tx.amount) >= Math.abs(charge.amount);
+        };
+
+        const findWriteOffForCharge = (charge, txList = []) => {
+            if (!charge || !Array.isArray(txList) || !txList.length) return null;
+            return txList.find(tx => writeOffCoversCharge(charge, tx)) || null;
+        };
+
+        const findPaymentForCharge = (charge, txList = []) => {
+            if (!charge || !Array.isArray(txList) || !txList.length) return null;
+            return txList.find(tx => paymentCoversCharge(charge, tx)) || null;
+        };
+
         const transactionHasCoveringPayment = (charge, txList = []) => {
             if (!charge || !Array.isArray(txList) || !txList.length) return false;
-            return txList.some(tx => (
-                tx.playerId === charge.playerId &&
-                tx.category === charge.category &&
-                tx.amount > 0 &&
-                (charge.fixtureId ? tx.fixtureId === charge.fixtureId : true) &&
-                Math.abs(tx.amount) >= Math.abs(charge.amount)
-            ));
+            return txList.some(tx => writeOffCoversCharge(charge, tx) || paymentCoversCharge(charge, tx));
         };
 
+        const SETTINGS_DOC_ID = 'app';
         const DEFAULT_CATEGORIES = ['Referee Fee', 'Match Fee'];
-        const loadCategories = () => {
-            try {
-                const saved = JSON.parse(localStorage.getItem('gaffer:categories') || '[]');
-                return saved.length ? saved : DEFAULT_CATEGORIES;
-            } catch (e) {
-                return DEFAULT_CATEGORIES;
-            }
-        };
-
-        const persistCategories = (cats) => {
-            localStorage.setItem('gaffer:categories', JSON.stringify(cats));
-        };
-
         const DEFAULT_ITEM_CATEGORIES = ['Shirt', 'Shorts', 'Socks', 'Full Kit', 'Other'];
-        const loadItemCategories = () => {
-            try {
-                const saved = JSON.parse(localStorage.getItem('gaffer:itemCategories') || '[]');
-                return saved.length ? saved : DEFAULT_ITEM_CATEGORIES;
-            } catch (e) {
-                return DEFAULT_ITEM_CATEGORIES;
-            }
-        };
-        const persistItemCategories = (cats) => localStorage.setItem('gaffer:itemCategories', JSON.stringify(cats));
-
         const DEFAULT_SEASON_CATEGORIES = ['2025/2026 Season'];
-        const loadSeasonCategories = () => {
-            try {
-                const saved = JSON.parse(localStorage.getItem('gaffer:seasonCategories') || '[]');
-                return saved.length ? saved : DEFAULT_SEASON_CATEGORIES;
-            } catch (e) {
-                return DEFAULT_SEASON_CATEGORIES;
-            }
-        };
-        const persistSeasonCategories = (cats) => localStorage.setItem('gaffer:seasonCategories', JSON.stringify(cats));
-
-        const readStorageJSON = (key, fallback) => {
-            if (typeof window === 'undefined') return fallback;
-            try {
-                const raw = localStorage.getItem(key);
-                if (!raw) return fallback;
-                return JSON.parse(raw);
-            } catch (err) {
-                return fallback;
-            }
-        };
-
-        const writeStorageJSON = (key, value) => {
-            if (typeof window === 'undefined') return;
-            try {
-                localStorage.setItem(key, JSON.stringify(value));
-            } catch (err) {
-                console.warn('Unable to persist', key, err);
-            }
-        };
-
-        const readStorageNumber = (key, fallback) => {
-            const raw = readStorageJSON(key, null);
-            const num = Number(raw);
-            return Number.isNaN(num) ? fallback : num;
-        };
-
+        const DEFAULT_REF_DEFAULTS = { total: 85, split: 42.5 };
         const KIT_NUMBER_LIMIT_KEY = 'gaffer:kitNumberLimit';
         const POSITION_DEFS_KEY = 'gaffer:positionDefinitions';
+        const KIT_SIZE_OPTIONS_KEY = 'gaffer:kitSizeOptions';
         const DEFAULT_KIT_NUMBER_LIMIT = 50;
+        const DEFAULT_KIT_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
         const DEFAULT_POSITION_DEFINITIONS = [
             { code: 'GK', label: 'Goalkeeper' },
             { code: 'CB', label: 'Centre-Back' },
@@ -202,26 +175,152 @@
             { code: 'ST', label: 'Striker' },
             { code: 'SS', label: 'Second Striker / Support Striker' }
         ];
+        const clonePositionDefinitions = (defs = []) => defs.map(def => ({ code: def.code, label: def.label }));
 
-        const KIT_SIZE_OPTIONS_KEY = 'gaffer:kitSizeOptions';
-        const DEFAULT_KIT_SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
-        const loadKitSizeOptions = () => {
-            const data = readStorageJSON(KIT_SIZE_OPTIONS_KEY, DEFAULT_KIT_SIZE_OPTIONS);
-            return Array.isArray(data) ? data : DEFAULT_KIT_SIZE_OPTIONS;
-        };
-        const persistKitSizeOptions = (options) => {
-            writeStorageJSON(KIT_SIZE_OPTIONS_KEY, options);
-        };
-
-        const loadPositionDefinitions = () => {
-            const data = readStorageJSON(POSITION_DEFS_KEY, []);
-            if (!Array.isArray(data) || !data.length) return DEFAULT_POSITION_DEFINITIONS;
-            return data;
+        const normalizePositionDefinitions = (defs, fallback) => {
+            if (!Array.isArray(defs) || !defs.length) return clonePositionDefinitions(fallback);
+            const cleaned = defs.map(item => {
+                const code = (item?.code || '').toString().trim();
+                const label = (item?.label || '').toString().trim();
+                return code && label ? { code, label } : null;
+            }).filter(Boolean);
+            return cleaned.length ? cleaned : clonePositionDefinitions(fallback);
         };
 
-        const persistPositionDefinitions = (definitions) => {
-            writeStorageJSON(POSITION_DEFS_KEY, definitions);
+        const buildDefaultSettings = () => ({
+            categories: [...DEFAULT_CATEGORIES],
+            itemCategories: [...DEFAULT_ITEM_CATEGORIES],
+            seasonCategories: [...DEFAULT_SEASON_CATEGORIES],
+            refDefaults: { ...DEFAULT_REF_DEFAULTS },
+            kitNumberLimit: DEFAULT_KIT_NUMBER_LIMIT,
+            kitSizeOptions: [...DEFAULT_KIT_SIZE_OPTIONS],
+            positionDefinitions: clonePositionDefinitions(DEFAULT_POSITION_DEFINITIONS)
+        });
+
+        const normalizeSettings = (data = {}) => {
+            const defaults = buildDefaultSettings();
+            return {
+                categories: Array.isArray(data.categories) && data.categories.length ? data.categories : defaults.categories,
+                itemCategories: Array.isArray(data.itemCategories) && data.itemCategories.length ? data.itemCategories : defaults.itemCategories,
+                seasonCategories: Array.isArray(data.seasonCategories) && data.seasonCategories.length ? data.seasonCategories : defaults.seasonCategories,
+                refDefaults: {
+                    total: Number(data?.refDefaults?.total) || defaults.refDefaults.total,
+                    split: Number(data?.refDefaults?.split) || defaults.refDefaults.split
+                },
+                kitNumberLimit: Number.isFinite(Number(data?.kitNumberLimit))
+                    ? Math.max(1, Number(data.kitNumberLimit))
+                    : defaults.kitNumberLimit,
+                kitSizeOptions: Array.isArray(data.kitSizeOptions) && data.kitSizeOptions.length ? data.kitSizeOptions : defaults.kitSizeOptions,
+                positionDefinitions: normalizePositionDefinitions(data.positionDefinitions, defaults.positionDefinitions)
+            };
         };
+
+        const readLegacySetting = (key) => {
+            if (typeof window === 'undefined') return { found: false, value: null };
+            const raw = localStorage.getItem(key);
+            if (raw === null) return { found: false, value: null };
+            try {
+                return { found: true, value: JSON.parse(raw) };
+            } catch (err) {
+                return { found: true, value: null };
+            }
+        };
+
+        const readLegacyNumber = (key) => {
+            const result = readLegacySetting(key);
+            if (!result.found) return result;
+            const num = Number(result.value);
+            return { found: true, value: Number.isNaN(num) ? null : num };
+        };
+
+        const loadLegacySettings = () => {
+            if (typeof window === 'undefined') return null;
+            let hasLegacy = false;
+            const legacy = {};
+
+            const categories = readLegacySetting('gaffer:categories');
+            if (categories.found) {
+                hasLegacy = true;
+                if (Array.isArray(categories.value)) legacy.categories = categories.value;
+            }
+
+            const itemCategories = readLegacySetting('gaffer:itemCategories');
+            if (itemCategories.found) {
+                hasLegacy = true;
+                if (Array.isArray(itemCategories.value)) legacy.itemCategories = itemCategories.value;
+            }
+
+            const seasonCategories = readLegacySetting('gaffer:seasonCategories');
+            if (seasonCategories.found) {
+                hasLegacy = true;
+                if (Array.isArray(seasonCategories.value)) legacy.seasonCategories = seasonCategories.value;
+            }
+
+            const refDefaults = readLegacySetting('gaffer:refDefaults');
+            if (refDefaults.found) {
+                hasLegacy = true;
+                if (refDefaults.value && typeof refDefaults.value === 'object') legacy.refDefaults = refDefaults.value;
+            }
+
+            const kitNumberLimit = readLegacyNumber(KIT_NUMBER_LIMIT_KEY);
+            if (kitNumberLimit.found) {
+                hasLegacy = true;
+                if (Number.isFinite(kitNumberLimit.value)) legacy.kitNumberLimit = kitNumberLimit.value;
+            }
+
+            const kitSizeOptions = readLegacySetting(KIT_SIZE_OPTIONS_KEY);
+            if (kitSizeOptions.found) {
+                hasLegacy = true;
+                if (Array.isArray(kitSizeOptions.value)) legacy.kitSizeOptions = kitSizeOptions.value;
+            }
+
+            const positionDefinitions = readLegacySetting(POSITION_DEFS_KEY);
+            if (positionDefinitions.found) {
+                hasLegacy = true;
+                if (Array.isArray(positionDefinitions.value)) legacy.positionDefinitions = positionDefinitions.value;
+            }
+
+            return hasLegacy ? legacy : null;
+        };
+
+        const clearLegacySettings = () => {
+            if (typeof window === 'undefined') return;
+            [
+                'gaffer:categories',
+                'gaffer:itemCategories',
+                'gaffer:seasonCategories',
+                'gaffer:refDefaults',
+                KIT_NUMBER_LIMIT_KEY,
+                KIT_SIZE_OPTIONS_KEY,
+                POSITION_DEFS_KEY
+            ].forEach(key => localStorage.removeItem(key));
+        };
+
+        const saveSettingsPatch = async (patch = {}) => {
+            if (!patch || typeof patch !== 'object') return;
+            try {
+                await waitForDb();
+                if (!db?.settings) return;
+                await db.settings.bulkPut([{ id: SETTINGS_DOC_ID, ...patch }]);
+            } catch (err) {
+                console.warn('Unable to persist settings', err);
+            }
+        };
+
+        const loadCategories = () => [...DEFAULT_CATEGORIES];
+        const persistCategories = (cats) => { void saveSettingsPatch({ categories: cats }); };
+
+        const loadItemCategories = () => [...DEFAULT_ITEM_CATEGORIES];
+        const persistItemCategories = (cats) => { void saveSettingsPatch({ itemCategories: cats }); };
+
+        const loadSeasonCategories = () => [...DEFAULT_SEASON_CATEGORIES];
+        const persistSeasonCategories = (cats) => { void saveSettingsPatch({ seasonCategories: cats }); };
+
+        const loadKitSizeOptions = () => [...DEFAULT_KIT_SIZE_OPTIONS];
+        const persistKitSizeOptions = (options) => { void saveSettingsPatch({ kitSizeOptions: options }); };
+
+        const loadPositionDefinitions = () => clonePositionDefinitions(DEFAULT_POSITION_DEFINITIONS);
+        const persistPositionDefinitions = (definitions) => { void saveSettingsPatch({ positionDefinitions: definitions }); };
 
         const KIT_DETAIL_HEADER_MAP = {
             'player name': 'playerName',
@@ -286,13 +385,9 @@
             return entries;
         };
 
-        const loadKitNumberLimit = () => {
-            return readStorageNumber(KIT_NUMBER_LIMIT_KEY, DEFAULT_KIT_NUMBER_LIMIT);
-        };
+        const loadKitNumberLimit = () => DEFAULT_KIT_NUMBER_LIMIT;
 
-        const persistKitNumberLimit = (value) => {
-            writeStorageJSON(KIT_NUMBER_LIMIT_KEY, value);
-        };
+        const persistKitNumberLimit = (value) => { void saveSettingsPatch({ kitNumberLimit: value }); };
 
         const releaseKitDetailById = async (id) => {
             if (!id) return;
@@ -300,15 +395,8 @@
             await db.kitDetails.delete(id);
         };
 
-        const loadRefDefaults = () => {
-            try {
-                const saved = JSON.parse(localStorage.getItem('gaffer:refDefaults') || '{}');
-                return { total: saved.total || 85, split: saved.split || 42.5 };
-            } catch (e) {
-                return { total: 85, split: 42.5 };
-            }
-        };
-        const persistRefDefaults = (vals) => localStorage.setItem('gaffer:refDefaults', JSON.stringify(vals));
+        const loadRefDefaults = () => ({ ...DEFAULT_REF_DEFAULTS });
+        const persistRefDefaults = (vals) => { void saveSettingsPatch({ refDefaults: vals }); };
 
         const levenshtein = (a, b) => {
             const dp = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
@@ -786,7 +874,7 @@
                 txs.forEach(t => {
                     if (t.playerId && bal[t.playerId] !== undefined) {
                         bal[t.playerId] += t.amount;
-                        if(t.amount > 0) {
+                        if(t.amount > 0 && !t.isWriteOff) {
                             if(!stats[t.playerId]) stats[t.playerId] = { games: 0, payments: 0, goals: 0 };
                             stats[t.playerId].payments = (stats[t.playerId].payments || 0) + 1;
                         }
@@ -853,6 +941,7 @@
             };
 
             const hasExistingPayment = (tx, source = playerTx) => transactionHasCoveringPayment(tx, source);
+            const buildChargeLabel = (tx) => tx?.description || formatCategoryLabel(tx?.category) || 'Charge';
 
             const buildDebtDigest = () => {
                 if (!players.length || !transactions.length) return 'No outstanding debts. ✅';
@@ -902,20 +991,65 @@
             };
 
             const handlePay = async (tx) => {
-                if (hasExistingPayment(tx)) { alert('Already paid.'); return; }
+                if (hasExistingPayment(tx)) { alert('Already settled.'); return; }
                 if (!confirm("Mark this specific item as paid?")) return;
                 startImportProgress('Recording payment…');
                 try {
+                    const chargeLabel = buildChargeLabel(tx);
                     await db.transactions.add({
                         date: new Date().toISOString(),
                         category: tx.category || 'MATCH_FEE',
                         type: 'INCOME',
-                        description: `Payment for ${tx.description}`,
+                        description: `Payment for ${chargeLabel}`,
                         amount: Math.abs(tx.amount), 
                         flow: 'receivable',
                         playerId: selectedPlayer.id,
                         fixtureId: tx.fixtureId,
                         isReconciled: true
+                    });
+                    openPlayerDetails(selectedPlayer);
+                    refresh();
+                } finally {
+                    finishImportProgress();
+                }
+            };
+
+            const handleWriteOff = async (tx) => {
+                if (!selectedPlayer || !tx || tx.amount >= 0) return;
+                const existingWriteOff = findWriteOffForCharge(tx, playerTx);
+                if (existingWriteOff) {
+                    if (!confirm('Undo write-off for this charge?')) return;
+                    startImportProgress('Removing write-off…');
+                    try {
+                        await db.transactions.delete(existingWriteOff.id);
+                        openPlayerDetails(selectedPlayer);
+                        refresh();
+                    } finally {
+                        finishImportProgress();
+                    }
+                    return;
+                }
+                const existingPayment = findPaymentForCharge(tx, playerTx);
+                if (existingPayment) {
+                    alert('Already paid.');
+                    return;
+                }
+                if (!confirm('Write off this unpaid charge?')) return;
+                startImportProgress('Writing off charge…');
+                try {
+                    const chargeLabel = buildChargeLabel(tx);
+                    await db.transactions.add({
+                        date: new Date().toISOString(),
+                        category: tx.category || 'MATCH_FEE',
+                        type: 'INCOME',
+                        description: `Write-off: ${chargeLabel}`,
+                        amount: Math.abs(tx.amount),
+                        flow: 'receivable',
+                        playerId: tx.playerId,
+                        fixtureId: tx.fixtureId,
+                        isReconciled: true,
+                        isWriteOff: true,
+                        writeOffOf: tx.id
                     });
                     openPlayerDetails(selectedPlayer);
                     refresh();
@@ -1594,19 +1728,32 @@
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments & Fees</div>
                                     <div className="space-y-2 max-h-48 overflow-y-auto">
                                         {Array.from(new Map(playerTx.map(tx => [tx.id, tx])).values()).map(tx => {
-                const outstanding = tx.amount < 0 && !hasExistingPayment(tx);
+                                            const isCharge = tx.amount < 0;
+                                            const writeOffTx = isCharge ? findWriteOffForCharge(tx, playerTx) : null;
+                                            const paymentTx = isCharge ? findPaymentForCharge(tx, playerTx) : null;
+                                            const isWrittenOff = !!writeOffTx;
+                                            const outstanding = isCharge && !paymentTx && !isWrittenOff;
+                                            const showWriteOffAction = isCharge && !paymentTx;
                                             return (
                                                 <div key={tx.id} className="flex justify-between items-center p-3 border border-slate-100 rounded-xl bg-white">
                                                     <div>
                                                         <div className="text-xs font-bold text-slate-900">{tx.description}</div>
                                                         <div className="text-[10px] text-slate-400">{new Date(tx.date).toLocaleDateString()}</div>
                                                     </div>
-                                                    <div className="flex items-center gap-3">
+                                                    <div className="flex items-center gap-2">
                                                         <div className={`text-sm font-bold ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                                             {formatCurrency(tx.amount)}
                                                         </div>
+                                                        {isWrittenOff && (
+                                                            <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">Written off</span>
+                                                        )}
                                                         {outstanding && (
                                                             <button onClick={() => handlePay(tx)} className="text-xs bg-brand-600 text-white px-2 py-1 rounded">Pay</button>
+                                                        )}
+                                                        {showWriteOffAction && (
+                                                            <button onClick={() => handleWriteOff(tx)} className={`text-xs font-bold px-2 py-1 rounded border ${isWrittenOff ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                                                                {isWrittenOff ? 'Undo write-off' : 'Write off'}
+                                                            </button>
                                                         )}
                                                     </div>
                                                 </div>
@@ -1801,8 +1948,17 @@
             const [showAvailablePlayers, setShowAvailablePlayers] = useState(false);
             const [isPaymentsOpen, setIsPaymentsOpen] = useState(false);
             const [gamesSubview, setGamesSubview] = useState('schedule');
+            const [openSeasonTag, setOpenSeasonTag] = useState(null);
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const matchDayRef = useRef(null);
+            const [fixtureSaveStatus, setFixtureSaveStatus] = useState('idle');
+            const fixtureSaveTimerRef = useRef(null);
+            const clearFixtureSaveTimer = () => {
+                if (fixtureSaveTimerRef.current) {
+                    clearTimeout(fixtureSaveTimerRef.current);
+                    fixtureSaveTimerRef.current = null;
+                }
+            };
             const payeeOptions = useMemo(() => {
                 const cat = (newCost.category || '').toLowerCase();
                 const opts = [];
@@ -1836,6 +1992,15 @@
                     else setPayee({ type: 'custom', value: '' });
                 }
             }, [newCost.category, selectedFixture, payeeOptions]);
+            useEffect(() => {
+                return () => {
+                    clearFixtureSaveTimer();
+                };
+            }, []);
+            useEffect(() => {
+                clearFixtureSaveTimer();
+                setFixtureSaveStatus('idle');
+            }, [selectedFixture?.id]);
             useEffect(() => {
                 // auto-select flow direction based on payee
                 if(payee.type === 'opponent') {
@@ -1974,6 +2139,28 @@
                     .filter(Boolean)
                     .sort((a, b) => b.timestamp - a.timestamp);
             }, [fixtures, resolveMotmLabel]);
+            const fixturesBySeason = useMemo(() => {
+                const grouped = {};
+                const order = [];
+                fixtures.forEach(f => {
+                    const season = f.seasonTag || 'Unknown Season';
+                    if (!grouped[season]) {
+                        grouped[season] = [];
+                        order.push(season);
+                    }
+                    grouped[season].push(f);
+                });
+                return { grouped, order, latestSeason: order[0] || null };
+            }, [fixtures]);
+            useEffect(() => {
+                if (!fixturesBySeason.latestSeason) {
+                    if (openSeasonTag !== null) setOpenSeasonTag(null);
+                    return;
+                }
+                if (!openSeasonTag || !fixturesBySeason.grouped[openSeasonTag]) {
+                    setOpenSeasonTag(fixturesBySeason.latestSeason);
+                }
+            }, [fixturesBySeason, openSeasonTag]);
 
             const refresh = async () => {
                 await waitForDb();
@@ -2141,7 +2328,7 @@
             const togglePayment = async (playerId) => {
                 if(!selectedFixture) return;
                 const fee = Number(feeEdits[playerId] ?? (selectedFixture.feeAmount || 20)) || 0;
-                const payTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: 'MATCH_FEE' }).and(t => t.amount > 0).first();
+                const payTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: 'MATCH_FEE' }).and(t => t.amount > 0 && !t.isWriteOff).first();
                 if(payTx) {
                     await db.transactions.delete(payTx.id);
                 } else {
@@ -2160,6 +2347,42 @@
                 reloadSelected();
             };
 
+            const toggleWriteOff = async (playerId) => {
+                if (!selectedFixture) return;
+                const feeTx = fixtureTx.find(tx => tx.playerId === playerId && tx.fixtureId === selectedFixture.id && tx.category === 'MATCH_FEE' && tx.amount < 0);
+                if (!feeTx) {
+                    alert('No match fee recorded yet. Generate fees first.');
+                    return;
+                }
+                const existingWriteOff = findWriteOffForCharge(feeTx, fixtureTx);
+                if (existingWriteOff) {
+                    if (!confirm('Undo write-off for this match fee?')) return;
+                    await db.transactions.delete(existingWriteOff.id);
+                    reloadSelected();
+                    return;
+                }
+                const existingPayment = findPaymentForCharge(feeTx, fixtureTx);
+                if (existingPayment) {
+                    alert('Already marked as paid.');
+                    return;
+                }
+                if (!confirm('Write off this match fee?')) return;
+                await db.transactions.add({
+                    date: new Date().toISOString(),
+                    category: feeTx.category || 'MATCH_FEE',
+                    type: 'INCOME',
+                    amount: Math.abs(feeTx.amount),
+                    description: `Write-off: ${feeTx.description || 'Match fee'}`,
+                    flow: 'receivable',
+                    playerId,
+                    fixtureId: selectedFixture.id,
+                    isReconciled: true,
+                    isWriteOff: true,
+                    writeOffOf: feeTx.id
+                });
+                reloadSelected();
+            };
+
             const removePlayerFromFixture = async (playerId) => {
                 if(!selectedFixture) return;
                 const rec = await db.participations.where({ fixtureId: selectedFixture.id, playerId }).first();
@@ -2169,21 +2392,38 @@
                 reloadSelected();
             };
 
-            const saveFixtureDetails = async () => {
-                if(!selectedFixture) return;
+            const saveFixtureDetails = async ({ closeOnSave = false } = {}) => {
+                if(!selectedFixture || fixtureSaveStatus === 'saving') return;
+                clearFixtureSaveTimer();
+                setFixtureSaveStatus('saving');
                 const motmValue = selectedFixture.manOfTheMatch;
                 const normalizedMotm = typeof motmValue === 'string' ? motmValue.trim() : (motmValue ?? '');
-                await db.fixtures.update(selectedFixture.id, { 
-                    opponent: selectedFixture.opponent, 
-                    date: selectedFixture.date, 
-                    time: selectedFixture.time, 
-                    venue: selectedFixture.venue,
-                    feeAmount: selectedFixture.feeAmount || 20,
-                    manOfTheMatch: normalizedMotm || '',
-                    paymentsSettled: !!selectedFixture.paymentsSettled
-                });
-                refresh();
-                alert('Fixture updated');
+                try {
+                    await db.fixtures.update(selectedFixture.id, { 
+                        opponent: selectedFixture.opponent, 
+                        date: selectedFixture.date, 
+                        time: selectedFixture.time, 
+                        venue: selectedFixture.venue,
+                        feeAmount: selectedFixture.feeAmount || 20,
+                        competitionType: selectedFixture.competitionType || 'LEAGUE',
+                        seasonTag: selectedFixture.seasonTag || (seasonCategories?.[0] || '2025/2026 Season'),
+                        manOfTheMatch: normalizedMotm || '',
+                        paymentsSettled: !!selectedFixture.paymentsSettled
+                    });
+                    refresh();
+                    setFixtureSaveStatus('saved');
+                    const delayMs = closeOnSave ? 700 : 1200;
+                    fixtureSaveTimerRef.current = setTimeout(() => {
+                        setFixtureSaveStatus('idle');
+                        if (closeOnSave) setSelectedFixture(null);
+                    }, delayMs);
+                } catch (err) {
+                    setFixtureSaveStatus('error');
+                    fixtureSaveTimerRef.current = setTimeout(() => {
+                        setFixtureSaveStatus('idle');
+                    }, 2000);
+                    alert('Unable to save fixture: ' + (err?.message || 'Unexpected error'));
+                }
             };
 
             const updatePaymentsSettled = async (nextValue) => {
@@ -2314,11 +2554,15 @@
                 const fixtureId = selectedFixture.id;
                 return players.filter(p => squad[p.id]).map(p => {
                     const feeTx = fixtureTx.find(tx => tx.playerId === p.id && tx.fixtureId === fixtureId && tx.category === 'MATCH_FEE' && tx.amount < 0);
-                    const payTx = fixtureTx.find(tx => tx.playerId === p.id && tx.fixtureId === fixtureId && tx.category === 'MATCH_FEE' && tx.amount > 0);
-                    const fallbackPay = allTx.find(tx => tx.playerId === p.id && tx.category === 'MATCH_FEE' && tx.amount > 0);
+                    const payTx = feeTx ? findPaymentForCharge(feeTx, fixtureTx) : null;
+                    const writeOffTx = feeTx ? findWriteOffForCharge(feeTx, fixtureTx) : null;
+                    const fallbackPay = allTx.find(tx => tx.playerId === p.id && tx.category === 'MATCH_FEE' && tx.amount > 0 && !tx.isWriteOff);
                     const due = feeTx ? Math.abs(feeTx.amount) : (selectedFixture.feeAmount || 20);
                     const paid = payTx ? payTx.amount : (fallbackPay ? fallbackPay.amount : 0);
-                    return { player: p, due, paid, isPaid: paid >= due, feeTx, payTx };
+                    const writeOffAmount = writeOffTx ? Math.abs(writeOffTx.amount) : 0;
+                    const isWrittenOff = !!writeOffTx;
+                    const isPaid = !isWrittenOff && paid >= due;
+                    return { player: p, due, paid, isPaid, feeTx, payTx, writeOffTx, isWrittenOff, writeOffAmount };
                 });
             }, [players, squad, fixtureTx, selectedFixture, allTx]);
             const motmPlayerChoices = useMemo(() => {
@@ -2339,11 +2583,24 @@
             const availablePlayersList = useMemo(() => sortedPlayersForSelection.filter(p => !squad[p.id]), [sortedPlayersForSelection, squad]);
             const paymentSummary = useMemo(() => {
                 const paid = participantRows.filter(r => r.isPaid).length;
+                const writtenOff = participantRows.filter(r => r.isWrittenOff).length;
                 const total = participantRows.length;
-                return { paid, unpaid: total - paid, total };
+                return { paid, writtenOff, unpaid: total - paid - writtenOff, total };
             }, [participantRows]);
             const paymentsSettled = !!selectedFixture?.paymentsSettled;
             const shouldShowAvailablePlayers = showAvailablePlayers || !selectedPlayersList.length;
+            const fixtureSaveLabel = fixtureSaveStatus === 'saving'
+                ? 'Saving...'
+                : fixtureSaveStatus === 'saved'
+                    ? 'Saved'
+                    : fixtureSaveStatus === 'error'
+                        ? 'Save failed'
+                        : '';
+            const fixtureSaveTone = fixtureSaveStatus === 'saving'
+                ? 'bg-slate-50 text-slate-600 border-slate-200'
+                : fixtureSaveStatus === 'saved'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-rose-50 text-rose-700 border-rose-200';
 
             const fixtureTotals = useMemo(() => {
                 if(!selectedFixture) return { cost: 0, ref: 0 };
@@ -2362,8 +2619,10 @@
                 const lineup = players
                     .filter(p => squad[p.id])
                     .map((p, idx) => {
-                        const paid = fixtureTx.some(tx => tx.playerId === p.id && tx.amount > 0);
-                        return `${idx + 1}. ${p.firstName} ${p.lastName} ${paid ? '✅' : '❌'}`;
+                        const writtenOff = fixtureTx.some(tx => tx.playerId === p.id && tx.isWriteOff);
+                        const paid = fixtureTx.some(tx => tx.playerId === p.id && tx.amount > 0 && !tx.isWriteOff);
+                        const status = writtenOff ? 'WO' : (paid ? '✅' : '❌');
+                        return `${idx + 1}. ${p.firstName} ${p.lastName} ${status}`;
                     }).join('\n');
                 try {
                     await navigator.clipboard.writeText(lineup || 'No squad selected yet');
@@ -2905,35 +3164,62 @@
                         </div>
                     )}
 
-                    <div className="space-y-3">
-                        {fixtures.map(f => (
-                            <div key={f.id} onClick={() => openMatchMode(f)} className="relative bg-white p-5 rounded-2xl shadow-soft border border-slate-100 flex flex-col gap-3 cursor-pointer hover:border-brand-200 transition-colors group">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <div className="text-xs font-bold text-brand-600 uppercase tracking-wider mb-1">{(f.competitionType || 'LEAGUE').replace('_',' ')}</div>
-                                        <div className="text-lg font-bold text-slate-900 group-hover:text-brand-600 transition-colors">vs {f.opponent}</div>
-                                        <div className="text-sm text-slate-500 flex items-center gap-1 mt-1"><Icon name="MapPin" size={12} /> {f.venue || 'TBC'}</div>
-                                        {(typeof f.homeScore === 'number' || typeof f.awayScore === 'number') && (
-                                            <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-800">
-                                                <span>Exiles</span>
-                                                <span className="text-lg font-display">{f.homeScore ?? '-'}</span>
-                                                <span className="text-xs text-slate-400">:</span>
-                                                <span className="text-lg font-display">{f.awayScore ?? '-'}</span>
-                                                <span className="text-slate-500">{f.opponent}</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="text-2xl font-display font-bold text-slate-900 bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">{f.time}</div>
-                                        <div className="text-xs text-slate-400 font-medium mt-1">{new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</div>
-                                    </div>
+                    <div className="space-y-4">
+                        {fixturesBySeason.order.length === 0 && (
+                            <div className="text-sm text-slate-400 text-center">No games scheduled yet.</div>
+                        )}
+                        {fixturesBySeason.order.map(season => {
+                            const isOpen = openSeasonTag === season;
+                            const seasonFixtures = fixturesBySeason.grouped[season] || [];
+                            return (
+                                <div key={`season-${season}`} className="space-y-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => setOpenSeasonTag(season)}
+                                        aria-expanded={isOpen}
+                                        className="w-full flex items-center justify-between gap-3 bg-white px-4 py-3 rounded-2xl border border-slate-100 shadow-soft text-left"
+                                    >
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-900">{season}</div>
+                                            <div className="text-[11px] text-slate-500">{seasonFixtures.length} match{seasonFixtures.length === 1 ? '' : 'es'}</div>
+                                        </div>
+                                        <Icon name={isOpen ? 'ChevronUp' : 'ChevronDown'} size={16} className="text-slate-500" />
+                                    </button>
+                                    {isOpen && (
+                                        <div className="space-y-3">
+                                            {seasonFixtures.map(f => (
+                                                <div key={f.id} onClick={() => openMatchMode(f)} className="relative bg-white p-5 rounded-2xl shadow-soft border border-slate-100 flex flex-col gap-3 cursor-pointer hover:border-brand-200 transition-colors group">
+                                                    <div className="flex justify-between items-start">
+                                                        <div>
+                                                            <div className="text-xs font-bold text-brand-600 uppercase tracking-wider mb-1">{(f.competitionType || 'LEAGUE').replace('_',' ')}</div>
+                                                            <div className="text-lg font-bold text-slate-900 group-hover:text-brand-600 transition-colors">vs {f.opponent}</div>
+                                                            <div className="text-sm text-slate-500 flex items-center gap-1 mt-1"><Icon name="MapPin" size={12} /> {f.venue || 'TBC'}</div>
+                                                            {(typeof f.homeScore === 'number' || typeof f.awayScore === 'number') && (
+                                                                <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-800">
+                                                                    <span>Exiles</span>
+                                                                    <span className="text-lg font-display">{f.homeScore ?? '-'}</span>
+                                                                    <span className="text-xs text-slate-400">:</span>
+                                                                    <span className="text-lg font-display">{f.awayScore ?? '-'}</span>
+                                                                    <span className="text-slate-500">{f.opponent}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <div className="text-2xl font-display font-bold text-slate-900 bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">{f.time}</div>
+                                                            <div className="text-xs text-slate-400 font-medium mt-1">{new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="pt-3 border-t border-slate-50 flex gap-2">
+                                                        <button className="flex-1 text-xs font-bold bg-slate-50 text-slate-600 py-2 rounded-lg group-hover:bg-brand-50 group-hover:text-brand-600">Manage Squad</button>
+                                                        <button onClick={(e) => { e.stopPropagation(); deleteFixture(f); }} className="text-xs font-bold bg-rose-50 text-rose-700 px-3 py-2 rounded-lg border border-rose-100">Delete</button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
-                                <div className="pt-3 border-t border-slate-50 flex gap-2">
-                                    <button className="flex-1 text-xs font-bold bg-slate-50 text-slate-600 py-2 rounded-lg group-hover:bg-brand-50 group-hover:text-brand-600">Manage Squad</button>
-                                    <button onClick={(e) => { e.stopPropagation(); deleteFixture(f); }} className="text-xs font-bold bg-rose-50 text-rose-700 px-3 py-2 rounded-lg border border-rose-100">Delete</button>
-                                </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
 
                     <Fab onClick={() => setIsAddOpen(true)} icon="Plus" />
@@ -3001,10 +3287,13 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div className="flex gap-2">
+                                    <div className="flex items-center gap-2">
                                         <button onClick={() => setIsScoreOpen(true)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm font-bold">Score</button>
                                         <button onClick={() => setSelectedFixture(null)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
-                                        <button onClick={saveFixtureDetails} className="px-3 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold">Save</button>
+                                        {fixtureSaveLabel && (
+                                            <div className={`text-[11px] font-bold px-3 py-1 rounded-full border ${fixtureSaveTone}`}>{fixtureSaveLabel}</div>
+                                        )}
+                                        <button onClick={() => saveFixtureDetails({ closeOnSave: true })} className="px-3 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold">Save</button>
                                     </div>
                                 </div>
 
@@ -3120,8 +3409,8 @@
                                     <div className="flex justify-between items-start gap-3">
                                         <div>
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments</div>
-                                            <div className="text-[11px] text-slate-500">Mark paid / adjust fee / remove</div>
-                                            <div className="text-[11px] text-slate-600 mt-1">Paid {paymentSummary.paid} · Unpaid {paymentSummary.unpaid} · Total {paymentSummary.total}</div>
+                                            <div className="text-[11px] text-slate-500">Mark paid / write-off / adjust fee / remove</div>
+                                            <div className="text-[11px] text-slate-600 mt-1">Paid {paymentSummary.paid} · Written off {paymentSummary.writtenOff} · Unpaid {paymentSummary.unpaid} · Total {paymentSummary.total}</div>
                                             <label className="mt-2 inline-flex items-center gap-2 text-[11px] font-semibold text-slate-600">
                                                 <input type="checkbox" checked={paymentsSettled} onChange={e => updatePaymentsSettled(e.target.checked)} />
                                                 Match Payments Settled
@@ -3148,18 +3437,27 @@
                                                     <div className="flex justify-between items-center">
                                                         <div>
                                                             <div className="text-sm font-bold text-slate-900">{row.player.firstName} {row.player.lastName}</div>
-                                                            <div className="text-[11px] text-slate-500">Due {formatCurrency(row.due)} · Paid {formatCurrency(row.paid)}</div>
+                                                            <div className="text-[11px] text-slate-500">
+                                                                {row.isWrittenOff
+                                                                    ? `Due ${formatCurrency(row.due)} · Written off ${formatCurrency(row.writeOffAmount || row.due)}`
+                                                                    : `Due ${formatCurrency(row.due)} · Paid ${formatCurrency(row.paid)}`}
+                                                            </div>
                                                         </div>
-                                                        <div className={`text-xs font-bold px-2 py-1 rounded-lg ${row.isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                                            {row.isPaid ? 'PAID' : 'UNPAID'}
+                                                        <div className={`text-xs font-bold px-2 py-1 rounded-lg ${row.isWrittenOff ? 'bg-slate-200 text-slate-700' : row.isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                            {row.isWrittenOff ? 'WRITE-OFF' : (row.isPaid ? 'PAID' : 'UNPAID')}
                                                         </div>
                                                     </div>
                                                     <div className="flex flex-col md:flex-row gap-2 mt-2">
                                                         <input type="number" min="0" step="1" className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" value={feeEdits[row.player.id] ?? row.due} onChange={e => setFeeEdits({ ...feeEdits, [row.player.id]: Number(e.target.value) })} />
                                                         <button onClick={() => updateFeeForPlayer(row.player.id)} className="bg-white border border-slate-200 text-slate-800 font-bold px-3 py-2 rounded-lg text-sm">Save amount</button>
-                                                        <button onClick={() => togglePayment(row.player.id)} className={`font-bold px-3 py-2 rounded-lg text-sm ${row.isPaid ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-600 text-white'}`}>
+                                                        <button onClick={() => togglePayment(row.player.id)} disabled={row.isWrittenOff} className={`font-bold px-3 py-2 rounded-lg text-sm ${row.isWrittenOff ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : row.isPaid ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-600 text-white'}`}>
                                                             {row.isPaid ? 'Mark unpaid' : 'Mark paid'}
                                                         </button>
+                                                        {row.feeTx && !row.isPaid && (
+                                                            <button onClick={() => toggleWriteOff(row.player.id)} className={`font-bold px-3 py-2 rounded-lg text-sm border ${row.isWrittenOff ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                                                                {row.isWrittenOff ? 'Undo write-off' : 'Write off'}
+                                                            </button>
+                                                        )}
                                                         <button onClick={() => removePlayerFromFixture(row.player.id)} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold px-3 py-2 rounded-lg text-sm">Remove</button>
                                                     </div>
                                                 </div>
@@ -3246,7 +3544,7 @@
                                 </div>
 
                                 <div className="flex flex-col md:flex-row gap-2 pb-6">
-                                    <button onClick={async () => { await saveFixtureDetails(); setSelectedFixture(null); }} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
+                                    <button onClick={() => saveFixtureDetails({ closeOnSave: true })} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
                                         <Icon name="Save" size={18} /> Save & Close
                                     </button>
                                     <button onClick={copySquadToClipboard} className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
@@ -4056,9 +4354,11 @@
                             {transactions.slice(0,10).map(tx => {
                                 const player = tx.playerId ? playerLookup[tx.playerId] : null;
                                 const playerName = player ? `${player.firstName} ${player.lastName}` : '';
-                                const feeLabel = tx.category === 'MATCH_FEE'
-                                    ? (tx.amount > 0 ? 'Payment received' : 'Match fee charged')
-                                    : (tx.category || 'Uncategorized');
+                                const feeLabel = tx.isWriteOff
+                                    ? 'Write-off'
+                                    : (tx.category === 'MATCH_FEE'
+                                        ? (tx.amount > 0 ? 'Payment received' : 'Match fee charged')
+                                        : (tx.category || 'Uncategorized'));
                                 const contextLabel = playerName || tx.payee || feeLabel;
                                 return (
                                     <div key={tx.id} className="flex justify-between items-center p-2 rounded-xl border border-slate-100 bg-slate-50">
@@ -4101,6 +4401,7 @@
                                         <div className="space-y-1">
                                             <div className="flex items-center gap-2 flex-wrap">
                                                 <span className="text-[10px] px-2 py-1 rounded-full bg-slate-100 text-slate-600 font-semibold tracking-tight">{(tx.category === 'MATCH_FEE' ? 'Match Fee' : tx.category) || 'Uncategorized'}</span>
+                                                {tx.isWriteOff && <span className="text-[10px] px-2 py-1 rounded-full bg-slate-200 text-slate-700 font-semibold">Write-off</span>}
                                                 <div className="text-[12px] font-bold text-slate-900 leading-tight">{tx.description}</div>
                                             </div>
                                             <div className="text-[10px] text-slate-500 space-x-1">
@@ -4326,7 +4627,7 @@
                         .sort((a, b) => a.inDays - b.inDays)
                         .slice(0, 3);
                     const recentPayments = txs
-                        .filter(tx => tx.amount > 0)
+                        .filter(tx => tx.amount > 0 && !tx.isWriteOff)
                         .sort((a, b) => new Date(b.date) - new Date(a.date))
                         .slice(0, 4)
                         .map(tx => {
@@ -4495,7 +4796,7 @@
                     await waitForDb();
                     const txs = await db.transactions.toArray();
                     if (transactionHasCoveringPayment(pendingPayment, txs)) {
-                        alert('Already paid.');
+                        alert('Already settled.');
                         setPendingPayment(null);
                         return;
                     }
