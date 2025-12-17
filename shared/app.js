@@ -6399,6 +6399,22 @@
                 loadFixtures();
             }, []);
             useEffect(() => {
+                const loadPlayers = async () => {
+                    await waitForDb();
+                    const list = await db.players.toArray();
+                    setPlayersList(list);
+                };
+                loadPlayers();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (e.detail.name === 'players') {
+                        loadPlayers();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, []);
+            useEffect(() => {
                 const syncPositionsFromPlayers = async () => {
                     await waitForDb();
                     const players = await db.players.toArray();
