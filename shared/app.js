@@ -9,14 +9,6 @@
         const VERSION_STORAGE_KEY = 'gaffer:lastBuildVersion';
         console.info('[Gaffer] Loaded build version:', APP_VERSION);
 
-        // Defensive fallback so other tabs never crash if a duplicate modal variable leaks outside Players.
-        if (typeof isDupModalOpen === 'undefined') {
-            var isDupModalOpen = false;
-        }
-        if (typeof isDupScanning === 'undefined') {
-            var isDupScanning = false;
-        }
-
         // --- 1. Database & Domain Models (Firestore) ---
         if (!window.db) {
             throw new Error('Firebase is not initialized. Set window.GAFFER_FIREBASE_CONFIG with real project keys before loading this page.');
@@ -736,10 +728,6 @@
             const [sortPlayersBy, setSortPlayersBy] = useState('name');
             const [sortDirection, setSortDirection] = useState('asc');
             const [playerSearch, setPlayerSearch] = useState('');
-            const [duplicatePairs, setDuplicatePairs] = useState([]);
-            const [isDupModalOpen, setIsDupModalOpen] = useState(false);
-            const [isDupScanning, setIsDupScanning] = useState(false);
-            const [dupScanProgress, setDupScanProgress] = useState({ phase: '', checked: 0, total: 0, found: 0, lastFound: '' });
             const [isReleasingKit, setIsReleasingKit] = useState(false);
             const [localSquadTab, setLocalSquadTab] = useState(squadTab || 'players');
             useEffect(() => {
@@ -1260,141 +1248,6 @@
                 });
             }, [sortedPlayers, playerSearch]);
 
-            // Asynchronous duplicate scanner with progress callbacks for UI feedback
-            const scanDuplicatesAsync = async (playerList, onProgress) => {
-                const pairs = [];
-                const seenPairs = new Set();
-
-                const totalPlayers = playerList.length;
-                onProgress?.({ phase: 'Exact name match', checked: 0, total: totalPlayers, found: pairs.length, lastFound: '' });
-                const nameIndex = {};
-                for (let i = 0; i < playerList.length; i++) {
-                    const p = playerList[i];
-                    const key = sanitizeNameKey(`${p.firstName} ${p.lastName}`);
-                    if (key) {
-                        if (nameIndex[key]) {
-                            const a = nameIndex[key];
-                            const b = p;
-                            const idKey = [a.id, b.id].sort().join('-');
-                            if (!seenPairs.has(idKey)) {
-                                seenPairs.add(idKey);
-                                pairs.push({ a, b, score: 1 });
-                                onProgress?.({ phase: 'Exact name match', checked: i + 1, total: totalPlayers, found: pairs.length, lastFound: `${a.firstName} ${a.lastName} ↔ ${b.firstName} ${b.lastName}` });
-                            }
-                        } else {
-                            nameIndex[key] = p;
-                        }
-                    }
-                    if (i % 50 === 0) await new Promise(res => setTimeout(res, 0));
-                    onProgress?.({ phase: 'Exact name match', checked: i + 1, total: totalPlayers, found: pairs.length, lastFound: '' });
-                }
-
-                const totalComparisons = (playerList.length * (playerList.length - 1)) / 2;
-                let compared = 0;
-                onProgress?.({ phase: 'Fuzzy similarity', checked: 0, total: totalComparisons, found: pairs.length, lastFound: '' });
-                for (let i = 0; i < playerList.length; i++) {
-                    const a = playerList[i];
-                    for (let j = i + 1; j < playerList.length; j++) {
-                        const b = playerList[j];
-                        const score = stringSimilarity(`${a.firstName} ${a.lastName}`, `${b.firstName} ${b.lastName}`);
-                        if (score >= 0.86) {
-                            const idKey = [a.id, b.id].sort().join('-');
-                            if (!seenPairs.has(idKey)) {
-                                seenPairs.add(idKey);
-                                pairs.push({ a, b, score });
-                                onProgress?.({ phase: 'Fuzzy similarity', checked: compared, total: totalComparisons, found: pairs.length, lastFound: `${a.firstName} ${a.lastName} ↔ ${b.firstName} ${b.lastName}` });
-                            }
-                        }
-                        compared++;
-                        if (compared % 300 === 0) await new Promise(res => setTimeout(res, 0));
-                        if (compared % 200 === 0) {
-                            onProgress?.({ phase: 'Fuzzy similarity', checked: compared, total: totalComparisons, found: pairs.length, lastFound: '' });
-                        }
-                    }
-                }
-                onProgress?.({ phase: 'Done', checked: totalComparisons, total: totalComparisons, found: pairs.length, lastFound: '' });
-                return pairs;
-            };
-
-            const computeDuplicatePairs = (playerList) => {
-                const pairs = [];
-                const seenPairs = new Set();
-
-                // First pass: strict exact name match (sanitized)
-                const nameIndex = {};
-                playerList.forEach(p => {
-                    const key = sanitizeNameKey(`${p.firstName} ${p.lastName}`);
-                    if (!key) return;
-                    if (nameIndex[key]) {
-                        const a = nameIndex[key];
-                        const b = p;
-                        const idKey = [a.id, b.id].sort().join('-');
-                        if (!seenPairs.has(idKey)) {
-                            seenPairs.add(idKey);
-                            pairs.push({ a, b, score: 1 });
-                        }
-                    } else {
-                        nameIndex[key] = p;
-                    }
-                });
-
-                // Second pass: fuzzy similarity
-                for (let i = 0; i < playerList.length; i++) {
-                    for (let j = i + 1; j < playerList.length; j++) {
-                        const a = playerList[i], b = playerList[j];
-                        const score = stringSimilarity(`${a.firstName} ${a.lastName}`, `${b.firstName} ${b.lastName}`);
-                        if (score >= 0.86) {
-                            const idKey = [a.id, b.id].sort().join('-');
-                            if (!seenPairs.has(idKey)) {
-                                seenPairs.add(idKey);
-                                pairs.push({ a, b, score });
-                            }
-                        }
-                    }
-                }
-                return pairs;
-            };
-
-            const findDuplicatePlayers = async () => {
-                if (!players || players.length < 2) {
-                    alert('Load players first – no records to scan.');
-                    return;
-                }
-
-                const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
-                setIsDupScanning(true);
-                setDupScanProgress({ phase: 'Preparing', checked: 0, total: players.length, found: 0, lastFound: '' });
-
-                let pairs = [];
-                let fallbackError = null;
-                try {
-                    // Yield so the progress modal paints before the heavy loop starts.
-                    await new Promise(res => setTimeout(res, 0));
-                    pairs = await scanDuplicatesAsync(players, (progress) => setDupScanProgress(progress));
-                } catch (err) {
-                    console.error('Duplicate scan failed', err);
-                    fallbackError = err;
-                    alert('Detailed duplicate scan failed — showing a quick fallback scan instead.');
-                    pairs = computeDuplicatePairs(players);
-                    setDupScanProgress({
-                        phase: 'Fallback scan',
-                        checked: pairs.length,
-                        total: Math.max(pairs.length, players.length),
-                        found: pairs.length,
-                        lastFound: ''
-                    });
-                } finally {
-                    setIsDupScanning(false);
-                }
-
-                const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
-                setDuplicatePairs(pairs);
-                setIsDupModalOpen(true);
-                if (!pairs.length) {
-                    alert('No potential duplicates detected.');
-                }
-            };
-
             const deletePlayerAndRelations = async (player) => {
                 if (!player) return;
                 await db.participations.where('playerId').equals(player.id).delete();
@@ -1402,7 +1255,6 @@
                 await db.players.delete(player.id);
                 if (selectedPlayer && selectedPlayer.id === player.id) setSelectedPlayer(null);
                 setPlayers(prev => prev.filter(p => p.id !== player.id));
-                setDuplicatePairs(prev => prev.filter(pair => pair.a.id !== player.id && pair.b.id !== player.id));
                 refresh();
             };
 
@@ -1527,25 +1379,6 @@
                             </button>
                             <button onClick={() => importInputRef.current?.click()} disabled={isImportingPlayers} className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${isImportingPlayers ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-slate-900 text-white border-slate-900'}`}>
                                 {isImportingPlayers ? 'Importing…' : 'Import players CSV'}
-                            </button>
-                            <button onClick={findDuplicatePlayers} className="text-xs font-bold bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg border border-amber-100">
-                                Check duplicates
-                            </button>
-                            <button onClick={() => {
-                                const msg = players.map((p,i)=>`${i+1}. ${p.firstName} ${p.lastName}`).join('\n');
-                                if(navigator.clipboard){
-                                    navigator.clipboard.writeText(msg).then(()=>alert('Squad copied!')).catch(()=>alert('Clipboard blocked'));
-                                } else {
-                                    const ta = document.createElement('textarea');
-                                    ta.value = msg;
-                                    document.body.appendChild(ta);
-                                    ta.select();
-                                    document.execCommand('copy');
-                                    document.body.removeChild(ta);
-                                    alert('Copied!');
-                                }
-                            }} className="text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-100">
-                                Copy Squad
                             </button>
                             <button onClick={() => setIsDebtOpen(true)} className="text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-1">
                                 <Icon name="MessageSquare" size={14} /> Debt Message
@@ -1967,6 +1800,7 @@
             const [payee, setPayee] = useState({ type: 'referee', value: '' });
             const [showAvailablePlayers, setShowAvailablePlayers] = useState(false);
             const [isPaymentsOpen, setIsPaymentsOpen] = useState(false);
+            const [gamesSubview, setGamesSubview] = useState('schedule');
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const matchDayRef = useRef(null);
             const payeeOptions = useMemo(() => {
@@ -2182,7 +2016,8 @@
                     ...fixture, 
                     feeAmount: fixture.feeAmount || 20, 
                     seasonTag: fixture.seasonTag || seasonCategories?.[0] || '2025/2026 Season',
-                    manOfTheMatch: fixture.manOfTheMatch || ''
+                    manOfTheMatch: fixture.manOfTheMatch || '',
+                    paymentsSettled: !!fixture.paymentsSettled
                 });
                 const motmState = deriveMotmState(fixture.manOfTheMatch);
                 setScoreForm({ 
@@ -2344,10 +2179,19 @@
                     time: selectedFixture.time, 
                     venue: selectedFixture.venue,
                     feeAmount: selectedFixture.feeAmount || 20,
-                    manOfTheMatch: normalizedMotm || ''
+                    manOfTheMatch: normalizedMotm || '',
+                    paymentsSettled: !!selectedFixture.paymentsSettled
                 });
                 refresh();
                 alert('Fixture updated');
+            };
+
+            const updatePaymentsSettled = async (nextValue) => {
+                if (!selectedFixture) return;
+                const settled = !!nextValue;
+                setSelectedFixture(prev => prev ? { ...prev, paymentsSettled: settled } : prev);
+                setFixtures(prev => prev.map(f => f.id === selectedFixture.id ? { ...f, paymentsSettled: settled } : f));
+                await db.fixtures.update(selectedFixture.id, { paymentsSettled: settled });
             };
 
             const addCost = async () => {
@@ -2498,6 +2342,7 @@
                 const total = participantRows.length;
                 return { paid, unpaid: total - paid, total };
             }, [participantRows]);
+            const paymentsSettled = !!selectedFixture?.paymentsSettled;
             const shouldShowAvailablePlayers = showAvailablePlayers || !selectedPlayersList.length;
 
             const fixtureTotals = useMemo(() => {
@@ -3053,15 +2898,6 @@
                         {fixtures.map(f => (
                             <div key={f.id} onClick={() => openMatchMode(f)} className="relative bg-white p-5 rounded-2xl shadow-soft border border-slate-100 flex flex-col gap-3 cursor-pointer hover:border-brand-200 transition-colors group">
                                 <div className="flex justify-between items-start">
-                                    {(() => {
-                                        const net = fixtureNetLookup[f.id] || 0;
-                                        const netClass = net > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : net < 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-50 text-slate-600 border-slate-200';
-                                        return (
-                                            <div className={`absolute -mt-3 right-5 px-3 py-1 rounded-full border text-[11px] font-bold ${netClass}`}>
-                                                P/L {formatNetValue(net)}
-                                            </div>
-                                        );
-                                    })()}
                                     <div>
                                         <div className="text-xs font-bold text-brand-600 uppercase tracking-wider mb-1">{(f.competitionType || 'LEAGUE').replace('_',' ')}</div>
                                         <div className="text-lg font-bold text-slate-900 group-hover:text-brand-600 transition-colors">vs {f.opponent}</div>
@@ -3275,6 +3111,13 @@
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments</div>
                                             <div className="text-[11px] text-slate-500">Mark paid / adjust fee / remove</div>
                                             <div className="text-[11px] text-slate-600 mt-1">Paid {paymentSummary.paid} · Unpaid {paymentSummary.unpaid} · Total {paymentSummary.total}</div>
+                                            <label className="mt-2 inline-flex items-center gap-2 text-[11px] font-semibold text-slate-600">
+                                                <input type="checkbox" checked={paymentsSettled} onChange={e => updatePaymentsSettled(e.target.checked)} />
+                                                Match Payments Settled
+                                            </label>
+                                            {paymentsSettled && (
+                                                <div className="text-[11px] text-emerald-700 font-semibold">Payments closed for this match (no ledger changes).</div>
+                                            )}
                                         </div>
                                         <div className="flex items-start gap-3">
                                             <div className="text-right">
@@ -3871,19 +3714,6 @@
                 return map;
             }, [transactions]);
 
-            const formGuide = useMemo(() => {
-                if(players.length === 0) return [];
-                const fixturesCt = fixtures.length || 1;
-                return players.map(p => {
-                    const attended = participations.filter(pa => pa.playerId === p.id).length;
-                    const charges = transactions.filter(t => t.playerId === p.id && t.amount < 0 && t.category === 'MATCH_FEE').length;
-                    const payments = transactions.filter(t => t.playerId === p.id && t.amount > 0 && t.category === 'MATCH_FEE').length;
-                    const payReliability = charges ? Math.min(100, Math.round((payments / charges) * 100)) : 0;
-                    const attendance = Math.round((attended / fixturesCt) * 100);
-                    return { player: p, attendance, payReliability };
-                }).sort((a,b)=>b.attendance - a.attendance);
-            }, [players, participations, fixtures, transactions]);
-
             const playerLookup = useMemo(() => {
                 const map = {};
                 players.forEach(p => { map[p.id] = p; });
@@ -4232,25 +4062,6 @@
                         </div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Player Form Guide</div>
-                        <div className="text-sm text-slate-600">Attendance vs payment reliability</div>
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                            {formGuide.map((row, i) => (
-                                <div key={row.player.id} className="flex items-center justify-between p-2 rounded-xl border border-slate-100">
-                                    <div>
-                                        <div className="text-sm font-bold text-slate-900">{row.player.firstName} {row.player.lastName}</div>
-                                        <div className="text-[11px] text-slate-500">Attendance {row.attendance}% · Pays {row.payReliability}%</div>
-                                    </div>
-                                    <div className="flex gap-1">
-                                        <span className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded-lg font-bold">{row.attendance}%</span>
-                                        <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg font-bold">{row.payReliability}%</span>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
                     <div className="space-y-3">
                         <div className="flex items-center justify-between px-1 flex-wrap gap-2">
                             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ledger</h3>
@@ -4371,8 +4182,11 @@
                 cleanSheets: 0,
                 debtors: [],
                 recentPayments: [],
-                upcomingBirthdays: []
+                upcomingBirthdays: [],
+                unpaidItems: []
             });
+            const [pendingPayment, setPendingPayment] = useState(null);
+            const [isPaying, setIsPaying] = useState(false);
             const kitOverview = useMemo(() => {
                 const limit = Math.max(1, Number(kitNumberLimit) || DEFAULT_KIT_NUMBER_LIMIT);
                 const assignedNumbers = new Set(kitDetails
@@ -4386,9 +4200,29 @@
                     available
                 };
             }, [kitDetails, kitQueue, kitNumberLimit]);
+            const unpaidSummary = useMemo(() => {
+                const total = insights.unpaidItems.reduce((sum, item) => sum + Math.abs(item.amount || 0), 0);
+                return { count: insights.unpaidItems.length, total };
+            }, [insights.unpaidItems]);
+            const unpaidGroups = useMemo(() => {
+                const grouped = {};
+                insights.unpaidItems.forEach((item) => {
+                    const key = String(item.playerId);
+                    if (!grouped[key]) {
+                        grouped[key] = { playerId: item.playerId, playerName: item.playerName, total: 0, items: [] };
+                    }
+                    grouped[key].items.push(item);
+                    grouped[key].total += Math.abs(item.amount || 0);
+                });
+                return Object.values(grouped)
+                    .map(group => ({
+                        ...group,
+                        items: group.items.slice().sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0))
+                    }))
+                    .sort((a, b) => b.total - a.total);
+            }, [insights.unpaidItems]);
 
-            useEffect(() => {
-                const load = async () => {
+            const loadDashboard = useCallback(async () => {
                     await waitForDb();
                     const txs = await db.transactions.orderBy('date').toArray();
                     const playerList = await db.players.toArray();
@@ -4524,6 +4358,36 @@
                         for: playedFixtures.length ? goalTotals.for / playedFixtures.length : 0,
                         against: playedFixtures.length ? goalTotals.against / playedFixtures.length : 0
                     };
+                    const fixtureLookup = {};
+                    fixtures.forEach(f => { fixtureLookup[String(f.id)] = f; });
+                    const unpaidItems = txs
+                        .filter(tx => tx.amount < 0 && tx.playerId !== undefined && tx.playerId !== null)
+                        .filter(tx => !transactionHasCoveringPayment(tx, txs))
+                        .map(tx => {
+                            const player = playerLookup[String(tx.playerId)];
+                            if (!player) return null;
+                            const fixture = tx.fixtureId ? fixtureLookup[String(tx.fixtureId)] : null;
+                            const dateSource = fixture?.date || tx.date;
+                            const dateLabel = dateSource
+                                ? new Date(dateSource).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                                : '';
+                            const metaParts = [];
+                            if (fixture?.opponent) metaParts.push(`vs ${fixture.opponent}`);
+                            if (dateLabel) metaParts.push(dateLabel);
+                            if (!metaParts.length && tx.category) metaParts.push(formatCategoryLabel(tx.category));
+                            return {
+                                id: tx.id,
+                                playerId: tx.playerId,
+                                playerName: `${player.firstName} ${player.lastName}`.trim(),
+                                description: tx.description || formatCategoryLabel(tx.category) || 'Charge',
+                                category: tx.category || 'MATCH_FEE',
+                                fixtureId: tx.fixtureId,
+                                amount: tx.amount,
+                                date: dateSource || tx.date,
+                                context: metaParts.join(' · ')
+                            };
+                        })
+                        .filter(Boolean);
                     setInsights({
                         form,
                         topScorer,
@@ -4532,19 +4396,60 @@
                         cleanSheets: goalTotals.cleanSheets,
                         debtors,
                         recentPayments,
-                        upcomingBirthdays
+                        upcomingBirthdays,
+                        unpaidItems
                     });
-                };
-                load();
+                }, []);
+
+            useEffect(() => {
+                loadDashboard();
                 const handler = (e) => {
                     if (!e.detail || !e.detail.name) return;
                     if (['transactions', 'players', 'fixtures'].includes(e.detail.name)) {
-                        load();
+                        loadDashboard();
                     }
                 };
                 window.addEventListener('gaffer-firestore-update', handler);
                 return () => window.removeEventListener('gaffer-firestore-update', handler);
-            }, []);
+            }, [loadDashboard]);
+
+            const closePaymentModal = () => {
+                if (isPaying) return;
+                setPendingPayment(null);
+            };
+
+            const confirmPayment = async () => {
+                if (!pendingPayment || isPaying) return;
+                setIsPaying(true);
+                try {
+                    await waitForDb();
+                    const txs = await db.transactions.toArray();
+                    if (transactionHasCoveringPayment(pendingPayment, txs)) {
+                        alert('Already paid.');
+                        setPendingPayment(null);
+                        return;
+                    }
+                    const paymentDescription = pendingPayment.description || formatCategoryLabel(pendingPayment.category) || 'Charge';
+                    await db.transactions.add({
+                        date: new Date().toISOString(),
+                        category: pendingPayment.category || 'MATCH_FEE',
+                        type: 'INCOME',
+                        description: `Payment for ${paymentDescription}`,
+                        amount: Math.abs(pendingPayment.amount),
+                        flow: 'receivable',
+                        playerId: pendingPayment.playerId,
+                        fixtureId: pendingPayment.fixtureId,
+                        isReconciled: true
+                    });
+                    setPendingPayment(null);
+                    await loadDashboard();
+                } catch (err) {
+                    console.error('Unable to record payment', err);
+                    alert('Unable to record payment: ' + (err?.message || 'Unexpected error'));
+                } finally {
+                    setIsPaying(false);
+                }
+            };
 
             return (
                 <div className="space-y-6 pb-28 animate-slide-up">
@@ -4588,10 +4493,6 @@
                                 <div className="text-amber-700 font-bold">{formatCurrency(Math.abs(stats.outstanding.payable))}</div>
                             </div>
                         </div>
-                        <div className="mt-3 flex gap-2">
-                            <button onClick={() => onNavigate('finances')} className="flex-1 bg-slate-900 text-white text-xs font-bold py-2 rounded-lg">Ledger</button>
-                            <button onClick={() => onNavigate('players')} className="flex-1 bg-brand-50 text-brand-700 text-xs font-bold py-2 rounded-lg border border-brand-100">Squad</button>
-                        </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -4601,6 +4502,48 @@
                         <div onClick={() => onNavigate('players')} className="cursor-pointer">
                             <StatCard icon="Users" label="Squad Size" value={stats.playerCt} subtext="Active Players" color="emerald" />
                         </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                            <div>
+                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Unpaid Items</div>
+                                <div className="text-[11px] text-slate-400">
+                                    {unpaidSummary.count
+                                        ? `Outstanding ${unpaidSummary.count} item${unpaidSummary.count === 1 ? '' : 's'} · ${formatCurrency(unpaidSummary.total, { maximumFractionDigits: 0 })}`
+                                        : 'Quick mark payments without leaving home.'}
+                                </div>
+                            </div>
+                            <button onClick={() => onNavigate('players')} className="text-[10px] font-bold text-brand-600 underline">Open Squad</button>
+                        </div>
+                        {unpaidGroups.length ? (
+                            <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                                {unpaidGroups.map(group => (
+                                    <div key={group.playerId} className="rounded-xl border border-amber-100 bg-amber-50/50 p-3 space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-sm font-bold text-slate-900">{group.playerName}</div>
+                                            <div className="text-[11px] font-bold text-amber-700">Owes {formatCurrency(group.total, { maximumFractionDigits: 0 })}</div>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {group.items.map(item => (
+                                                <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-amber-100 bg-white/90 px-3 py-2">
+                                                    <div className="min-w-0">
+                                                        <div className="text-[12px] font-semibold text-slate-800 truncate">{item.description}</div>
+                                                        {item.context && <div className="text-[10px] text-slate-500">{item.context}</div>}
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="text-[11px] font-bold text-rose-600">{formatCurrency(Math.abs(item.amount), { maximumFractionDigits: 0 })}</div>
+                                                        <button onClick={() => setPendingPayment(item)} className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-1 rounded-md shadow-sm">Paid</button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-xs text-slate-400">Everyone is settled up.</div>
+                        )}
                     </div>
 
                     <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
@@ -4624,12 +4567,6 @@
                             </div>
                         </div>
                         <div className="text-[11px] text-slate-500">Open Kit inside the Squad screen to update assignments and queue.</div>
-                        <div className="flex gap-2">
-                            <button onClick={() => onNavigate('kit')} className="flex-1 bg-slate-900 text-white text-xs font-bold py-2 rounded-lg">Open Kit view</button>
-                            <button onClick={() => onNavigate('kit')} className="flex-1 bg-emerald-50 text-emerald-700 text-xs font-bold py-2 rounded-lg border border-emerald-100">
-                                Queue {kitOverview.queue}
-                            </button>
-                        </div>
                     </div>
 
                     <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
@@ -4773,6 +4710,26 @@
                             </div>
                         )}
                     </div>
+
+                    <Modal isOpen={!!pendingPayment} onClose={closePaymentModal} title="Confirm Payment">
+                        {pendingPayment && (
+                            <div className="space-y-4">
+                                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+                                    <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Payment</div>
+                                    <div className="text-lg font-display font-bold text-slate-900">{pendingPayment.playerName}</div>
+                                    <div className="text-sm font-semibold text-slate-700">{pendingPayment.description}</div>
+                                    {pendingPayment.context && <div className="text-[11px] text-slate-500">{pendingPayment.context}</div>}
+                                    <div className="mt-3 text-2xl font-display font-bold text-emerald-700">{formatCurrency(Math.abs(pendingPayment.amount), { maximumFractionDigits: 0 })}</div>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={closePaymentModal} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
+                                    <button onClick={confirmPayment} disabled={isPaying} className="flex-1 bg-emerald-600 text-white font-bold py-2 rounded-lg disabled:opacity-60">
+                                        {isPaying ? 'Recording...' : 'Paid'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
 
                 </div>
             );
