@@ -4732,7 +4732,7 @@
                                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
                                     <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Payment</div>
                                     <div className="text-lg font-display font-bold text-slate-900">{pendingPayment.playerName}</div>
-                                    <div className="text-sm font-semibold text-slate-700">{pendingPayment.description}</div>
+                                    <div className="text-sm font-semibold text-slate-700">{pendingPayment.label}</div>
                                     {pendingPayment.context && <div className="text-[11px] text-slate-500">{pendingPayment.context}</div>}
                                     <div className="mt-3 text-2xl font-display font-bold text-emerald-700">{formatCurrency(Math.abs(pendingPayment.amount), { maximumFractionDigits: 0 })}</div>
                                 </div>
