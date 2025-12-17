@@ -1387,20 +1387,14 @@
                             <button onClick={() => handleSquadTab('players')} className={`flex-1 py-2 rounded-xl ${isKitTab ? 'bg-slate-50 text-slate-700' : 'bg-slate-900 text-white'}`}>Players</button>
                             <button onClick={() => handleSquadTab('kit')} className={`flex-1 py-2 rounded-xl ${isKitTab ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Kit</button>
                         </div>
-                        <div className="flex gap-2 mt-2 flex-wrap">
-                            <button onClick={() => setIsWallOpen(true)} className="text-xs font-bold bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg border border-rose-100 flex items-center gap-1">
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                            <button onClick={() => setIsWallOpen(true)} className="w-full text-xs font-bold bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg border border-rose-100 flex items-center justify-center gap-1">
                                 <Icon name="AlertTriangle" size={14} /> Wall of Shame
                             </button>
-                            <button onClick={() => importInputRef.current?.click()} disabled={isImportingPlayers} className={`text-xs font-bold px-3 py-1.5 rounded-lg border ${isImportingPlayers ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-slate-900 text-white border-slate-900'}`}>
-                                {isImportingPlayers ? 'Importing…' : 'Import players CSV'}
-                            </button>
-                            <button onClick={() => setIsDebtOpen(true)} className="text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-1">
+                            <button onClick={() => setIsDebtOpen(true)} className="w-full text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center justify-center gap-1">
                                 <Icon name="MessageSquare" size={14} /> Debt Message
                             </button>
                         </div>
-                        {importSummary && (
-                            <p className="text-[11px] text-slate-500 mt-1">{importSummary}</p>
-                        )}
                         <div className="mt-2 flex flex-wrap gap-2 items-center text-[11px] text-slate-600">
                             <span className="font-bold uppercase tracking-wider text-slate-500">Sort:</span>
                             <select value={sortPlayersBy} onChange={e => setSortPlayersBy(e.target.value)} className="bg-white border border-slate-200 rounded-lg p-2 text-xs">
