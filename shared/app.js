@@ -7774,6 +7774,49 @@
             }), [startImportProgress, finishImportProgress, addProgressDetail, progressDetails, importCount]);
 
             useEffect(() => {
+                let isActive = true;
+                const applySettings = (settings) => {
+                    if (!isActive) return;
+                    setCategories(settings.categories);
+                    setItemCategories(settings.itemCategories);
+                    setSeasonCategories(settings.seasonCategories);
+                    setRefDefaults(settings.refDefaults);
+                    setPositionDefinitions(settings.positionDefinitions);
+                    setKitNumberLimit(settings.kitNumberLimit);
+                    setKitSizeOptions(settings.kitSizeOptions);
+                };
+                const loadSettings = async () => {
+                    await waitForDb();
+                    if (!db?.settings) {
+                        console.warn('Settings collection unavailable; using defaults.');
+                        settingsLoadedRef.current = true;
+                        return;
+                    }
+                    try {
+                        const all = await db.settings.toArray();
+                        const existing = all.find(item => String(item.id) === SETTINGS_DOC_ID) || all[0];
+                        if (existing) {
+                            applySettings(normalizeSettings(existing));
+                            clearLegacySettings();
+                            settingsLoadedRef.current = true;
+                            return;
+                        }
+                        const legacy = loadLegacySettings();
+                        const normalized = normalizeSettings(legacy || {});
+                        await saveSettingsPatch(normalized);
+                        clearLegacySettings();
+                        applySettings(normalized);
+                        settingsLoadedRef.current = true;
+                    } catch (err) {
+                        console.warn('Unable to load settings', err);
+                        settingsLoadedRef.current = true;
+                    }
+                };
+                loadSettings();
+                return () => { isActive = false; };
+            }, []);
+
+            useEffect(() => {
                 const load = async () => {
                     await waitForDb();
                     const ops = await db.opponents.toArray();
@@ -7907,14 +7950,17 @@
             }, []);
 
             useEffect(() => {
+                if (!settingsLoadedRef.current) return;
                 persistKitNumberLimit(kitNumberLimit);
             }, [kitNumberLimit]);
 
             useEffect(() => {
+                if (!settingsLoadedRef.current) return;
                 persistKitSizeOptions(kitSizeOptions);
             }, [kitSizeOptions]);
 
             useEffect(() => {
+                if (!settingsLoadedRef.current) return;
                 persistPositionDefinitions(positionDefinitions);
             }, [positionDefinitions]);
 
