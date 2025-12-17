@@ -4444,7 +4444,7 @@
                         setPendingPayment(null);
                         return;
                     }
-                    const paymentDescription = pendingPayment.description || formatCategoryLabel(pendingPayment.category) || 'Charge';
+                    const paymentDescription = pendingPayment.paymentDescription || formatCategoryLabel(pendingPayment.category) || 'Charge';
                     await db.transactions.add({
                         date: new Date().toISOString(),
                         category: pendingPayment.category || 'MATCH_FEE',
@@ -4543,7 +4543,7 @@
                                             {group.items.map(item => (
                                                 <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-amber-100 bg-white/90 px-3 py-2">
                                                     <div className="min-w-0">
-                                                        <div className="text-[12px] font-semibold text-slate-800 truncate">{item.description}</div>
+                                                        <div className="text-[12px] font-semibold text-slate-800 truncate">{item.label}</div>
                                                         {item.context && <div className="text-[10px] text-slate-500">{item.context}</div>}
                                                     </div>
                                                     <div className="flex items-center gap-2">
