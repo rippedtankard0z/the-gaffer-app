@@ -1727,78 +1727,6 @@
                             </button>
                         </div>
                     </Modal>
-                    <input type="file" ref={importInputRef} accept=".csv,text/csv" className="hidden" onChange={handlePlayerCsvFile} />
-                    <Modal isOpen={Boolean(playerImportRows && playerImportRows.length)} onClose={() => setPlayerImportRows(null)} title="Review player import">
-                        {playerImportRows ? (
-                            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-                                {playerImportRows.map((row, idx) => (
-                                    <div key={row.id} className={`p-3 rounded-xl border ${row.drop ? 'border-slate-200 bg-slate-50' : row.needsReview ? 'border-amber-200 bg-amber-50/60' : 'border-slate-100 bg-white'} space-y-2`}>
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div>
-                                                <div className="text-sm font-bold text-slate-900">{row.fullName}</div>
-                                                <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
-                                                    {row.record.phone && <span>Phone: {row.record.phone}</span>}
-                                                    {row.record.age && <span>Age: {row.record.age}</span>}
-                                                    {row.record.positionText && <span>Imported: {row.record.positionText}</span>}
-                                                    {row.record.shirtNumber && <span>Shirt #: {row.record.shirtNumber}</span>}
-                                                </div>
-                                            </div>
-                                            <button onClick={() => togglePlayerImportRowDrop(idx)} className={`text-[11px] font-bold px-3 py-1 rounded-full border ${row.drop ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
-                                                {row.drop ? 'Ignored' : 'Ignore'}
-                                            </button>
-                                        </div>
-                                        <div className="text-[11px] text-slate-500">Match this row to a player and choose their available positions before importing.</div>
-                                        <div className="space-y-2">
-                                            <div className="flex flex-wrap gap-2">
-                                                {positionDefinitions.map(def => {
-                                                    const active = row.selectedPositions.includes(def.code);
-                                                    return (
-                                                        <button key={`${row.id}-pos-${def.code}`} onClick={() => active ? removePositionFromImportRow(idx, def.code) : addPositionToImportRow(idx, def.code)}
-                                                            className={`text-[11px] font-bold px-3 py-1 rounded-full border ${active ? 'bg-brand-600 text-white border-brand-600' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                                                            {def.code} · {def.label}
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                            <div className="flex gap-2">
-                                                <input value={row.customPositionInput || ''} onChange={e => updatePlayerImportRow(idx, { customPositionInput: e.target.value })} placeholder="Custom position" className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" />
-                                                <button onClick={() => addPositionToImportRow(idx, row.customPositionInput)} className="px-3 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold">Add</button>
-                                            </div>
-                                            <div className="flex flex-wrap gap-2 text-[11px] text-slate-500">
-                                                {row.selectedPositions.map(pos => (
-                                                    <span key={`${row.id}-selected-${pos}`} className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">{pos}</span>
-                                                ))}
-                                            </div>
-                                            <div className="flex flex-col gap-2">
-                                                <select className="bg-white border border-slate-200 rounded-lg p-2 text-sm" value={row.matchedPlayerId || ''} onChange={e => updatePlayerImportRow(idx, { matchedPlayerId: e.target.value || null })}>
-                                                    <option value="">Assign player</option>
-                                                    {row.suggestions?.map((sugg, sIdx) => (
-                                                        <option key={`sugg-${idx}-${sIdx}`} value={String(sugg.player.id)}>
-                                                            {sugg.player.firstName} {sugg.player.lastName} ({Math.round(sugg.score * 100)}%)
-                                                        </option>
-                                                    ))}
-                                                    <optgroup label="All players">
-                                                        {players.map(player => (
-                                                            <option key={`all-${idx}-${player.id}`} value={String(player.id)}>{player.firstName} {player.lastName}</option>
-                                                        ))}
-                                                    </optgroup>
-                                                </select>
-                                                {row.suggestions && row.suggestions[0] && (
-                                                    <div className="text-[11px] text-slate-400">Nearest match: {row.suggestions[0].player.firstName} {row.suggestions[0].player.lastName} ({Math.round(row.suggestions[0].score * 100)}%)</div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                                <div className="flex gap-2 sticky bottom-0 bg-white/80 backdrop-blur-sm pt-2">
-                                    <button onClick={cancelPlayerImport} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
-                                    <button onClick={confirmPlayerImport} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg">Import {playerImportRows.filter(row => !row.drop).length} rows</button>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="text-sm text-slate-500">Parsing import rows…</div>
-                        )}
-                    </Modal>
 
                 </div>
             );
@@ -6422,7 +6350,10 @@
             const [newCat, setNewCat] = useState('');
             const [newItemCat, setNewItemCat] = useState('');
             const importInputRef = useRef(null);
+            const playerImportRef = useRef(null);
             const [isImporting, setIsImporting] = useState(false);
+            const [isImportingPlayersCsv, setIsImportingPlayersCsv] = useState(false);
+            const [playerImportSummary, setPlayerImportSummary] = useState('');
             const [newRef, setNewRef] = useState({ name: '', phone: '' });
             const [newSeason, setNewSeason] = useState('');
             const [newKitSize, setNewKitSize] = useState('');
@@ -6431,6 +6362,7 @@
             const [legacyImporting, setLegacyImporting] = useState(false);
             const [legacyPreview, setLegacyPreview] = useState([]);
             const [fixtures, setFixtures] = useState([]);
+            const [playersList, setPlayersList] = useState([]);
             const [newPositionCode, setNewPositionCode] = useState('');
             const [newPositionLabel, setNewPositionLabel] = useState('');
             const positionImportRef = useRef(null);
@@ -6455,6 +6387,7 @@
             const [isImportingAllModal, setIsImportingAllModal] = useState(false);
             const [importSteps, setImportSteps] = useState([]);
             const [isImportStepsDone, setIsImportStepsDone] = useState(false);
+            const [playerImportRows, setPlayerImportRows] = useState(null);
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
 
             useEffect(() => {
