@@ -83,7 +83,8 @@
                 venues: [],
                 referees: [],
                 kitDetails: [],
-                kitQueue: []
+                kitQueue: [],
+                settings: []
             };
 
             const ready = (async () => {
@@ -288,6 +289,7 @@
                 referees: createTable('referees'),
                 kitDetails: createTable('kitDetails'),
                 kitQueue: createTable('kitQueue'),
+                settings: createTable('settings'),
                 releaseKitDetail
             };
         } catch (err) {
