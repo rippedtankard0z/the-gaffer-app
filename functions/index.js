@@ -20,6 +20,7 @@ const COLLECTIONS = [
   "referees",
   "kitDetails",
   "kitQueue",
+  "settings",
 ];
 
 let viewerDb;

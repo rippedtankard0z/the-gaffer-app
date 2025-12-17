@@ -297,13 +297,15 @@
         };
 
         const saveSettingsPatch = async (patch = {}) => {
-            if (!patch || typeof patch !== 'object') return;
+            if (!patch || typeof patch !== 'object') return false;
             try {
                 await waitForDb();
-                if (!db?.settings) return;
+                if (!db?.settings) return false;
                 await db.settings.bulkPut([{ id: SETTINGS_DOC_ID, ...patch }]);
+                return true;
             } catch (err) {
                 console.warn('Unable to persist settings', err);
+                return false;
             }
         };
 
@@ -3209,10 +3211,6 @@
                                                             <div className="text-xs text-slate-400 font-medium mt-1">{new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</div>
                                                         </div>
                                                     </div>
-                                                    <div className="pt-3 border-t border-slate-50 flex gap-2">
-                                                        <button className="flex-1 text-xs font-bold bg-slate-50 text-slate-600 py-2 rounded-lg group-hover:bg-brand-50 group-hover:text-brand-600">Manage Squad</button>
-                                                        <button onClick={(e) => { e.stopPropagation(); deleteFixture(f); }} className="text-xs font-bold bg-rose-50 text-rose-700 px-3 py-2 rounded-lg border border-rose-100">Delete</button>
-                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -3290,6 +3288,7 @@
                                     <div className="flex items-center gap-2">
                                         <button onClick={() => setIsScoreOpen(true)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm font-bold">Score</button>
                                         <button onClick={() => setSelectedFixture(null)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
+                                        <button onClick={() => deleteFixture(selectedFixture)} className="px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-sm font-bold text-rose-700">Delete</button>
                                         {fixtureSaveLabel && (
                                             <div className={`text-[11px] font-bold px-3 py-1 rounded-full border ${fixtureSaveTone}`}>{fixtureSaveLabel}</div>
                                         )}
@@ -6549,7 +6548,7 @@
                     setNukeSteps([]);
                     return;
                 }
-                const defaultRefs = { total: 85, split: 42.5 };
+                const defaultRefs = { ...DEFAULT_REF_DEFAULTS };
                 const runStep = async (key, action) => {
                     markNukeStep(key, 'running');
                     await action();
@@ -7442,7 +7441,7 @@
                             <button onClick={() => { if(confirm('Delete season categories?')) { setSeasonCategories([]); persistSeasonCategories([]); }}} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Seasons</button>
                             <button onClick={clearAll} className="bg-rose-600 text-white font-bold rounded-lg px-3 py-2 text-sm md:col-span-3">Nuke all data & settings</button>
                         </div>
-                        <div className="text-[11px] text-slate-500">These actions are destructive and local; backups include kit, queue, and settings—export one before wiping.</div>
+                        <div className="text-[11px] text-slate-500">These actions are destructive; backups include kit, queue, and settings—export one before wiping.</div>
                     </div>
 
                     {isNuking && (
@@ -7803,8 +7802,8 @@
                         }
                         const legacy = loadLegacySettings();
                         const normalized = normalizeSettings(legacy || {});
-                        await saveSettingsPatch(normalized);
-                        clearLegacySettings();
+                        const didSave = await saveSettingsPatch(normalized);
+                        if (didSave) clearLegacySettings();
                         applySettings(normalized);
                         settingsLoadedRef.current = true;
                     } catch (err) {
