@@ -4194,10 +4194,12 @@
                 debtors: [],
                 recentPayments: [],
                 upcomingBirthdays: [],
-                unpaidItems: []
+                unpaidItems: [],
+                clubReceivables: []
             });
             const [pendingPayment, setPendingPayment] = useState(null);
             const [isPaying, setIsPaying] = useState(false);
+            const [isSettlingClub, setIsSettlingClub] = useState(false);
             const kitOverview = useMemo(() => {
                 const limit = Math.max(1, Number(kitNumberLimit) || DEFAULT_KIT_NUMBER_LIMIT);
                 const assignedNumbers = new Set(kitDetails
@@ -4215,6 +4217,10 @@
                 const total = insights.unpaidItems.reduce((sum, item) => sum + Math.abs(item.amount || 0), 0);
                 return { count: insights.unpaidItems.length, total };
             }, [insights.unpaidItems]);
+            const clubReceivableSummary = useMemo(() => {
+                const total = insights.clubReceivables.reduce((sum, item) => sum + Math.abs(item.amount || 0), 0);
+                return { count: insights.clubReceivables.length, total };
+            }, [insights.clubReceivables]);
             const unpaidGroups = useMemo(() => {
                 const grouped = {};
                 insights.unpaidItems.forEach((item) => {
@@ -4232,6 +4238,25 @@
                     }))
                     .sort((a, b) => b.total - a.total);
             }, [insights.unpaidItems]);
+            const clubReceivableGroups = useMemo(() => {
+                const grouped = {};
+                insights.clubReceivables.forEach((item) => {
+                    const rawName = (item.clubName || '').trim();
+                    const name = rawName || 'Unknown club';
+                    const key = name.toLowerCase();
+                    if (!grouped[key]) {
+                        grouped[key] = { clubName: name, total: 0, items: [] };
+                    }
+                    grouped[key].items.push(item);
+                    grouped[key].total += Math.abs(item.amount || 0);
+                });
+                return Object.values(grouped)
+                    .map(group => ({
+                        ...group,
+                        items: group.items.slice().sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0))
+                    }))
+                    .sort((a, b) => b.total - a.total);
+            }, [insights.clubReceivables]);
 
             const loadDashboard = useCallback(async () => {
                     await waitForDb();
@@ -4403,6 +4428,35 @@
                             };
                         })
                         .filter(Boolean);
+                    const clubReceivables = txs
+                        .filter(tx => !tx.isReconciled && (tx.flow === 'receivable' || tx.amount > 0))
+                        .filter(tx => tx.playerId === undefined || tx.playerId === null)
+                        .map(tx => {
+                            const fixture = tx.fixtureId ? fixtureLookup[String(tx.fixtureId)] : null;
+                            const payeeLabel = (tx.payee || '').trim();
+                            const clubName = payeeLabel || fixture?.opponent || fixture?.venue || 'Unknown club';
+                            const categoryLabel = formatCategoryLabel(tx.category);
+                            const paymentDescription = tx.description || categoryLabel || 'Receivable';
+                            const dateSource = fixture?.date || tx.date;
+                            const dateLabel = dateSource
+                                ? new Date(dateSource).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                                : '';
+                            const metaParts = [];
+                            if (fixture?.opponent) metaParts.push(`vs ${fixture.opponent}`);
+                            if (dateLabel) metaParts.push(dateLabel);
+                            if (!metaParts.length && tx.category) metaParts.push(formatCategoryLabel(tx.category));
+                            return {
+                                id: tx.id,
+                                clubName,
+                                label: paymentDescription,
+                                category: tx.category || 'OTHER',
+                                fixtureId: tx.fixtureId,
+                                amount: tx.amount,
+                                date: dateSource || tx.date,
+                                context: metaParts.join(' · ')
+                            };
+                        })
+                        .filter(item => item && item.amount > 0);
                     setInsights({
                         form,
                         topScorer,
@@ -4412,7 +4466,8 @@
                         debtors,
                         recentPayments,
                         upcomingBirthdays,
-                        unpaidItems
+                        unpaidItems,
+                        clubReceivables
                     });
                 }, []);
 
@@ -4463,6 +4518,20 @@
                     alert('Unable to record payment: ' + (err?.message || 'Unexpected error'));
                 } finally {
                     setIsPaying(false);
+                }
+            };
+            const settleClubReceivable = async (item) => {
+                if (!item?.id || isSettlingClub) return;
+                setIsSettlingClub(true);
+                try {
+                    await waitForDb();
+                    await db.transactions.update(item.id, { isReconciled: true });
+                    await loadDashboard();
+                } catch (err) {
+                    console.error('Unable to mark club receivable as paid', err);
+                    alert('Unable to mark club payment: ' + (err?.message || 'Unexpected error'));
+                } finally {
+                    setIsSettlingClub(false);
                 }
             };
 
@@ -4558,6 +4627,48 @@
                             </div>
                         ) : (
                             <div className="text-xs text-slate-400">Everyone is settled up.</div>
+                        )}
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                            <div>
+                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Receivables</div>
+                                <div className="text-[11px] text-slate-400">
+                                    {clubReceivableSummary.count
+                                        ? `Outstanding ${clubReceivableSummary.count} item${clubReceivableSummary.count === 1 ? '' : 's'} · ${formatCurrency(clubReceivableSummary.total, { maximumFractionDigits: 0 })}`
+                                        : 'No clubs owe us right now.'}
+                                </div>
+                            </div>
+                            <button onClick={() => onNavigate('opponents')} className="text-[10px] font-bold text-brand-600 underline">Open League</button>
+                        </div>
+                        {clubReceivableGroups.length ? (
+                            <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                                {clubReceivableGroups.map(group => (
+                                    <div key={group.clubName} className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-sm font-bold text-slate-900">{group.clubName}</div>
+                                            <div className="text-[11px] font-bold text-indigo-700">Owes {formatCurrency(group.total, { maximumFractionDigits: 0 })}</div>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {group.items.map(item => (
+                                                <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-white/90 px-3 py-2">
+                                                    <div className="min-w-0">
+                                                        <div className="text-[12px] font-semibold text-slate-800 truncate">{item.label}</div>
+                                                        {item.context && <div className="text-[10px] text-slate-500">{item.context}</div>}
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="text-[11px] font-bold text-indigo-600">{formatCurrency(Math.abs(item.amount), { maximumFractionDigits: 0 })}</div>
+                                                        <button onClick={() => settleClubReceivable(item)} disabled={isSettlingClub} className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-1 rounded-md shadow-sm disabled:opacity-60">Paid</button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-xs text-slate-400">No club receivables.</div>
                         )}
                     </div>
 
