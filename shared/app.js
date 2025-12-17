@@ -2870,29 +2870,40 @@
                         ))}
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
-                        <div className="flex items-center justify-between">
-                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Man of the Match Board</div>
-                            <span className="text-[10px] font-semibold text-slate-400">{motmBoard.length} awards logged</span>
-                        </div>
-                        {motmBoard.length ? (
-                            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                                {motmBoard.slice(0, 8).map(item => {
-                                    const dateLabel = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC';
-                                    const hasScore = typeof item.homeScore === 'number' && typeof item.awayScore === 'number';
-                                    const scoreLabel = hasScore ? ` · Exiles ${item.homeScore}-${item.awayScore}` : '';
-                                    return (
-                                        <div key={`motm-board-${item.id}`} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
-                                            <div className="text-sm font-bold text-slate-900">{item.label}</div>
-                                            <div className="text-[11px] text-slate-500">{dateLabel} · vs {item.opponent}{scoreLabel}</div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        ) : (
-                            <div className="text-sm text-slate-400">No awards recorded yet. Save a score to start tracking.</div>
-                        )}
+                    <div className="bg-white p-2 rounded-2xl border border-slate-100 flex gap-2 text-[11px] font-bold">
+                        <button onClick={() => setGamesSubview('schedule')} className={`flex-1 py-2 rounded-xl ${gamesSubview === 'motm' ? 'bg-slate-50 text-slate-700' : 'bg-slate-900 text-white'}`}>
+                            Schedule
+                        </button>
+                        <button onClick={() => setGamesSubview('motm')} className={`flex-1 py-2 rounded-xl ${gamesSubview === 'motm' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>
+                            Man of the Match Board
+                        </button>
                     </div>
+
+                    {gamesSubview === 'motm' && (
+                        <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                            <div className="flex items-center justify-between">
+                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Man of the Match Board</div>
+                                <span className="text-[10px] font-semibold text-slate-400">{motmBoard.length} awards logged</span>
+                            </div>
+                            {motmBoard.length ? (
+                                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                    {motmBoard.slice(0, 8).map(item => {
+                                        const dateLabel = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC';
+                                        const hasScore = typeof item.homeScore === 'number' && typeof item.awayScore === 'number';
+                                        const scoreLabel = hasScore ? ` · Exiles ${item.homeScore}-${item.awayScore}` : '';
+                                        return (
+                                            <div key={`motm-board-${item.id}`} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                                <div className="text-sm font-bold text-slate-900">{item.label}</div>
+                                                <div className="text-[11px] text-slate-500">{dateLabel} · vs {item.opponent}{scoreLabel}</div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="text-sm text-slate-400">No awards recorded yet. Save a score to start tracking.</div>
+                            )}
+                        </div>
+                    )}
 
                     <div className="space-y-3">
                         {fixtures.map(f => (
@@ -4367,6 +4378,9 @@
                             const player = playerLookup[String(tx.playerId)];
                             if (!player) return null;
                             const fixture = tx.fixtureId ? fixtureLookup[String(tx.fixtureId)] : null;
+                            const categoryLabel = formatCategoryLabel(tx.category);
+                            const paymentDescription = tx.description || categoryLabel || 'Charge';
+                            const displayLabel = fixture ? (categoryLabel || paymentDescription) : paymentDescription;
                             const dateSource = fixture?.date || tx.date;
                             const dateLabel = dateSource
                                 ? new Date(dateSource).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
@@ -4379,7 +4393,8 @@
                                 id: tx.id,
                                 playerId: tx.playerId,
                                 playerName: `${player.firstName} ${player.lastName}`.trim(),
-                                description: tx.description || formatCategoryLabel(tx.category) || 'Charge',
+                                label: displayLabel,
+                                paymentDescription,
                                 category: tx.category || 'MATCH_FEE',
                                 fixtureId: tx.fixtureId,
                                 amount: tx.amount,
