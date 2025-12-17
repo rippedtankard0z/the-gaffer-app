@@ -7737,6 +7737,7 @@
             const [importCount, setImportCount] = useState(0);
             const [importMessage, setImportMessage] = useState('');
             const [progressDetails, setProgressDetails] = useState([]);
+            const settingsLoadedRef = useRef(false);
             const startImportProgress = useCallback((label = 'Updating data…') => {
                 setImportCount(prev => {
                     if (prev === 0) {
