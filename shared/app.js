@@ -1465,14 +1465,22 @@
 
             return (
                 <div className="space-y-6 pb-28 animate-fade-in">
-                    <header className="px-1">
-                        <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Squad</h1>
-                        <p className="text-slate-500 text-sm font-medium">Manage roster & debts</p>
-                        <div className="bg-white p-2 rounded-2xl border border-slate-100 flex gap-2 text-sm font-bold mt-3">
+                    <header className="px-1 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Squad</h1>
+                                <p className="text-slate-500 text-sm font-medium">Manage roster & debts</p>
+                            </div>
+                            <button onClick={() => setIsAddOpen(true)} className="p-2.5 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/30 flex items-center gap-1.5 hover:bg-slate-800 transition-colors">
+                                <Icon name="Plus" size={16} />
+                                <span className="text-xs font-bold hidden sm:inline">New Player</span>
+                            </button>
+                        </div>
+                        <div className="bg-white p-2 rounded-2xl border border-slate-100 flex gap-2 text-sm font-bold">
                             <button onClick={() => handleSquadTab('players')} className={`flex-1 py-2 rounded-xl ${isKitTab ? 'bg-slate-50 text-slate-700' : 'bg-slate-900 text-white'}`}>Players</button>
                             <button onClick={() => handleSquadTab('kit')} className={`flex-1 py-2 rounded-xl ${isKitTab ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Kit</button>
                         </div>
-                        <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-2 gap-2">
                             <button onClick={() => setIsWallOpen(true)} className="w-full text-xs font-bold bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg border border-rose-100 flex items-center justify-center gap-1">
                                 <Icon name="AlertTriangle" size={14} /> Wall of Shame
                             </button>
@@ -1480,7 +1488,7 @@
                                 <Icon name="MessageSquare" size={14} /> Debt Message
                             </button>
                         </div>
-                        <div className="mt-2 flex flex-wrap gap-2 items-center text-[11px] text-slate-600">
+                        <div className="flex flex-wrap gap-2 items-center text-[11px] text-slate-600">
                             <span className="font-bold uppercase tracking-wider text-slate-500">Sort:</span>
                             <select value={sortPlayersBy} onChange={e => setSortPlayersBy(e.target.value)} className="bg-white border border-slate-200 rounded-lg p-2 text-xs">
                                 <option value="name">Name</option>
@@ -1493,7 +1501,7 @@
                                 {sortDirection === 'asc' ? 'Asc' : 'Desc'}
                             </button>
                         </div>
-                        <div className="mt-3 w-full sm:w-72 relative">
+                        <div className="w-full sm:w-72 relative">
                             <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                             <input
                                 type="search"
@@ -1549,8 +1557,6 @@
                             </div>
                         )}
                     </div>
-
-                    <Fab onClick={() => setIsAddOpen(true)} icon="Plus" />
 
                     <Modal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} title="New Signing">
                         <form onSubmit={handleAdd} className="space-y-4">
@@ -1835,7 +1841,7 @@
             const [showAvailablePlayers, setShowAvailablePlayers] = useState(false);
             const [isPaymentsOpen, setIsPaymentsOpen] = useState(false);
             const [gamesSubview, setGamesSubview] = useState('schedule');
-            const [openSeasonTag, setOpenSeasonTag] = useState(null);
+            const [openSeasonTags, setOpenSeasonTags] = useState([]);
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const matchDayRef = useRef(null);
             const [fixtureSaveStatus, setFixtureSaveStatus] = useState('idle');
@@ -2040,14 +2046,9 @@
                 return { grouped, order, latestSeason: order[0] || null };
             }, [fixtures]);
             useEffect(() => {
-                if (!fixturesBySeason.latestSeason) {
-                    if (openSeasonTag !== null) setOpenSeasonTag(null);
-                    return;
-                }
-                if (!openSeasonTag || !fixturesBySeason.grouped[openSeasonTag]) {
-                    setOpenSeasonTag(fixturesBySeason.latestSeason);
-                }
-            }, [fixturesBySeason, openSeasonTag]);
+                // Prune any open seasons that no longer exist after data refresh.
+                setOpenSeasonTags(prev => prev.filter(tag => fixturesBySeason.grouped[tag]));
+            }, [fixturesBySeason]);
 
             const refresh = async () => {
                 await waitForDb();
@@ -2984,6 +2985,10 @@
                             <p className="text-slate-500 text-sm font-medium">Season schedule</p>
                         </div>
                         <div className="flex gap-2">
+                            <button onClick={() => setIsAddOpen(true)} className="p-2.5 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/30 flex items-center gap-1.5 hover:bg-slate-800 transition-colors">
+                                <Icon name="Plus" size={16} />
+                                <span className="text-xs font-bold hidden sm:inline">New Game</span>
+                            </button>
                             <button onClick={() => setIsLegacyResultsOpen(true)} className="p-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/30 flex items-center gap-2 hover:bg-slate-800 transition-colors">
                                 <Icon name="History" size={18} />
                                 <span className="text-xs font-bold hidden sm:inline">Import Results</span>
@@ -3056,13 +3061,13 @@
                             <div className="text-sm text-slate-400 text-center">No games scheduled yet.</div>
                         )}
                         {fixturesBySeason.order.map(season => {
-                            const isOpen = openSeasonTag === season;
+                            const isOpen = openSeasonTags.includes(season);
                             const seasonFixtures = fixturesBySeason.grouped[season] || [];
                             return (
                                 <div key={`season-${season}`} className="space-y-3">
                                     <button
                                         type="button"
-                                        onClick={() => setOpenSeasonTag(season)}
+                                        onClick={() => setOpenSeasonTags(prev => prev.includes(season) ? prev.filter(tag => tag !== season) : [...prev, season])}
                                         aria-expanded={isOpen}
                                         className="w-full flex items-center justify-between gap-3 bg-white px-4 py-3 rounded-2xl border border-slate-100 shadow-soft text-left"
                                     >
@@ -3104,8 +3109,6 @@
                             );
                         })}
                     </div>
-
-                    <Fab onClick={() => setIsAddOpen(true)} icon="Plus" />
 
                     <Modal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} title="Add Fixture">
                         <form onSubmit={handleAdd} className="space-y-4">
@@ -8510,17 +8513,32 @@
                 window.location.reload();
             };
 
+            const scrollCurrentTabToTop = useCallback((tab) => {
+                const target = tab || activeTab;
+                const section = document.querySelector(`[data-tab-container="${target}"]`);
+                if (section && section.scrollTo) {
+                    section.scrollTo({ top: 0, behavior: 'smooth' });
+                } else {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+            }, [activeTab]);
+
             const navigate = useCallback((tab) => {
+                let target = tab;
                 if (tab === 'kit') {
                     setSquadTab('kit');
-                    setActiveTab('players');
-                    return;
-                }
-                if (tab === 'players') {
+                    target = 'players';
+                } else if (tab === 'players') {
                     setSquadTab('players');
                 }
-                setActiveTab(tab);
-            }, [setActiveTab, setSquadTab]);
+
+                if (activeTab === target) {
+                    scrollCurrentTabToTop(target);
+                    return;
+                }
+
+                setActiveTab(target);
+            }, [activeTab, setActiveTab, setSquadTab, scrollCurrentTabToTop]);
 
             return (
                 <ImportProgressContext.Provider value={importProgressContext}>
@@ -8544,27 +8562,45 @@
                         )}
 
                         <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
-{activeTab === 'dashboard' && <Dashboard onNavigate={navigate} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />}
-                            {activeTab === 'finances' && <Finances categories={categories} setCategories={setCategories} />}
-                            {activeTab === 'fixtures' && <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={navigate} />}
-                            {activeTab === 'players' && (
-                                <Players
-                                    itemCategories={itemCategories}
-                                    positionDefinitions={positionDefinitions}
-                                    kitDetails={kitDetails}
-                                    saveKitDetail={saveKitDetail}
-                                    kitSizeOptions={kitSizeOptions}
-                                    kitQueue={kitQueue}
-                                    onAddQueueEntry={addKitQueueEntry}
-                                    onRemoveQueueEntry={removeKitQueueEntry}
-                                    kitNumberLimit={kitNumberLimit}
-                                    setKitNumberLimit={setKitNumberLimit}
-                                    onImportKitDetails={importKitDetails}
-                                    squadTab={squadTab}
-                                    setSquadTab={setSquadTab}
-                                />
+{activeTab === 'dashboard' && (
+                                <div data-tab-container="dashboard">
+                                    <Dashboard onNavigate={navigate} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />
+                                </div>
                             )}
-                            {activeTab === 'opponents' && <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={navigate} />}
+                            {activeTab === 'finances' && (
+                                <div data-tab-container="finances">
+                                    <Finances categories={categories} setCategories={setCategories} />
+                                </div>
+                            )}
+                            {activeTab === 'fixtures' && (
+                                <div data-tab-container="fixtures">
+                                    <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={navigate} />
+                                </div>
+                            )}
+                            {activeTab === 'players' && (
+                                <div data-tab-container="players">
+                                    <Players
+                                        itemCategories={itemCategories}
+                                        positionDefinitions={positionDefinitions}
+                                        kitDetails={kitDetails}
+                                        saveKitDetail={saveKitDetail}
+                                        kitSizeOptions={kitSizeOptions}
+                                        kitQueue={kitQueue}
+                                        onAddQueueEntry={addKitQueueEntry}
+                                        onRemoveQueueEntry={removeKitQueueEntry}
+                                        kitNumberLimit={kitNumberLimit}
+                                        setKitNumberLimit={setKitNumberLimit}
+                                        onImportKitDetails={importKitDetails}
+                                        squadTab={squadTab}
+                                        setSquadTab={setSquadTab}
+                                    />
+                                </div>
+                            )}
+                            {activeTab === 'opponents' && (
+                                <div data-tab-container="opponents">
+                                    <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={navigate} />
+                                </div>
+                            )}
                             <div className="pt-6 text-center text-[10px] text-slate-400">
                                 {(() => {
                                     const formatted = READ_ONLY ? formatBuildLabel(APP_VERSION, true) : formatBuildLabel(APP_VERSION, false);
