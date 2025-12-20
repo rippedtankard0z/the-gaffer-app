@@ -5093,6 +5093,7 @@
             const [reassignNew, setReassignNew] = useState('');
             const [isReassigning, setIsReassigning] = useState(false);
             const [facts, setFacts] = useState({ opponentFacts: {}, venueFacts: {} });
+            const [leagueTable, setLeagueTable] = useState([]);
             const [viewTab, setViewTab] = useState('opponents');
             const emptyOpponentForm = { name: '', contact: '', phone: '', payee: '' };
             const [selectedOpponent, setSelectedOpponent] = useState(null);
@@ -5126,51 +5127,96 @@
                 setOpponentSaveStatus('idle');
             }, [selectedOpponent?.id]);
 
-            useEffect(() => {
-                const loadFacts = async () => {
-                    await waitForDb();
-                    const fx = await db.fixtures.toArray();
-                    const parts = await db.participations.toArray();
-                    const players = await db.players.toArray();
-                    const playerMap = {};
-                    players.forEach(p => playerMap[p.id] = p);
+            const refreshFacts = useCallback(async () => {
+                await waitForDb();
+                const fx = await db.fixtures.toArray();
+                const parts = await db.participations.toArray();
+                const players = await db.players.toArray();
+                const playerMap = {};
+                players.forEach(p => playerMap[p.id] = p);
 
-                    const opponentFacts = {};
-                    const venueFacts = {};
+                const opponentFacts = {};
+                const venueFacts = {};
+                const leagueStats = {};
 
-                    fx.forEach(f => {
-                        // Opponent facts
-                        if(f.opponent) {
-                            if(!opponentFacts[f.opponent]) opponentFacts[f.opponent] = { count: 0, dates: [], players: new Set() };
-                            opponentFacts[f.opponent].count += 1;
-                            opponentFacts[f.opponent].dates.push(f.date);
-                            const playIds = parts.filter(p => p.fixtureId === f.id).map(p => p.playerId);
-                            playIds.forEach(pid => opponentFacts[f.opponent].players.add(pid));
+                fx.forEach(f => {
+                    // Opponent facts
+                    if(f.opponent) {
+                        if(!opponentFacts[f.opponent]) opponentFacts[f.opponent] = { count: 0, dates: [], players: new Set() };
+                        opponentFacts[f.opponent].count += 1;
+                        opponentFacts[f.opponent].dates.push(f.date);
+                        const playIds = parts.filter(p => p.fixtureId === f.id).map(p => p.playerId);
+                        playIds.forEach(pid => opponentFacts[f.opponent].players.add(pid));
+                    }
+                    // Venue facts
+                    if(f.venue) {
+                        if(!venueFacts[f.venue]) venueFacts[f.venue] = { count: 0, dates: [], opponents: new Set(), players: new Set() };
+                        venueFacts[f.venue].count += 1;
+                        venueFacts[f.venue].dates.push(f.date);
+                        if(f.opponent) venueFacts[f.venue].opponents.add(f.opponent);
+                        const playIds = parts.filter(p => p.fixtureId === f.id).map(p => p.playerId);
+                        playIds.forEach(pid => venueFacts[f.venue].players.add(pid));
+                    }
+                    // League stats (played games only)
+                    const opponentName = (f.opponent || '').trim();
+                    const hasScore = typeof f.homeScore === 'number' && typeof f.awayScore === 'number';
+                    if(opponentName && hasScore) {
+                        if(!leagueStats[opponentName]) leagueStats[opponentName] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0 };
+                        const our = Number(f.homeScore || 0);
+                        const their = Number(f.awayScore || 0);
+                        leagueStats[opponentName].played += 1;
+                        if(our > their) {
+                            leagueStats[opponentName].wins += 1;
+                            leagueStats[opponentName].points += 3;
+                        } else if(our === their) {
+                            leagueStats[opponentName].draws += 1;
+                            leagueStats[opponentName].points += 1;
+                        } else {
+                            leagueStats[opponentName].losses += 1;
+                            leagueStats[opponentName].points += 3;
                         }
-                        // Venue facts
-                        if(f.venue) {
-                            if(!venueFacts[f.venue]) venueFacts[f.venue] = { count: 0, dates: [], opponents: new Set(), players: new Set() };
-                            venueFacts[f.venue].count += 1;
-                            venueFacts[f.venue].dates.push(f.date);
-                            if(f.opponent) venueFacts[f.venue].opponents.add(f.opponent);
-                            const playIds = parts.filter(p => p.fixtureId === f.id).map(p => p.playerId);
-                            playIds.forEach(pid => venueFacts[f.venue].players.add(pid));
-                        }
-                    });
+                    }
+                });
 
-                    // Convert sets to names
-                    Object.keys(opponentFacts).forEach(k => {
-                        opponentFacts[k].players = Array.from(opponentFacts[k].players).map(id => playerMap[id]?.firstName + ' ' + playerMap[id]?.lastName).filter(Boolean);
-                    });
-                    Object.keys(venueFacts).forEach(k => {
-                        venueFacts[k].players = Array.from(venueFacts[k].players).map(id => playerMap[id]?.firstName + ' ' + playerMap[id]?.lastName).filter(Boolean);
-                        venueFacts[k].opponents = Array.from(venueFacts[k].opponents);
-                    });
+                // Convert sets to names
+                Object.keys(opponentFacts).forEach(k => {
+                    opponentFacts[k].players = Array.from(opponentFacts[k].players).map(id => playerMap[id]?.firstName + ' ' + playerMap[id]?.lastName).filter(Boolean);
+                });
+                Object.keys(venueFacts).forEach(k => {
+                    venueFacts[k].players = Array.from(venueFacts[k].players).map(id => playerMap[id]?.firstName + ' ' + playerMap[id]?.lastName).filter(Boolean);
+                    venueFacts[k].opponents = Array.from(venueFacts[k].opponents);
+                });
 
-                    setFacts({ opponentFacts, venueFacts });
-                };
-                loadFacts();
+                opponents.forEach(o => {
+                    const name = (o.name || '').trim();
+                    if(!name) return;
+                    if(!leagueStats[name]) {
+                        leagueStats[name] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0 };
+                    }
+                });
+
+                const leagueRows = Object.entries(leagueStats)
+                    .map(([name, stats]) => ({ name, ...stats }))
+                    .sort((a, b) => b.points - a.points || b.wins - a.wins || a.name.localeCompare(b.name));
+
+                setLeagueTable(leagueRows);
+                setFacts({ opponentFacts, venueFacts });
             }, [opponents, venues]);
+
+            useEffect(() => {
+                refreshFacts();
+            }, [refreshFacts]);
+
+            useEffect(() => {
+                const handler = (event) => {
+                    if (!event.detail || !event.detail.name) return;
+                    if (['fixtures', 'players', 'participations'].includes(event.detail.name)) {
+                        refreshFacts();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, [refreshFacts]);
 
             const jumpToOpponentGames = (name) => {
                 if (!name) return;
@@ -5550,6 +5596,47 @@
 
                     {viewTab === 'opponents' && (
                         <div className="space-y-4">
+                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">League Table</div>
+                                        <div className="text-[11px] text-slate-500">P=Played · W=Win · L=Loss · D=Draw · PTS=3 for win, 1 for draw, 3 for loss.</div>
+                                    </div>
+                                    <div className="text-[11px] px-2 py-1 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
+                                        {leagueTable.length} team{leagueTable.length === 1 ? '' : 's'}
+                                    </div>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full text-sm">
+                                        <thead className="text-[11px] text-slate-400 uppercase tracking-wider">
+                                            <tr>
+                                                <th className="text-left py-2 font-bold">Team</th>
+                                                <th className="text-center py-2 font-bold">P</th>
+                                                <th className="text-center py-2 font-bold">W</th>
+                                                <th className="text-center py-2 font-bold">L</th>
+                                                <th className="text-center py-2 font-bold">D</th>
+                                                <th className="text-center py-2 font-bold">PTS</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {leagueTable.length ? leagueTable.map(row => (
+                                                <tr key={row.name} className="border-t border-slate-100">
+                                                    <td className="py-2 pr-2 text-left font-bold text-slate-900">{row.name}</td>
+                                                    <td className="py-2 text-center text-slate-700">{row.played}</td>
+                                                    <td className="py-2 text-center text-emerald-700">{row.wins}</td>
+                                                    <td className="py-2 text-center text-rose-700">{row.losses}</td>
+                                                    <td className="py-2 text-center text-amber-700">{row.draws}</td>
+                                                    <td className="py-2 text-center font-bold text-slate-900">{row.points}</td>
+                                                </tr>
+                                            )) : (
+                                                <tr>
+                                                    <td colSpan={6} className="py-3 text-center text-[11px] text-slate-500">No played games yet.</td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                             <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
                                 <div className="flex items-center justify-between">
                                     <div>
@@ -8521,11 +8608,9 @@
             const scrollCurrentTabToTop = useCallback((tab) => {
                 const target = tab || activeTab;
                 const section = document.querySelector(`[data-tab-container="${target}"]`);
-                if (section && section.scrollTo) {
-                    section.scrollTo({ top: 0, behavior: 'smooth' });
-                } else {
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                }
+                const scroller = (section && typeof section.scrollTo === 'function') ? section : window;
+                // Defer to next frame so click animations don't block the scroll.
+                requestAnimationFrame(() => scroller.scrollTo({ top: 0, behavior: 'smooth' }));
             }, [activeTab]);
 
             const navigate = useCallback((tab) => {
