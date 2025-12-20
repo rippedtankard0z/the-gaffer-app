@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2024.12.06-16';
+        const MASTER_BUILD_VERSION = '2024.12.06-17';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -1863,7 +1863,7 @@
             const [fixtureTx, setFixtureTx] = useState([]);
             const [allTx, setAllTx] = useState([]);
             const [isAddOpen, setIsAddOpen] = useState(false);
-            const [newFixture, setNewFixture] = useState({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: '15:00', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season', manOfTheMatch: '' });
+            const [newFixture, setNewFixture] = useState({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: 'TBC', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season', manOfTheMatch: '' });
             const [feeEdits, setFeeEdits] = useState({});
             const [newCost, setNewCost] = useState({ description: '', amount: '', category: 'Referee Fee', flow: 'payable' });
             const [payee, setPayee] = useState({ type: 'referee', value: '' });
@@ -2590,7 +2590,7 @@
                 ctx.fillStyle = '#cbd5e1';
                 ctx.font = '28px "Inter", sans-serif';
                 ctx.fillText(new Date(selectedFixture.date).toLocaleDateString(), 60, 210);
-                ctx.fillText(selectedFixture.time, 60, 260);
+                ctx.fillText(renderTimeLabel(selectedFixture.time), 60, 260);
 
                 ctx.fillStyle = '#e0f2fe';
                 ctx.font = '32px "Inter", sans-serif';
@@ -2618,11 +2618,15 @@
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 }
             }, []);
+            const renderTimeLabel = (value) => {
+                const clean = (value ?? '').toString().trim();
+                return clean || 'TBC';
+            };
 
             const handleAdd = async (e) => {
                 e.preventDefault();
                 await db.fixtures.add({ ...newFixture, status: 'SCHEDULED' });
-                setNewFixture({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: '15:00', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season', manOfTheMatch: '' });
+                setNewFixture({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: 'TBC', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season', manOfTheMatch: '' });
                 setIsAddOpen(false);
                 refresh();
             };
@@ -2713,7 +2717,7 @@
 
                 let opponent = 'Unknown Opponent';
                 let dateStr = parseDateFromText(clean) || new Date().toISOString().split('T')[0];
-                let time = parseTimeFromText(clean) || '15:00';
+                let time = parseTimeFromText(clean) || 'TBC';
                 let venue = 'Unknown';
 
                 const vsMatch = clean.match(/([^|]+?)\bvs\.?\b\s*([^|]+?)(?=\s*(\||$|Venue|Kick|KO))/i);
@@ -3234,8 +3238,8 @@
                                                                 </div>
                                                             )}
                                                         </div>
-                                                        <div className="text-right">
-                                                            <div className="text-2xl font-display font-bold text-slate-900 bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">{f.time}</div>
+                                                            <div className="text-right">
+                                                            <div className="text-2xl font-display font-bold text-slate-900 bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">{renderTimeLabel(f.time)}</div>
                                                             <div className="text-xs text-slate-400 font-medium mt-1">{new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</div>
                                                         </div>
                                                     </div>
@@ -3268,7 +3272,7 @@
                             <div className="grid grid-cols-2 gap-4">
                                 <input type="date" required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                     value={newFixture.date} onChange={e => setNewFixture({...newFixture, date: e.target.value})} />
-                                <input type="time" required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                <input type="text" required placeholder="15:00 or TBC" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                     value={newFixture.time} onChange={e => setNewFixture({...newFixture, time: e.target.value})} />
                             </div>
                     <select required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
@@ -3336,7 +3340,7 @@
                                             </div>
                                         )}
                                         <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" type="date" value={selectedFixture.date?.split('T')[0] || ''} onChange={e => setSelectedFixture({ ...selectedFixture, date: e.target.value })} />
-                                        <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" type="time" value={selectedFixture.time} onChange={e => setSelectedFixture({ ...selectedFixture, time: e.target.value })} />
+                                        <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" type="text" placeholder="15:00 or TBC" value={selectedFixture.time} onChange={e => setSelectedFixture({ ...selectedFixture, time: e.target.value })} />
                                         <select className="bg-white border border-slate-200 rounded-lg p-3 text-sm" value={selectedFixture.venue} onChange={e => setSelectedFixture({ ...selectedFixture, venue: e.target.value })}>
                                             <option value="">Select venue</option>
                                             {venues.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
@@ -3765,7 +3769,7 @@
                                         <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide">Date</label>
                                         <input type="date" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" value={parsedData.date} onChange={e => updateFixtureField('date', e.target.value)} />
                                         <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide block">Time</label>
-                                        <input type="time" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" value={parsedData.time} onChange={e => updateFixtureField('time', e.target.value)} />
+                                        <input type="text" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" placeholder="15:00 or TBC" value={parsedData.time} onChange={e => updateFixtureField('time', e.target.value)} />
                                         <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide block">Player Fee (default 20)</label>
                                         <input type="number" min="0" step="1" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" value={parsedData.feeAmount ?? 20} onChange={e => updateFixtureField('feeAmount', Number(e.target.value))} />
                                         <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide block">Competition</label>
@@ -5219,7 +5223,7 @@
                             <div className="flex items-center justify-between">
                                 <div>
                                     <div className="text-sm font-bold text-slate-900">Next: vs {nextFixture.opponent}</div>
-                                    <div className="text-[11px] text-slate-500">{new Date(nextFixture.date).toLocaleDateString()} · {nextFixture.time} · {nextFixture.venue || 'TBC'}</div>
+                                    <div className="text-[11px] text-slate-500">{new Date(nextFixture.date).toLocaleDateString()} · {renderTimeLabel(nextFixture.time)} · {nextFixture.venue || 'TBC'}</div>
                                 </div>
                                 <button onClick={() => onNavigate('fixtures')} className="text-[11px] font-bold text-brand-600 underline">Open</button>
                             </div>
