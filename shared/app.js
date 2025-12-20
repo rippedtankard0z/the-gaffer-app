@@ -1,6 +1,10 @@
 'use strict';
         const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
-        const MASTER_BUILD_VERSION = '2024.12.06-13';
+        // Build version source of truth for the app shell. When you want Codex to bump the version:
+        // 1) Update MASTER_BUILD_VERSION below to the new value.
+        // 2) Mirror it into Firestore so live clients see the update banner:
+        //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
+        const MASTER_BUILD_VERSION = '2024.12.06-14';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -204,6 +208,12 @@
         ];
         const clonePositionDefinitions = (defs = []) => defs.map(def => ({ code: def.code, label: def.label }));
 
+        const extractBuildVersion = (data = {}) => {
+            const candidates = [data.buildVersion, data.appVersion, data.version, data.currentBuild];
+            const value = candidates.find(v => v !== undefined && v !== null && `${v}`.trim());
+            return value ? `${value}`.trim() : '';
+        };
+
         const normalizePositionDefinitions = (defs, fallback) => {
             if (!Array.isArray(defs) || !defs.length) return clonePositionDefinitions(fallback);
             const cleaned = defs.map(item => {
@@ -221,7 +231,8 @@
             refDefaults: { ...DEFAULT_REF_DEFAULTS },
             kitNumberLimit: DEFAULT_KIT_NUMBER_LIMIT,
             kitSizeOptions: [...DEFAULT_KIT_SIZE_OPTIONS],
-            positionDefinitions: clonePositionDefinitions(DEFAULT_POSITION_DEFINITIONS)
+            positionDefinitions: clonePositionDefinitions(DEFAULT_POSITION_DEFINITIONS),
+            buildVersion: APP_VERSION
         });
 
         const normalizeSettings = (data = {}) => {
@@ -238,7 +249,8 @@
                     ? Math.max(1, Number(data.kitNumberLimit))
                     : defaults.kitNumberLimit,
                 kitSizeOptions: Array.isArray(data.kitSizeOptions) && data.kitSizeOptions.length ? data.kitSizeOptions : defaults.kitSizeOptions,
-                positionDefinitions: normalizePositionDefinitions(data.positionDefinitions, defaults.positionDefinitions)
+                positionDefinitions: normalizePositionDefinitions(data.positionDefinitions, defaults.positionDefinitions),
+                buildVersion: extractBuildVersion(data) || defaults.buildVersion
             };
         };
 
@@ -4670,6 +4682,7 @@
                                 label: paymentDescription,
                                 category: tx.category || 'OTHER',
                                 fixtureId: tx.fixtureId,
+                                fixtureOpponent: fixture?.opponent || clubName,
                                 amount: tx.amount,
                                 date: dateSource || tx.date,
                                 context: metaParts.join(' · ')
@@ -4766,6 +4779,12 @@
                 localStorage.setItem('gaffer:focusPlayerId', String(group.playerId));
                 if (group.playerName) localStorage.setItem('gaffer:focusPlayerName', group.playerName);
                 onNavigate('players');
+            };
+
+            const openOpponentFromClubReceivable = (group) => {
+                if (!group?.clubName || !onNavigate) return;
+                localStorage.setItem('gaffer:focusFixtureOpponent', group.clubName);
+                onNavigate('fixtures');
             };
 
             const handleKeyActivate = (event, action) => {
@@ -4907,20 +4926,33 @@
                             <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
                                 {clubReceivableGroups.map(group => (
                                     <div key={group.clubName} className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 space-y-2">
-                                        <div className="flex items-center justify-between">
+                                        <div
+                                            className="flex items-center justify-between cursor-pointer"
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => openOpponentFromClubReceivable(group)}
+                                            onKeyDown={(e) => handleKeyActivate(e, () => openOpponentFromClubReceivable(group))}
+                                        >
                                             <div className="text-sm font-bold text-slate-900">{group.clubName}</div>
                                             <div className="text-[11px] font-bold text-indigo-700">Owes {formatCurrency(group.total, { maximumFractionDigits: 0 })}</div>
                                         </div>
                                         <div className="space-y-2">
                                             {group.items.map(item => (
-                                                <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-white/90 px-3 py-2">
+                                                <div
+                                                    key={item.id}
+                                                    className={`flex items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-white/90 px-3 py-2 ${item.fixtureId ? 'cursor-pointer hover:border-brand-200' : ''}`}
+                                                    onClick={() => item.fixtureId && openFixtureFromUnpaid(item)}
+                                                    role={item.fixtureId ? 'button' : undefined}
+                                                    tabIndex={item.fixtureId ? 0 : undefined}
+                                                    onKeyDown={item.fixtureId ? (e) => handleKeyActivate(e, () => openFixtureFromUnpaid(item)) : undefined}
+                                                >
                                                     <div className="min-w-0">
                                                         <div className="text-[12px] font-semibold text-slate-800 truncate">{item.label}</div>
                                                         {item.context && <div className="text-[10px] text-slate-500">{item.context}</div>}
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <div className="text-[11px] font-bold text-indigo-600">{formatCurrency(Math.abs(item.amount), { maximumFractionDigits: 0 })}</div>
-                                                        <button onClick={() => settleClubReceivable(item)} disabled={isSettlingClub} className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-1 rounded-md shadow-sm disabled:opacity-60">Paid</button>
+                                                        <button onClick={(e) => { e.stopPropagation(); settleClubReceivable(item); }} disabled={isSettlingClub} className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-1 rounded-md shadow-sm disabled:opacity-60">Paid</button>
                                                     </div>
                                                 </div>
                                             ))}
@@ -5251,9 +5283,9 @@
                             seasonTotals[seasonKey].points += 1;
                         } else {
                             leagueStats[opponentName].losses += 1;
-                            leagueStats[opponentName].points += 3;
+                            // Loss: no points awarded
                             seasonTotals[seasonKey].losses += 1;
-                            seasonTotals[seasonKey].points += 3;
+                            // Loss: no points awarded
                         }
                     }
                 });
@@ -8468,11 +8500,14 @@
             const [kitSizeOptions, setKitSizeOptions] = useState(loadKitSizeOptions());
             const [squadTab, setSquadTab] = useState('players');
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-            const [isVersionMismatch, setIsVersionMismatch] = useState(false);
+            const [hasLocalVersionMismatch, setHasLocalVersionMismatch] = useState(false);
+            const [hasRemoteVersionMismatch, setHasRemoteVersionMismatch] = useState(false);
+            const [availableBuildVersion, setAvailableBuildVersion] = useState(APP_VERSION);
             const [importCount, setImportCount] = useState(0);
             const [importMessage, setImportMessage] = useState('');
             const [progressDetails, setProgressDetails] = useState([]);
             const settingsLoadedRef = useRef(false);
+            const isVersionMismatch = hasLocalVersionMismatch || hasRemoteVersionMismatch;
             const startImportProgress = useCallback((label = 'Updating data…') => {
                 setImportCount(prev => {
                     if (prev === 0) {
@@ -8520,11 +8555,33 @@
                     setKitNumberLimit(settings.kitNumberLimit);
                     setKitSizeOptions(settings.kitSizeOptions);
                 };
+                const handleRemoteBuildVersion = async (rawSettings = {}) => {
+                    const remoteVersion = extractBuildVersion(rawSettings);
+                    if (!isActive) return;
+                    if (remoteVersion && remoteVersion !== APP_VERSION) {
+                        setHasRemoteVersionMismatch(true);
+                        setAvailableBuildVersion(remoteVersion);
+                        return;
+                    }
+                    setHasRemoteVersionMismatch(false);
+                    if (!remoteVersion && !READ_ONLY) {
+                        try {
+                            await saveSettingsPatch({ buildVersion: APP_VERSION });
+                            if (!isActive) return;
+                        } catch (err) {
+                            console.warn('Unable to persist build version to settings', err);
+                        }
+                    }
+                    if (!hasLocalVersionMismatch) {
+                        setAvailableBuildVersion(APP_VERSION);
+                    }
+                };
                 const loadSettings = async () => {
                     await waitForDb();
                     if (!db?.settings) {
                         console.warn('Settings collection unavailable; using defaults.');
                         settingsLoadedRef.current = true;
+                        await handleRemoteBuildVersion({});
                         await runFeeCategoryMigration();
                         return;
                     }
@@ -8543,6 +8600,7 @@
                             applySettings(normalized);
                             clearLegacySettings();
                             settingsLoadedRef.current = true;
+                            await handleRemoteBuildVersion(existing);
                             await runFeeCategoryMigration();
                             return;
                         }
@@ -8558,15 +8616,27 @@
                         if (didSave) clearLegacySettings();
                         applySettings(normalized);
                         settingsLoadedRef.current = true;
+                        await handleRemoteBuildVersion(normalized);
                         await runFeeCategoryMigration();
                     } catch (err) {
                         console.warn('Unable to load settings', err);
+                        await handleRemoteBuildVersion({});
                         settingsLoadedRef.current = true;
                     }
                 };
                 loadSettings();
-                return () => { isActive = false; };
-            }, []);
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (e.detail.name === 'settings') {
+                        loadSettings();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => {
+                    isActive = false;
+                    window.removeEventListener('gaffer-firestore-update', handler);
+                };
+            }, [hasLocalVersionMismatch]);
 
             useEffect(() => {
                 const load = async () => {
@@ -8719,14 +8789,16 @@
             useEffect(() => {
                 try {
                     const stored = localStorage.getItem(VERSION_STORAGE_KEY);
-                    if (stored && stored !== APP_VERSION) {
-                        setIsVersionMismatch(true);
+                    const mismatch = stored && stored !== APP_VERSION;
+                    setHasLocalVersionMismatch(Boolean(mismatch));
+                    if (mismatch && !hasRemoteVersionMismatch) {
+                        setAvailableBuildVersion(APP_VERSION);
                     }
                     localStorage.setItem(VERSION_STORAGE_KEY, APP_VERSION);
                 } catch (err) {
                     console.warn('Unable to record build version', err);
                 }
-            }, []);
+            }, [hasRemoteVersionMismatch]);
 
             const handleVersionReload = () => {
                 try {
@@ -8791,7 +8863,7 @@
                             <div className="max-w-md mx-auto mt-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-[11px] relative z-10 space-y-2">
                                 <div className="text-xs font-bold text-amber-900 tracking-wide">New build detected</div>
                                 <p>
-                                    Version {APP_VERSION} is live. Hard refresh (Cmd/Ctrl + Shift + R or hold Shift + click reload)
+                                    Version {availableBuildVersion || APP_VERSION} is live. Hard refresh (Cmd/Ctrl + Shift + R or hold Shift + click reload)
                                     if you still see stale UI.
                                 </p>
                                 <button onClick={handleVersionReload} className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-white/90 border border-amber-200 text-[11px] font-bold text-amber-800 shadow-sm">
