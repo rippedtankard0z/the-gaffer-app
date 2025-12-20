@@ -102,6 +102,14 @@
                 .trim();
         };
 
+        const renderTimeLabel = (value) => {
+            const clean = (value ?? '').toString().trim();
+            if (!clean) return 'TBC';
+            const lower = clean.toLowerCase();
+            if (lower === 'tbc' || lower === 'tbd') return 'TBC';
+            return clean;
+        };
+
         const normalizeMotm = (value = '') => {
             return (value ?? '').toString().trim();
         };
@@ -2618,10 +2626,6 @@
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 }
             }, []);
-            const renderTimeLabel = (value) => {
-                const clean = (value ?? '').toString().trim();
-                return clean || 'TBC';
-            };
 
             const handleAdd = async (e) => {
                 e.preventDefault();
