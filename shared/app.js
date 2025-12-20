@@ -1694,6 +1694,11 @@
                                     <div className="space-y-2 max-h-48 overflow-y-auto">
                                         {Array.from(new Map(playerTx.map(tx => [tx.id, tx])).values()).map(tx => {
                                             const isCharge = tx.amount < 0;
+                                            const fixture = fixtures.find(f => f.id === tx.fixtureId);
+                                            const fixtureDetails = fixture ? [
+                                                fixture.date ? new Date(fixture.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
+                                                fixture.venue || ''
+                                            ].filter(Boolean).join(' · ') : null;
                                             const writeOffTx = isCharge ? findWriteOffForCharge(tx, playerTx) : null;
                                             const paymentTx = isCharge ? findPaymentForCharge(tx, playerTx) : null;
                                             const isWrittenOff = !!writeOffTx;
@@ -1703,7 +1708,7 @@
                                                 <div key={tx.id} className="flex justify-between items-center p-3 border border-slate-100 rounded-xl bg-white">
                                                     <div>
                                                         <div className="text-xs font-bold text-slate-900">{tx.description}</div>
-                                                        <div className="text-[10px] text-slate-400">{new Date(tx.date).toLocaleDateString()}</div>
+                                                        <div className="text-[10px] text-slate-400">{(isCharge && fixtureDetails) ? fixtureDetails : new Date(tx.date).toLocaleDateString()}</div>
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <div className={`text-sm font-bold ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
