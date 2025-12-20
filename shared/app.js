@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2024.12.06-14';
+        const MASTER_BUILD_VERSION = '2024.12.06-15';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -2666,78 +2666,76 @@
 
                 // Improved Start Detection: Allows space/dot after 1 (e.g. "1. Con")
                 const playersStart = clean.search(/1[\.\)\s]*[A-Za-z]/);
+                const noPlayersDetected = playersStart === -1;
                 
-                if(playersStart === -1) {
-                    alert("Could not detect player list. Ensure it starts with '1Name...' or '1. Name...'");
-                    return;
-                }
-                
-                const playerBlock = clean.substring(playersStart);
-                
-                // Improved Chunking: 
-                // 1. Match a number (\d+)
-                // 2. Optional separator ([\.\)\s]*)
-                // 3. Content that is NOT a digit ([^\d]+)
-                // 4. Lookahead for next number or end of string (?=(\d+|$))
-                const chunks = playerBlock.match(/(\d+)[\.\)\s]*([^\d]+)(?=(\d+|$))/g) || [];
+                if(!noPlayersDetected) {
+                    const playerBlock = clean.substring(playersStart);
+                    
+                    // Improved Chunking: 
+                    // 1. Match a number (\d+)
+                    // 2. Optional separator ([\.\)\s]*)
+                    // 3. Content that is NOT a digit ([^\d]+)
+                    // 4. Lookahead for next number or end of string (?=(\d+|$))
+                    const chunks = playerBlock.match(/(\d+)[\.\)\s]*([^\d]+)(?=(\d+|$))/g) || [];
 
-                chunks.forEach(chunk => {
-                    // Match the number and the rest of the string
-                    // We allow flexible separator in between capture groups
-                    const match = chunk.match(/^(\d+)[\.\)\s]*(.+)$/);
-                    if(!match) return;
-                    
-                    let rawContent = match[2].trim();
-                    if(rawContent.length < 2) return; // Skip empty entries like "17" -> " "
-                    
-                    // Check Payment
-                    let isPaid = false;
-                    if(/Paid$/i.test(rawContent) || /Paid\s*$/i.test(rawContent)) {
-                        isPaid = true;
-                        rawContent = rawContent.replace(/Paid\s*$/i, '').trim();
-                    }
-                    
-                    // Extract Name & remove trailing shorthand position codes
-                    let name = rawContent;
-
-                    const sortedPos = trailingPositionTokens.sort((a,b) => b.length - a.length);
-                    for(const pos of sortedPos) {
-                        const regex = new RegExp(`[\\/\\s]*${pos}$`, 'i');
-                        if(regex.test(name)) {
-                            name = name.replace(regex, '').trim();
-                            break;
+                    chunks.forEach(chunk => {
+                        // Match the number and the rest of the string
+                        // We allow flexible separator in between capture groups
+                        const match = chunk.match(/^(\d+)[\.\)\s]*(.+)$/);
+                        if(!match) return;
+                        
+                        let rawContent = match[2].trim();
+                        if(rawContent.length < 2) return; // Skip empty entries like "17" -> " "
+                        
+                        // Check Payment
+                        let isPaid = false;
+                        if(/Paid$/i.test(rawContent) || /Paid\s*$/i.test(rawContent)) {
+                            isPaid = true;
+                            rawContent = rawContent.replace(/Paid\s*$/i, '').trim();
                         }
-                    }
+                        
+                        // Extract Name & remove trailing shorthand position codes
+                        let name = rawContent;
 
-                    name = name.replace(/[\/\.\-]$/, '').trim();
+                        const sortedPos = trailingPositionTokens.sort((a,b) => b.length - a.length);
+                        for(const pos of sortedPos) {
+                            const regex = new RegExp(`[\\/\\s]*${pos}$`, 'i');
+                            if(regex.test(name)) {
+                                name = name.replace(regex, '').trim();
+                                break;
+                            }
+                        }
 
-                    // Skip obvious non-player rows
-                    if(/^(time|venue|kit)/i.test(name)) return;
-                    if(name.length < 2) return;
-                    
-                    const existing = players.find(p => 
-                        p.firstName.toLowerCase() === name.toLowerCase() || 
-                        (p.firstName + ' ' + p.lastName).toLowerCase() === name.toLowerCase() ||
-                        name.toLowerCase().includes(p.firstName.toLowerCase()) && name.length > 3
-                    );
+                        name = name.replace(/[\/\.\-]$/, '').trim();
 
-                    const suggestions = suggestPlayers(name, players);
-                    const bestSuggestion = suggestions[0];
-                    let selectedId = existing ? String(existing.id) : null;
-                    if(!selectedId && bestSuggestion && bestSuggestion.score >= 0.75) {
-                        selectedId = String(bestSuggestion.player.id);
-                    }
-                    const normalizedName = existing ? `${existing.firstName} ${existing.lastName}` : name;
-                    const needsReview = !selectedId;
+                        // Skip obvious non-player rows
+                        if(/^(time|venue|kit)/i.test(name)) return;
+                        if(name.length < 2) return;
+                        
+                        const existing = players.find(p => 
+                            p.firstName.toLowerCase() === name.toLowerCase() || 
+                            (p.firstName + ' ' + p.lastName).toLowerCase() === name.toLowerCase() ||
+                            name.toLowerCase().includes(p.firstName.toLowerCase()) && name.length > 3
+                        );
 
-                    entries.push({
-                        name: normalizedName,
-                        isPaid,
-                        selectedId,
-                        suggestions,
-                        needsReview
+                        const suggestions = suggestPlayers(name, players);
+                        const bestSuggestion = suggestions[0];
+                        let selectedId = existing ? String(existing.id) : null;
+                        if(!selectedId && bestSuggestion && bestSuggestion.score >= 0.75) {
+                            selectedId = String(bestSuggestion.player.id);
+                        }
+                        const normalizedName = existing ? `${existing.firstName} ${existing.lastName}` : name;
+                        const needsReview = !selectedId;
+
+                        entries.push({
+                            name: normalizedName,
+                            isPaid,
+                            selectedId,
+                            suggestions,
+                            needsReview
+                        });
                     });
-                });
+                }
                 
                 // Preselect best opponent/venue suggestions
                 const bestOpp = opponents.map(o => ({ o, score: stringSimilarity(opponent, o.name) })).sort((a,b)=>b.score-a.score)[0];
@@ -2745,7 +2743,7 @@
                 const bestVen = venues.map(v => ({ v, score: stringSimilarity(venue, v.name) })).sort((a,b)=>b.score-a.score)[0];
                 if(bestVen && bestVen.score > 0.65) venue = bestVen.v.name;
 
-                setParsedData({ opponent, date: dateStr, time, venue, entries, feeAmount: Number(magicFee) || 20, competitionType: 'LEAGUE', seasonTag });
+                setParsedData({ opponent, date: dateStr, time, venue, entries, feeAmount: Number(magicFee) || 20, competitionType: 'LEAGUE', seasonTag, noPlayersDetected });
                 const suggestedFixture = fixtures
                     .filter(f => f.status === 'PLAYED' || f.status === 'SCHEDULED')
                     .find(f => {
@@ -2758,72 +2756,77 @@
             };
             
             const confirmMagic = async () => {
-                if(!parsedData || !parsedData.entries || parsedData.entries.length === 0) return;
+                if(!parsedData) return;
+                const playerEntries = Array.isArray(parsedData.entries) ? parsedData.entries : [];
                 startImportProgress('Importing fixture data…');
                 addProgressDetail('Preparing game record…');
                 try {
                     let finalFixtureId = null;
-                let fixtureOpponentLabel = parsedData.opponent;
-                let feeForFixture = parsedData.feeAmount || 20;
-                const existingTarget = magicFixtureTarget !== 'new'
-                    ? fixtures.find(f => String(f.id) === String(magicFixtureTarget))
-                    : null;
+                    let fixtureOpponentLabel = parsedData.opponent;
+                    let feeForFixture = parsedData.feeAmount || 20;
+                    const existingTarget = magicFixtureTarget !== 'new'
+                        ? fixtures.find(f => String(f.id) === String(magicFixtureTarget))
+                        : null;
 
-                if(existingTarget) {
-                    finalFixtureId = existingTarget.id;
-                    fixtureOpponentLabel = existingTarget.opponent || fixtureOpponentLabel;
-                    feeForFixture = parsedData.feeAmount || existingTarget.feeAmount || 20;
-                    await db.fixtures.update(finalFixtureId, { feeAmount: feeForFixture });
-                    await db.participations.where('fixtureId').equals(finalFixtureId).delete();
-                    const existingMatchFees = await db.transactions
-                        .where('fixtureId')
-                        .equals(finalFixtureId)
-                        .and(tx => isPlayerFeeCategory(tx.category))
-                        .toArray();
-                    if(existingMatchFees.length) {
-                        await db.transactions.bulkDelete(existingMatchFees.map(tx => tx.id));
-                    }
-                    addProgressDetail(`Updating existing game vs ${fixtureOpponentLabel}`);
-                } else {
-                    // Resolve opponent/venue to known lists if close match, otherwise create
-                    let bestOpponent = opponents
-                        .map(o => ({ o, score: stringSimilarity(parsedData.opponent, o.name) }))
-                        .sort((a,b)=>b.score-a.score)[0];
-                    let opponentId = bestOpponent && bestOpponent.score > 0.65 ? bestOpponent.o.id : null;
-                    let opponentName = bestOpponent && bestOpponent.score > 0.65 ? bestOpponent.o.name : parsedData.opponent;
-                    if(!opponentId) {
-                        opponentId = await db.opponents.add({ name: opponentName });
-                        opponentName = parsedData.opponent;
-                        if(setOpponents) setOpponents([...opponents, { id: opponentId, name: opponentName }]);
-                    }
+                    if(existingTarget) {
+                        finalFixtureId = existingTarget.id;
+                        fixtureOpponentLabel = existingTarget.opponent || fixtureOpponentLabel;
+                        feeForFixture = parsedData.feeAmount || existingTarget.feeAmount || 20;
+                        await db.fixtures.update(finalFixtureId, { feeAmount: feeForFixture });
+                        if(playerEntries.length) {
+                            await db.participations.where('fixtureId').equals(finalFixtureId).delete();
+                            const existingMatchFees = await db.transactions
+                                .where('fixtureId')
+                                .equals(finalFixtureId)
+                                .and(tx => isPlayerFeeCategory(tx.category))
+                                .toArray();
+                            if(existingMatchFees.length) {
+                                await db.transactions.bulkDelete(existingMatchFees.map(tx => tx.id));
+                            }
+                            addProgressDetail(`Updating existing game vs ${fixtureOpponentLabel}`);
+                        } else {
+                            addProgressDetail(`Updated fixture details for ${fixtureOpponentLabel}; kept existing squad because no players were imported.`);
+                        }
+                    } else {
+                        // Resolve opponent/venue to known lists if close match, otherwise create
+                        let bestOpponent = opponents
+                            .map(o => ({ o, score: stringSimilarity(parsedData.opponent, o.name) }))
+                            .sort((a,b)=>b.score-a.score)[0];
+                        let opponentId = bestOpponent && bestOpponent.score > 0.65 ? bestOpponent.o.id : null;
+                        let opponentName = bestOpponent && bestOpponent.score > 0.65 ? bestOpponent.o.name : parsedData.opponent;
+                        if(!opponentId) {
+                            opponentId = await db.opponents.add({ name: opponentName });
+                            opponentName = parsedData.opponent;
+                            if(setOpponents) setOpponents([...opponents, { id: opponentId, name: opponentName }]);
+                        }
 
-                    let bestVenue = venues
-                        .map(v => ({ v, score: stringSimilarity(parsedData.venue, v.name) }))
-                        .sort((a,b)=>b.score-a.score)[0];
-                    let venueId = bestVenue && bestVenue.score > 0.65 ? bestVenue.v.id : null;
-                    let venueName = bestVenue && bestVenue.score > 0.65 ? bestVenue.v.name : parsedData.venue;
-                    if(!venueId) {
-                        venueId = await db.venues.add({ name: venueName });
-                        venueName = parsedData.venue;
-                        if(setVenues) setVenues([...venues, { id: venueId, name: venueName }]);
-                    }
+                        let bestVenue = venues
+                            .map(v => ({ v, score: stringSimilarity(parsedData.venue, v.name) }))
+                            .sort((a,b)=>b.score-a.score)[0];
+                        let venueId = bestVenue && bestVenue.score > 0.65 ? bestVenue.v.id : null;
+                        let venueName = bestVenue && bestVenue.score > 0.65 ? bestVenue.v.name : parsedData.venue;
+                        if(!venueId) {
+                            venueId = await db.venues.add({ name: venueName });
+                            venueName = parsedData.venue;
+                            if(setVenues) setVenues([...venues, { id: venueId, name: venueName }]);
+                        }
 
-                    finalFixtureId = await db.fixtures.add({
-                        opponent: opponentName,
-                        opponentId,
-                        date: parsedData.date,
-                        venue: venueName,
-                        venueId,
-                        time: parsedData.time,
-                        competitionType: parsedData.competitionType || 'LEAGUE',
-                        feeAmount: parsedData.feeAmount || 20,
-                        seasonTag: parsedData.seasonTag || (seasonCategories?.[0] || '2025/2026 Season'),
-                        status: 'SCHEDULED'
-                    });
-                    fixtureOpponentLabel = opponentName;
-                    feeForFixture = parsedData.feeAmount || 20;
-                    addProgressDetail(`Created new game vs ${fixtureOpponentLabel} on ${parsedData.date}`);
-                }
+                        finalFixtureId = await db.fixtures.add({
+                            opponent: opponentName,
+                            opponentId,
+                            date: parsedData.date,
+                            venue: venueName,
+                            venueId,
+                            time: parsedData.time,
+                            competitionType: parsedData.competitionType || 'LEAGUE',
+                            feeAmount: parsedData.feeAmount || 20,
+                            seasonTag: parsedData.seasonTag || (seasonCategories?.[0] || '2025/2026 Season'),
+                            status: 'SCHEDULED'
+                        });
+                        fixtureOpponentLabel = opponentName;
+                        feeForFixture = parsedData.feeAmount || 20;
+                        addProgressDetail(`Created new game vs ${fixtureOpponentLabel} on ${parsedData.date}`);
+                    }
 
                 if(!finalFixtureId) {
                     alert('Unable to determine a game to import into.');
@@ -2835,8 +2838,8 @@
                 const participations = [];
                 const transactions = [];
 
-                for (let i = 0; i < parsedData.entries.length; i++) {
-                    const entry = parsedData.entries[i];
+                for (let i = 0; i < playerEntries.length; i++) {
+                    const entry = playerEntries[i];
                     const trimmedName = (entry.name || '').trim();
                     if(!trimmedName) continue;
                     let playerId = typeof entry.selectedId === 'number' ? entry.selectedId : parseInt(entry.selectedId, 10);
@@ -2851,9 +2854,9 @@
                             lastName,
                             isActive: true
                         });
-                        addProgressDetail(`(${i + 1}/${parsedData.entries.length}) Added new player ${firstName} ${lastName}`);
+                        addProgressDetail(`(${i + 1}/${playerEntries.length}) Added new player ${firstName} ${lastName}`);
                     } else {
-                        addProgressDetail(`(${i + 1}/${parsedData.entries.length}) Linked ${trimmedName} to player #${playerId}`);
+                        addProgressDetail(`(${i + 1}/${playerEntries.length}) Linked ${trimmedName} to player #${playerId}`);
                     }
 
                     participations.push({ fixtureId: finalFixtureId, playerId, status: 'SELECTED' });
@@ -2885,9 +2888,13 @@
                     }
                 }
 
-                addProgressDetail('Writing players, fees, and payments…');
-                await db.participations.bulkAdd(participations);
-                await db.transactions.bulkAdd(transactions);
+                if(participations.length || transactions.length) {
+                    addProgressDetail('Writing players, fees, and payments…');
+                    if(participations.length) await db.participations.bulkAdd(participations);
+                    if(transactions.length) await db.transactions.bulkAdd(transactions);
+                } else {
+                    addProgressDetail('Saved fixture without a squad list; add registrations later.');
+                }
 
                 alert('Magic Import Complete!');
                 setIsMagicOpen(false);
@@ -3614,6 +3621,7 @@
                                 <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
                                     <p className="text-xs font-bold text-indigo-800 uppercase tracking-wide mb-1">Paste Raw Text</p>
                                     <p className="text-xs text-indigo-600">Handles messy copied text like: "1ConGK", "2AlunRB/LB", "3Aaron DefPaid"</p>
+                                    <p className="text-xs text-indigo-600 mt-2">No squad yet? Import just the fixture details now and add registrations later.</p>
                                 </div>
                                 <textarea 
                                     className="w-full h-48 bg-slate-50 border border-slate-200 rounded-xl p-4 font-mono text-sm outline-none focus:border-indigo-500" 
@@ -3684,6 +3692,11 @@
                                 <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 p-2 rounded-lg">
                                     Remove any bad rows below. Rows left in yellow are uncertain matches; edit or delete before importing.
                                 </div>
+                                {parsedData.entries.length === 0 && (
+                                    <div className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 p-2 rounded-lg">
+                                        No players detected. You can still import to create or update the game and add the squad later once registration opens.
+                                    </div>
+                                )}
 
                                 <div className="space-y-2 bg-white border border-indigo-100 rounded-xl p-3">
                                     <div className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide">Apply To Game</div>
