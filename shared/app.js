@@ -2633,32 +2633,122 @@
                 let clean = magicText.replace(/\n/g, ' ').replace(/\s+/g, ' ');
 
                 // 2. Parse Metadata (Header Block)
+                const seasonTag = selectedSeason || (seasonCategories?.[0] || '2025/2026 Season');
+                const pipeParts = clean.split('|').map(p => p.trim()).filter(Boolean);
+                const tidyLabel = (str = '') => str.replace(/^[\s•.\-:]+/, '').replace(/[\s•.\-:]+$/, '').trim();
+                const tidyTeamLabel = (str = '') => {
+                    let val = tidyLabel(str);
+                    val = val.replace(/^(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+/i, '');
+                    val = val.replace(/^\d{1,2}\s*(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*\d{2,4}[:,\-]?\s*/i, '');
+                    val = val.replace(/^\d{1,2}\s*(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*\s*/i, '');
+                    const colonIdx = val.indexOf(':');
+                    if(colonIdx > 0 && colonIdx < 12) {
+                        val = val.slice(colonIdx + 1).trim();
+                    }
+                    return val;
+                };
+                const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+                const toIsoDate = (y, mIndex, d) => {
+                    const dt = new Date(Date.UTC(y, mIndex, d));
+                    return Number.isNaN(dt.getTime()) ? null : dt.toISOString().split('T')[0];
+                };
+                const parseDateFromText = (text) => {
+                    const yearNow = new Date().getFullYear();
+                    const dayMonthYear = text.match(/(\d{1,2})\s*(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*\s*,?\s*(\d{4})?/i);
+                    if(dayMonthYear) {
+                        const day = Number(dayMonthYear[1]);
+                        const mIdx = months.indexOf(dayMonthYear[2].toLowerCase().slice(0,3));
+                        const year = Number(dayMonthYear[3]) || yearNow;
+                        if(mIdx >= 0) {
+                            const iso = toIsoDate(year, mIdx, day);
+                            if(iso) return iso;
+                        }
+                    }
+                    const monthDayYear = text.match(/(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*\s*(\d{1,2})(?:st|nd|rd|th)?\s*,?\s*(\d{4})?/i);
+                    if(monthDayYear) {
+                        const mIdx = months.indexOf(monthDayYear[1].toLowerCase().slice(0,3));
+                        const day = Number(monthDayYear[2]);
+                        const year = Number(monthDayYear[3]) || yearNow;
+                        if(mIdx >= 0) {
+                            const iso = toIsoDate(year, mIdx, day);
+                            if(iso) return iso;
+                        }
+                    }
+                    const isoLike = text.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+                    if(isoLike) {
+                        const year = Number(isoLike[1]);
+                        const month = Number(isoLike[2]) - 1;
+                        const day = Number(isoLike[3]);
+                        const iso = toIsoDate(year, month, day);
+                        if(iso) return iso;
+                    }
+                    const dmy = text.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+                    if(dmy) {
+                        const day = Number(dmy[1]);
+                        const month = Number(dmy[2]) - 1;
+                        const year = Number(dmy[3]);
+                        const iso = toIsoDate(year, month, day);
+                        if(iso) return iso;
+                    }
+                    return null;
+                };
+                const parseTimeFromText = (text) => {
+                    const hhmm = text.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+                    const simple = text.match(/(\d{1,2})\s*(am|pm)/i);
+                    const formatTime = (h, m = 0, meridiem = '') => {
+                        let hour = Number(h);
+                        const minute = Number(m);
+                        const hasMeridiem = !!meridiem;
+                        const lower = (meridiem || '').toLowerCase();
+                        if(hasMeridiem) {
+                            if(lower === 'pm' && hour < 12) hour += 12;
+                            if(lower === 'am' && hour === 12) hour = 0;
+                        }
+                        return `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
+                    };
+                    if(hhmm) return formatTime(hhmm[1], hhmm[2], hhmm[3] || '');
+                    if(simple) return formatTime(simple[1], 0, simple[2] || '');
+                    return null;
+                };
+
                 let opponent = 'Unknown Opponent';
-                let dateStr = new Date().toISOString().split('T')[0];
-                let time = '15:00';
+                let dateStr = parseDateFromText(clean) || new Date().toISOString().split('T')[0];
+                let time = parseTimeFromText(clean) || '15:00';
                 let venue = 'Unknown';
-                let seasonTag = selectedSeason || (seasonCategories?.[0] || '2025/2026 Season');
 
-                const oppMatch = clean.match(/Vs\s*(.+?)\s*League/i);
-                if(oppMatch) opponent = oppMatch[1].trim();
-
-                const dateMatch = clean.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*(\d{1,2})/i);
-                if(dateMatch) {
-                    const month = dateMatch[1];
-                    const day = dateMatch[2];
-                    const year = new Date().getFullYear();
-                    const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
-                    const mIdx = months.indexOf(month.toLowerCase().slice(0,3));
-                    const mm = String(mIdx + 1).padStart(2,'0');
-                    const dd = String(day).padStart(2,'0');
-                    dateStr = `${year}-${mm}-${dd}`;
+                const vsMatch = clean.match(/([^|]+?)\bvs\.?\b\s*([^|]+?)(?=\s*(\||$|Venue|Kick|KO))/i);
+                if(vsMatch) {
+                    const left = tidyTeamLabel(vsMatch[1]);
+                    const right = tidyTeamLabel(vsMatch[2]);
+                    const leftIsExiles = /exile/i.test(left);
+                    const rightIsExiles = /exile/i.test(right);
+                    if(leftIsExiles && !rightIsExiles) opponent = right || opponent;
+                    else if(rightIsExiles && !leftIsExiles) opponent = left || opponent;
+                    else opponent = right || left || opponent;
+                } else {
+                    const genericVs = clean.match(/vs\.?\s+([^\|]+)/i);
+                    if(genericVs) opponent = tidyTeamLabel(genericVs[1]);
                 }
 
-                const timeMatch = clean.match(/(\d{1,2}:\d{2})/);
-                if(timeMatch) time = timeMatch[1];
+                const dateFromLabel = parseDateFromText(clean);
+                if(dateFromLabel) dateStr = dateFromLabel;
 
-                const venueMatch = clean.match(/Venue:?(.+?)Kit/i);
-                if(venueMatch) venue = venueMatch[1].trim();
+                const venueMatch = clean.match(/Venue:?\s*([^|]+?)(?=\s*(Kick|KO|Time|$|\|))/i);
+                if(venueMatch) venue = tidyLabel(venueMatch[1]);
+
+                if(pipeParts.length) {
+                    pipeParts.forEach(part => {
+                        if(!time || time === '15:00') {
+                            const parsedTime = parseTimeFromText(part);
+                            if(parsedTime) time = parsedTime;
+                        }
+                        const looksLikeVs = /\bvs\b/i.test(part);
+                        const looksLikeTime = /(\d{1,2}:\d{2})|(\d{1,2}\s*(am|pm))/i.test(part);
+                        if(!venueMatch && !looksLikeVs && !looksLikeTime && venue === 'Unknown') {
+                            venue = tidyLabel(part);
+                        }
+                    });
+                }
 
                 // 3. Parse Players (Robust)
                 const entries = [];
