@@ -25,6 +25,32 @@
 
         const deriveFlow = (type) => type === 'INCOME' ? 'receivable' : 'payable';
 
+        const PLAYER_FEE_CATEGORY = 'Player Fee';
+        const PITCH_FEE_CATEGORY = 'Pitch Fee';
+
+        const normalizeFeeCategory = (value = '') => {
+            if (!value) return '';
+            const raw = value.toString().trim();
+            if (!raw) return '';
+            const upper = raw.toUpperCase();
+            if (upper === 'MATCH_FEE' || upper === 'PLAYER_FEE' || upper === 'PLAYER FEE') return PLAYER_FEE_CATEGORY;
+            if (upper === 'MATCH FEE' || upper === 'PITCH_FEE' || upper === 'PITCH FEE') return PITCH_FEE_CATEGORY;
+            return raw;
+        };
+
+        const normalizeFeeCategoryForMigration = (value = '', playerId = null) => {
+            if (!value) return '';
+            const raw = value.toString().trim();
+            if (!raw) return '';
+            const upper = raw.toUpperCase();
+            if (upper === 'MATCH FEE' && playerId !== undefined && playerId !== null) {
+                return PLAYER_FEE_CATEGORY;
+            }
+            return normalizeFeeCategory(raw);
+        };
+
+        const isPlayerFeeCategory = (value = '') => normalizeFeeCategory(value) === PLAYER_FEE_CATEGORY;
+
         const formatCurrency = (value, options = {}) => {
             const amount = Number(value || 0);
             try {
@@ -60,10 +86,11 @@
         };
         const TEAM_LOGO_SRC = window.GAFFER_LOGO_SRC || resolveDefaultLogo();
 
-        // Turn categories like MATCH_FEE into "Match Fee" for UI/WhatsApp output.
+        // Normalize fee categories (legacy + current) for UI/WhatsApp output.
         const formatCategoryLabel = (value = '') => {
-            if (!value) return '';
-            return value.toString()
+            const normalized = normalizeFeeCategory(value);
+            if (!normalized) return '';
+            return normalized.toString()
                 .replace(/_/g, ' ')
                 .split(/\s+/)
                 .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
@@ -147,7 +174,7 @@
         };
 
         const SETTINGS_DOC_ID = 'app';
-        const DEFAULT_CATEGORIES = ['Referee Fee', 'Match Fee'];
+        const DEFAULT_CATEGORIES = ['Referee Fee', PITCH_FEE_CATEGORY];
         const DEFAULT_ITEM_CATEGORIES = ['Shirt', 'Shorts', 'Socks', 'Full Kit', 'Other'];
         const DEFAULT_SEASON_CATEGORIES = ['2025/2026 Season'];
         const DEFAULT_REF_DEFAULTS = { total: 85, split: 42.5 };
@@ -213,6 +240,34 @@
                 kitSizeOptions: Array.isArray(data.kitSizeOptions) && data.kitSizeOptions.length ? data.kitSizeOptions : defaults.kitSizeOptions,
                 positionDefinitions: normalizePositionDefinitions(data.positionDefinitions, defaults.positionDefinitions)
             };
+        };
+
+        const normalizeCostCategories = (categories = []) => {
+            if (!Array.isArray(categories)) return [];
+            const mapped = categories.map(cat => {
+                const raw = (cat ?? '').toString().trim();
+                if (!raw) return '';
+                const upper = raw.toUpperCase();
+                if (upper === 'MATCH FEE' || upper === 'PITCH_FEE' || upper === 'PITCH FEE') return PITCH_FEE_CATEGORY;
+                return raw;
+            }).filter(Boolean);
+            const seen = new Set();
+            return mapped.filter(cat => {
+                const key = cat.toLowerCase();
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+        };
+
+        const normalizeFeeDescription = (description = '', category = '') => {
+            if (!description) return description;
+            if (!isPlayerFeeCategory(category)) return description;
+            return description
+                .replace(/\bMATCH FEE\b/g, 'PLAYER FEE')
+                .replace(/\bMatch Fee\b/g, 'Player Fee')
+                .replace(/\bMatch fee\b/g, 'Player fee')
+                .replace(/\bmatch fee\b/g, 'player fee');
         };
 
         const readLegacySetting = (key) => {
@@ -307,6 +362,35 @@
                 console.warn('Unable to persist settings', err);
                 return false;
             }
+        };
+
+        const runFeeCategoryMigration = async () => {
+            if (READ_ONLY) return false;
+            await waitForDb();
+            if (!db?.transactions) return false;
+            const txs = await db.transactions.toArray();
+            const updates = txs
+                .map(tx => {
+                    const nextCategory = normalizeFeeCategoryForMigration(tx.category, tx.playerId);
+                    const normalizedCategory = nextCategory || tx.category;
+                    const description = tx.description || '';
+                    const nextDescription = normalizeFeeDescription(description, normalizedCategory);
+                    const categoryChanged = nextCategory && nextCategory !== tx.category;
+                    const descriptionChanged = nextDescription !== description;
+                    if (!categoryChanged && !descriptionChanged) return null;
+                    return {
+                        ...tx,
+                        category: categoryChanged ? nextCategory : tx.category,
+                        description: descriptionChanged ? nextDescription : tx.description
+                    };
+                })
+                .filter(Boolean);
+            if (!updates.length) return false;
+            await db.transactions.bulkPut(updates);
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'transactions' } }));
+            }
+            return true;
         };
 
         const loadCategories = () => [...DEFAULT_CATEGORIES];
@@ -1003,7 +1087,7 @@
                     const chargeLabel = buildChargeLabel(tx);
                     await db.transactions.add({
                         date: new Date().toISOString(),
-                        category: tx.category || 'MATCH_FEE',
+                        category: tx.category || PLAYER_FEE_CATEGORY,
                         type: 'INCOME',
                         description: `Payment for ${chargeLabel}`,
                         amount: Math.abs(tx.amount), 
@@ -1045,7 +1129,7 @@
                     const chargeLabel = buildChargeLabel(tx);
                     await db.transactions.add({
                         date: new Date().toISOString(),
-                        category: tx.category || 'MATCH_FEE',
+                        category: tx.category || PLAYER_FEE_CATEGORY,
                         type: 'INCOME',
                         description: `Write-off: ${chargeLabel}`,
                         amount: Math.abs(tx.amount),
@@ -1194,6 +1278,7 @@
                 const current = collectPlayerPositions(selectedPlayer).filter(pos => pos !== normalized);
                 await persistPlayerPositions(current);
             };
+
             const topDebtors = useMemo(() => {
                 return [...players]
                     .map(p => ({ ...p, balance: balances[p.id] || 0 }))
@@ -1701,7 +1786,7 @@
 
                     <Modal isOpen={isWallOpen} onClose={() => setIsWallOpen(false)} title="Wall of Shame">
                         <div className="space-y-3">
-                            <div className="text-xs text-slate-500">All debtors. Tap download to drop this image into WhatsApp.</div>
+                            <div className="text-xs text-slate-500">All players with outstanding balances. Tap download to drop this image into WhatsApp.</div>
                             {topDebtors.map((p, i) => (
                                 <div key={p.id} className="flex items-center justify-between p-3 rounded-xl border border-rose-100 bg-rose-50/60">
                                     <div>
@@ -2018,7 +2103,7 @@
                 });
                 const newFeeEdits = {};
                 Object.keys(squadState).forEach(pid => {
-                    const feeTx = txs.find(tx => tx.playerId === Number(pid) && tx.amount < 0 && tx.category === 'MATCH_FEE');
+                    const feeTx = txs.find(tx => tx.playerId === Number(pid) && tx.amount < 0 && isPlayerFeeCategory(tx.category));
                     const fee = feeTx ? Math.abs(feeTx.amount) : (fixture.feeAmount || 20);
                     newFeeEdits[pid] = fee;
                 });
@@ -2049,11 +2134,11 @@
                 const selectedIds = Object.keys(squad).filter(id => squad[id]);
                 const txs = selectedIds.map(pid => ({
                     date: new Date().toISOString(),
-                    category: 'MATCH_FEE',
+                    category: PLAYER_FEE_CATEGORY,
                     type: 'EXPENSE',
                     flow: 'payable',
                     amount: -Math.abs(amount), 
-                    description: `Match Fee vs ${selectedFixture.opponent}`,
+                    description: `Player Fee vs ${selectedFixture.opponent}`,
                     playerId: parseInt(pid),
                     fixtureId: selectedFixture.id,
                     isReconciled: false
@@ -2108,16 +2193,16 @@
                 if(!selectedFixture) return;
                 const raw = Number(feeEdits[playerId] ?? (selectedFixture.feeAmount || 20));
                 const amount = isNaN(raw) ? (selectedFixture.feeAmount || 20) : Math.max(0, raw);
-                const feeTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: 'MATCH_FEE' }).and(t => t.amount < 0).first();
+                const feeTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: PLAYER_FEE_CATEGORY }).and(t => t.amount < 0).first();
                 if (feeTx) {
                     await db.transactions.update(feeTx.id, { amount: -amount });
                 } else {
                     await db.transactions.add({
                         date: new Date().toISOString(),
-                        category: 'MATCH_FEE',
+                        category: PLAYER_FEE_CATEGORY,
                         type: 'EXPENSE',
                         amount: -amount,
-                        description: `Match Fee vs ${selectedFixture.opponent}`,
+                        description: `Player Fee vs ${selectedFixture.opponent}`,
                         flow: 'payable',
                         playerId,
                         fixtureId: selectedFixture.id,
@@ -2130,13 +2215,13 @@
             const togglePayment = async (playerId) => {
                 if(!selectedFixture) return;
                 const fee = Number(feeEdits[playerId] ?? (selectedFixture.feeAmount || 20)) || 0;
-                const payTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: 'MATCH_FEE' }).and(t => t.amount > 0 && !t.isWriteOff).first();
+                const payTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: PLAYER_FEE_CATEGORY }).and(t => t.amount > 0 && !t.isWriteOff).first();
                 if(payTx) {
                     await db.transactions.delete(payTx.id);
                 } else {
                     await db.transactions.add({
                         date: new Date().toISOString(),
-                        category: 'MATCH_FEE',
+                        category: PLAYER_FEE_CATEGORY,
                         type: 'INCOME',
                         amount: Math.abs(fee),
                         description: `Payment for vs ${selectedFixture.opponent}`,
@@ -2151,14 +2236,14 @@
 
             const toggleWriteOff = async (playerId) => {
                 if (!selectedFixture) return;
-                const feeTx = fixtureTx.find(tx => tx.playerId === playerId && tx.fixtureId === selectedFixture.id && tx.category === 'MATCH_FEE' && tx.amount < 0);
+                const feeTx = fixtureTx.find(tx => tx.playerId === playerId && tx.fixtureId === selectedFixture.id && isPlayerFeeCategory(tx.category) && tx.amount < 0);
                 if (!feeTx) {
-                    alert('No match fee recorded yet. Generate fees first.');
+                    alert('No player fee recorded yet. Generate fees first.');
                     return;
                 }
                 const existingWriteOff = findWriteOffForCharge(feeTx, fixtureTx);
                 if (existingWriteOff) {
-                    if (!confirm('Undo write-off for this match fee?')) return;
+                    if (!confirm('Undo write-off for this player fee?')) return;
                     await db.transactions.delete(existingWriteOff.id);
                     reloadSelected();
                     return;
@@ -2168,13 +2253,13 @@
                     alert('Already marked as paid.');
                     return;
                 }
-                if (!confirm('Write off this match fee?')) return;
+                if (!confirm('Write off this player fee?')) return;
                 await db.transactions.add({
                     date: new Date().toISOString(),
-                    category: feeTx.category || 'MATCH_FEE',
+                    category: feeTx.category || PLAYER_FEE_CATEGORY,
                     type: 'INCOME',
                     amount: Math.abs(feeTx.amount),
-                    description: `Write-off: ${feeTx.description || 'Match fee'}`,
+                    description: `Write-off: ${feeTx.description || 'Player fee'}`,
                     flow: 'receivable',
                     playerId,
                     fixtureId: selectedFixture.id,
@@ -2310,9 +2395,9 @@
                 if (!selectedFixture || !isSiaVenue) return;
                 if (preset === 'opposition') {
                     setNewCost({
-                        description: `Match fee for ${selectedFixture.opponent || 'opposition'}`,
+                        description: `Pitch fee for ${selectedFixture.opponent || 'opposition'}`,
                         amount: 187,
-                        category: 'Match Fee',
+                        category: PITCH_FEE_CATEGORY,
                         flow: 'receivable'
                     });
                     setPayee({ type: 'opponent', value: selectedFixture.opponent || '' });
@@ -2334,9 +2419,9 @@
                     return;
                 }
                 if (preset === 'home' && homeVenueForMatch) {
-                    const defaultCategory = categories.includes('Match Fee') ? 'Match Fee' : (categories[0] || 'Match Fee');
+                    const defaultCategory = categories.includes(PITCH_FEE_CATEGORY) ? PITCH_FEE_CATEGORY : (categories[0] || PITCH_FEE_CATEGORY);
                     setNewCost({
-                        description: `Match payment to ${homeVenueForMatch.name}`,
+                        description: `Pitch fee to ${homeVenueForMatch.name}`,
                         amount: 374,
                         category: defaultCategory,
                         flow: 'payable'
@@ -2355,10 +2440,10 @@
                 if(!selectedFixture) return [];
                 const fixtureId = selectedFixture.id;
                 return players.filter(p => squad[p.id]).map(p => {
-                    const feeTx = fixtureTx.find(tx => tx.playerId === p.id && tx.fixtureId === fixtureId && tx.category === 'MATCH_FEE' && tx.amount < 0);
+                    const feeTx = fixtureTx.find(tx => tx.playerId === p.id && tx.fixtureId === fixtureId && isPlayerFeeCategory(tx.category) && tx.amount < 0);
                     const payTx = feeTx ? findPaymentForCharge(feeTx, fixtureTx) : null;
                     const writeOffTx = feeTx ? findWriteOffForCharge(feeTx, fixtureTx) : null;
-                    const fallbackPay = allTx.find(tx => tx.playerId === p.id && tx.category === 'MATCH_FEE' && tx.amount > 0 && !tx.isWriteOff);
+                    const fallbackPay = allTx.find(tx => tx.playerId === p.id && isPlayerFeeCategory(tx.category) && tx.amount > 0 && !tx.isWriteOff);
                     const due = feeTx ? Math.abs(feeTx.amount) : (selectedFixture.feeAmount || 20);
                     const paid = payTx ? payTx.amount : (fallbackPay ? fallbackPay.amount : 0);
                     const writeOffAmount = writeOffTx ? Math.abs(writeOffTx.amount) : 0;
@@ -2651,7 +2736,7 @@
                     const existingMatchFees = await db.transactions
                         .where('fixtureId')
                         .equals(finalFixtureId)
-                        .and(tx => (tx.category || '').toUpperCase() === 'MATCH_FEE')
+                        .and(tx => isPlayerFeeCategory(tx.category))
                         .toArray();
                     if(existingMatchFees.length) {
                         await db.transactions.bulkDelete(existingMatchFees.map(tx => tx.id));
@@ -2733,11 +2818,11 @@
 
                     transactions.push({
                         date: importTimestamp,
-                        category: 'MATCH_FEE',
+                        category: PLAYER_FEE_CATEGORY,
                         type: 'EXPENSE',
                         flow: 'payable',
                         amount: -Math.abs(normalizedFee),
-                        description: `Match Fee vs ${fixtureOpponentLabel}`,
+                        description: `Player Fee vs ${fixtureOpponentLabel}`,
                         playerId,
                         fixtureId: finalFixtureId,
                         isReconciled: false
@@ -2746,7 +2831,7 @@
                     if (entry.isPaid) {
                         transactions.push({
                             date: importTimestamp,
-                            category: 'MATCH_FEE',
+                            category: PLAYER_FEE_CATEGORY,
                             type: 'INCOME',
                             flow: 'receivable',
                             amount: Math.abs(normalizedFee),
@@ -3066,7 +3151,7 @@
                             <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" value={newFixture.seasonTag} onChange={e => setNewFixture({ ...newFixture, seasonTag: e.target.value })}>
                                 {seasonCategories.map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
-                            <input type="number" min="0" step="1" placeholder="Match Fee (default 20)" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                            <input type="number" min="0" step="1" placeholder="Player Fee (default 20)" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                 value={newFixture.feeAmount} onChange={e => setNewFixture({...newFixture, feeAmount: Number(e.target.value)})} />
                             <button type="submit" className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl mt-4">Schedule Match</button>
                         </form>
@@ -3128,7 +3213,7 @@
                             <select className="bg-white border border-slate-200 rounded-lg p-3 text-sm" value={selectedFixture.seasonTag || (seasonCategories?.[0] || '2025/2026 Season')} onChange={e => setSelectedFixture({ ...selectedFixture, seasonTag: e.target.value })}>
                                 {seasonCategories.map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
-                            <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" step="1" value={selectedFixture.feeAmount || 20} onChange={e => setSelectedFixture({ ...selectedFixture, feeAmount: Number(e.target.value) })} placeholder="Match fee" />
+                            <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" step="1" value={selectedFixture.feeAmount || 20} onChange={e => setSelectedFixture({ ...selectedFixture, feeAmount: Number(e.target.value) })} placeholder="Player fee" />
                         </div>
                                 </div>
 
@@ -3314,7 +3399,7 @@
                                         </button>
                                     </div>
                                     <div className="space-y-2">
-                                        {fixtureTx.filter(tx => tx.fixtureId === selectedFixture?.id && tx.category !== 'MATCH_FEE').map(tx => {
+                                        {fixtureTx.filter(tx => tx.fixtureId === selectedFixture?.id && !isPlayerFeeCategory(tx.category)).map(tx => {
                                             const outstanding = !tx.isReconciled;
                                             const flowLabel = (tx.flow === 'receivable' || tx.type === 'INCOME') ? 'Receivable' : 'Payable';
                                             return (
@@ -3336,7 +3421,7 @@
                                                 </div>
                                             );
                                         })}
-                                        {fixtureTx.filter(tx => tx.fixtureId === selectedFixture?.id && tx.category !== 'MATCH_FEE').length === 0 && (
+                                        {fixtureTx.filter(tx => tx.fixtureId === selectedFixture?.id && !isPlayerFeeCategory(tx.category)).length === 0 && (
                                             <div className="text-sm text-slate-400 text-center">No fees added yet.</div>
                                         )}
                                     </div>
@@ -3493,7 +3578,7 @@
                                     onChange={e => setMagicText(e.target.value)}
                                 ></textarea>
                                 <div className="flex items-center gap-2">
-                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Match Fee</label>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Player Fee</label>
                                     <input type="number" min="0" step="1" className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" value={magicFee} onChange={e => setMagicFee(Number(e.target.value))} />
                                     <span className="text-[11px] text-slate-500">Default S$20</span>
                                 </div>
@@ -3539,7 +3624,7 @@
                                         <input type="date" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" value={parsedData.date} onChange={e => updateFixtureField('date', e.target.value)} />
                                         <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide block">Time</label>
                                         <input type="time" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" value={parsedData.time} onChange={e => updateFixtureField('time', e.target.value)} />
-                                        <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide block">Match Fee (default 20)</label>
+                                        <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide block">Player Fee (default 20)</label>
                                         <input type="number" min="0" step="1" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" value={parsedData.feeAmount ?? 20} onChange={e => updateFixtureField('feeAmount', Number(e.target.value))} />
                                         <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide block">Competition</label>
                                         <select className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" value={parsedData.competitionType || 'LEAGUE'} onChange={e => updateFixtureField('competitionType', e.target.value)}>
@@ -3576,7 +3661,7 @@
                                             <div className="text-[11px] text-slate-400">No previously played games available.</div>
                                         )}
                                     </div>
-                                    <div className="text-[11px] text-slate-500">Selecting an existing game replaces its squad list and match-fee entries.</div>
+                                    <div className="text-[11px] text-slate-500">Selecting an existing game replaces its squad list and player-fee entries.</div>
                                 </div>
 
                                 <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
@@ -3705,7 +3790,7 @@
                 // Calculate spending breakdown (Expenses only)
                 const cats = {};
                 txs.filter(t => t.amount < 0).forEach(t => {
-                    const c = t.category || 'OTHER';
+                    const c = normalizeFeeCategory(t.category) || 'Other';
                     if(!cats[c]) cats[c] = 0;
                     cats[c] += Math.abs(t.amount);
                 });
@@ -3796,7 +3881,7 @@
             const categorySummary = useMemo(() => {
                 const map = {};
                 transactions.forEach(t => {
-                    const key = t.category || 'Other';
+                    const key = normalizeFeeCategory(t.category) || 'Other';
                     if(!map[key]) map[key] = { income:0, expense:0, net:0, count:0 };
                     if(t.amount >= 0) map[key].income += t.amount; else map[key].expense += t.amount;
                     map[key].net += t.amount;
@@ -3808,7 +3893,7 @@
             const incomeBreakdown = useMemo(() => {
                 const map = {};
                 transactions.filter(t => t.amount > 0).forEach(t => {
-                    const key = t.category || 'OTHER';
+                    const key = normalizeFeeCategory(t.category) || 'Other';
                     map[key] = (map[key] || 0) + t.amount;
                 });
                 return map;
@@ -3816,7 +3901,7 @@
             const expenseBreakdown = useMemo(() => {
                 const map = {};
                 transactions.filter(t => t.amount < 0).forEach(t => {
-                    const key = t.category || 'OTHER';
+                    const key = normalizeFeeCategory(t.category) || 'Other';
                     map[key] = (map[key] || 0) + Math.abs(t.amount);
                 });
                 return map;
@@ -4065,7 +4150,7 @@
                             <div className="space-y-1.5">
                                 {Object.entries(incomeBreakdown).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([cat, val]) => (
                                     <div key={cat} className="flex items-center justify-between text-xs">
-                                        <span className="font-semibold text-slate-700 truncate pr-2">{cat.replace('_',' ')}</span>
+                                        <span className="font-semibold text-slate-700 truncate pr-2">{formatCategoryLabel(cat) || cat}</span>
                                         <span className="font-bold text-emerald-700">{formatCurrency(val)}</span>
                                     </div>
                                 ))}
@@ -4077,7 +4162,7 @@
                             <div className="space-y-1.5">
                                 {Object.entries(expenseBreakdown).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([cat, val]) => (
                                     <div key={cat} className="flex items-center justify-between text-xs">
-                                        <span className="font-semibold text-slate-700 truncate pr-2">{cat.replace('_',' ')}</span>
+                                        <span className="font-semibold text-slate-700 truncate pr-2">{formatCategoryLabel(cat) || cat}</span>
                                         <span className="font-bold text-rose-700">{formatCurrency(val)}</span>
                                     </div>
                                 ))}
@@ -4155,9 +4240,9 @@
                                 const playerName = player ? `${player.firstName} ${player.lastName}` : '';
                                 const feeLabel = tx.isWriteOff
                                     ? 'Write-off'
-                                    : (tx.category === 'MATCH_FEE'
-                                        ? (tx.amount > 0 ? 'Payment received' : 'Match fee charged')
-                                        : (tx.category || 'Uncategorized'));
+                                    : (isPlayerFeeCategory(tx.category)
+                                        ? (tx.amount > 0 ? 'Payment received' : 'Player fee charged')
+                                        : (formatCategoryLabel(tx.category) || tx.category || 'Uncategorized'));
                                 const contextLabel = playerName || tx.payee || feeLabel;
                                 return (
                                     <div key={tx.id} className="flex justify-between items-center p-2 rounded-xl border border-slate-100 bg-slate-50">
@@ -4199,7 +4284,7 @@
                                         </div>
                                         <div className="space-y-1">
                                             <div className="flex items-center gap-2 flex-wrap">
-                                                <span className="text-[10px] px-2 py-1 rounded-full bg-slate-100 text-slate-600 font-semibold tracking-tight">{(tx.category === 'MATCH_FEE' ? 'Match Fee' : tx.category) || 'Uncategorized'}</span>
+                                                <span className="text-[10px] px-2 py-1 rounded-full bg-slate-100 text-slate-600 font-semibold tracking-tight">{formatCategoryLabel(tx.category) || tx.category || 'Uncategorized'}</span>
                                                 {tx.isWriteOff && <span className="text-[10px] px-2 py-1 rounded-full bg-slate-200 text-slate-700 font-semibold">Write-off</span>}
                                                 <div className="text-[12px] font-bold text-slate-900 leading-tight">{tx.description}</div>
                                             </div>
@@ -4239,7 +4324,7 @@
                             <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
                                 {categorySummary.map(row => (
                                     <div key={row.cat} className="grid grid-cols-5 items-center px-2 py-2 text-[12px]">
-                                        <span className="font-semibold text-slate-800 truncate">{row.cat}</span>
+                                        <span className="font-semibold text-slate-800 truncate">{formatCategoryLabel(row.cat) || row.cat}</span>
                                         <span className="text-right text-emerald-700 font-bold">{formatCurrency(row.income, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                                         <span className="text-right text-rose-700 font-bold">{formatCurrency(Math.abs(row.expense), { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                                         <span className={`text-right font-bold ${row.net >=0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatCurrency(row.net, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
@@ -4520,7 +4605,7 @@
                                 playerName: `${player.firstName} ${player.lastName}`.trim(),
                                 label: displayLabel,
                                 paymentDescription,
-                                category: tx.category || 'MATCH_FEE',
+                                category: tx.category || PLAYER_FEE_CATEGORY,
                                 fixtureId: tx.fixtureId,
                                 amount: tx.amount,
                                 date: dateSource || tx.date,
@@ -4602,7 +4687,7 @@
                     const paymentDescription = pendingPayment.paymentDescription || formatCategoryLabel(pendingPayment.category) || 'Charge';
                     await db.transactions.add({
                         date: new Date().toISOString(),
-                        category: pendingPayment.category || 'MATCH_FEE',
+                        category: pendingPayment.category || PLAYER_FEE_CATEGORY,
                         type: 'INCOME',
                         description: `Payment for ${paymentDescription}`,
                         amount: Math.abs(pendingPayment.amount),
@@ -4992,6 +5077,7 @@
 
         const Opponents = ({ opponents, setOpponents, venues, setVenues, referees, setReferees, onNavigate }) => {
             const [newOpponent, setNewOpponent] = useState({ name: '', contact: '', phone: '', payee: '' });
+            const [isAddOpponentOpen, setIsAddOpponentOpen] = useState(false);
             const [newVenue, setNewVenue] = useState({ name: '', price: '', homeTeamId: null, address: '', notes: '', payee: '', contact: '' });
             const [newRef, setNewRef] = useState({ name: '', phone: '' });
             const [reassignEntity, setReassignEntity] = useState({ open: false, type: '', item: null, count: 0 });
@@ -5105,6 +5191,11 @@
                 setOpponentSaveStatus('idle');
             };
 
+            const closeAddOpponent = () => {
+                setIsAddOpponentOpen(false);
+                setNewOpponent({ name: '', contact: '', phone: '', payee: '' });
+            };
+
             useEffect(() => {
                 if (!selectedOpponent) return;
                 let active = true;
@@ -5152,7 +5243,12 @@
                 };
                 const id = await db.opponents.add(payload);
                 setOpponents([...opponents, { id, ...payload }]);
-                setNewOpponent({ name: '', contact: '', phone: '', payee: '' });
+                closeAddOpponent();
+            };
+
+            const handleAddOpponent = async (event) => {
+                event.preventDefault();
+                await addOpponent();
             };
 
             const deleteOpponent = async (opponent) => {
@@ -5332,40 +5428,6 @@
             const opponentDisplayName = (opponentForm?.name || selectedOpponent?.name || '').trim() || 'Opponent';
             const opponentOutstandingTone = opponentPaymentSummary.netOutstanding >= 0 ? 'text-emerald-700' : 'text-rose-700';
 
-            const renderOpponentFacts = () => (
-                <div className="space-y-2">
-                    {Object.entries(facts.opponentFacts).map(([name, info]) => (
-                        <div key={name} className="p-3 bg-white border border-slate-100 rounded-xl shadow-sm">
-                            <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                                {(() => {
-                                    const opp = opponents.find(o => o.name === name);
-                                    if (!opp) return <span>{name}</span>;
-                                    return (
-                                        <button onClick={() => openOpponentSheet(opp)} className="underline">{name}</button>
-                                    );
-                                })()}
-                                <button onClick={() => jumpToOpponentGames(name)} className="text-[10px] text-brand-600 underline">View games</button>
-                            </div>
-                            <div className="text-[11px] text-slate-500">Games: {info.count} · Dates: {info.dates.map(d => new Date(d).toLocaleDateString()).join(', ') || '—'}</div>
-                            <div className="text-[11px] text-slate-500">Players vs them: {info.players.map(n => (
-                                <button key={n} onClick={() => { localStorage.setItem('gaffer:focusPlayerName', n); onNavigate && onNavigate('players'); }} className="underline mr-1">{n}</button>
-                            ))}</div>
-                            {(() => {
-                                const opp = opponents.find(o => o.name === name);
-                                if(!opp) return null;
-                                return (
-                                    <>
-                                        {opp.payee && <div className="text-[11px] text-slate-500">Payee: {opp.payee}</div>}
-                                        {opp.contact && <div className="text-[11px] text-slate-500">Contact: {opp.contact}</div>}
-                                        {opp.phone && <div className="text-[11px] text-slate-500">Phone: {opp.phone}</div>}
-                                    </>
-                                );
-                            })()}
-                    </div>
-                ))}
-                </div>
-            );
-
             const renderVenueFacts = () => (
                 <div className="space-y-2">
                     {Object.entries(facts.venueFacts).map(([name, info]) => (
@@ -5480,34 +5542,42 @@
 
                     {viewTab === 'opponents' && (
                         <div className="space-y-4">
-                        <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
-                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Opponents List</div>
-                            <div className="flex flex-wrap gap-2">
-                                {opponents.map(o => (
-                                    <div key={o.id} onClick={() => openOpponentSheet(o)} className="px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2 cursor-pointer hover:border-brand-200">
-                                        <span className="underline">{o.name}</span>
-                                        <button onClick={(e) => { e.stopPropagation(); deleteOpponent(o); }} className="text-rose-600">✕</button>
-                                    </div>
-                                ))}
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Opponent name" value={newOpponent.name} onChange={e => setNewOpponent({ ...newOpponent, name: e.target.value })} />
-                                <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Payee / bank" value={newOpponent.payee} onChange={e => setNewOpponent({ ...newOpponent, payee: e.target.value })} />
-                                <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Contact name/email" value={newOpponent.contact} onChange={e => setNewOpponent({ ...newOpponent, contact: e.target.value })} />
-                                <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Phone number" value={newOpponent.phone} onChange={e => setNewOpponent({ ...newOpponent, phone: e.target.value })} />
-                                <div className="col-span-2 flex justify-end">
-                                    <button onClick={addOpponent} className="bg-slate-900 text-white font-bold rounded-lg px-4 py-2">Add</button>
-                                </div>
-                            </div>
-                        </div>
-                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100">
-                                <div className="flex items-center justify-between mb-3">
+                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                                <div className="flex items-center justify-between">
                                     <div>
-                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Opponent Facts</div>
-                                        <div className="text-[11px] text-slate-500">Games, dates, players, payees</div>
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Opponents</div>
+                                        <div className="text-[11px] text-slate-500">Tap a team to open details.</div>
                                     </div>
+                                    <button onClick={() => setIsAddOpponentOpen(true)} className="bg-slate-900 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1">
+                                        <Icon name="Plus" size={14} /> Add Opponent
+                                    </button>
                                 </div>
-                                {renderOpponentFacts()}
+                                <div className="rounded-xl border border-slate-100 overflow-hidden divide-y divide-slate-50 bg-white">
+                                    {opponents.length ? opponents.map(o => {
+                                        const name = (o.name || '').trim() || 'Opponent';
+                                        const initials = name.split(/\s+/).filter(Boolean).map(word => word[0]).slice(0, 2).join('').toUpperCase();
+                                        const metaParts = [o.contact, o.phone, o.payee].filter(Boolean);
+                                        const meta = metaParts.join(' · ');
+                                        return (
+                                            <button key={o.id} onClick={() => openOpponentSheet(o)} className="w-full text-left p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-600 font-display font-bold text-sm border border-white shadow-inner">
+                                                        {initials || 'OP'}
+                                                    </div>
+                                                    <div>
+                                                        <div className="font-bold text-slate-900 text-sm">{name}</div>
+                                                        {meta && <div className="text-[11px] text-slate-500">{meta}</div>}
+                                                    </div>
+                                                </div>
+                                                <Icon name="ChevronRight" size={16} className="text-slate-300" />
+                                            </button>
+                                        );
+                                    }) : (
+                                        <div className="p-6 text-center text-sm text-slate-500">
+                                            No opponents yet. Add your first one.
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     )}
@@ -5551,6 +5621,39 @@
                             </div>
                         </div>
                     )}
+
+                    <Modal isOpen={isAddOpponentOpen} onClose={closeAddOpponent} title="Add Opponent">
+                        <form onSubmit={handleAddOpponent} className="space-y-4">
+                            <input
+                                required
+                                placeholder="Opponent name"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                value={newOpponent.name}
+                                onChange={e => setNewOpponent({ ...newOpponent, name: e.target.value })}
+                            />
+                            <input
+                                placeholder="Payee / bank"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                value={newOpponent.payee}
+                                onChange={e => setNewOpponent({ ...newOpponent, payee: e.target.value })}
+                            />
+                            <input
+                                placeholder="Contact name/email"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                value={newOpponent.contact}
+                                onChange={e => setNewOpponent({ ...newOpponent, contact: e.target.value })}
+                            />
+                            <input
+                                placeholder="Phone number"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                value={newOpponent.phone}
+                                onChange={e => setNewOpponent({ ...newOpponent, phone: e.target.value })}
+                            />
+                            <button type="submit" className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">
+                                Add Opponent
+                            </button>
+                        </form>
+                    </Modal>
 
                     <Modal isOpen={!!selectedOpponent} onClose={closeOpponentSheet} title={opponentDisplayName}>
                         {selectedOpponent && (
@@ -6282,7 +6385,7 @@
         const BACKUP_SCOPE_ITEMS = [
             { key: 'players', type: 'collection', label: 'Players & profiles', description: 'Squad names, kit sizes, personal balances and notes.' },
             { key: 'fixtures', type: 'collection', label: 'Fixtures & match history', description: 'Past and future games with scores and tags.' },
-            { key: 'transactions', type: 'collection', label: 'Ledger activity', description: 'All match fees, payments and reimbursements.' },
+            { key: 'transactions', type: 'collection', label: 'Ledger activity', description: 'All player fees, pitch fees, payments and reimbursements.' },
             { key: 'participations', type: 'collection', label: 'Participation links', description: 'Attendance and linking between players and fixtures.' },
             { key: 'opponents', type: 'collection', label: 'Opponents directory', description: 'Saved teams for quick match setup.' },
             { key: 'venues', type: 'collection', label: 'Venues list', description: 'Grounds, pitches and saved venue details.' },
@@ -6810,6 +6913,140 @@
                 persistCategories(updated);
                 setRemoveCat('');
                 setFallbackName('');
+            };
+
+            const handlePlayerCsvFile = async (event) => {
+                const file = event.target?.files?.[0];
+                if (!file) return;
+                setIsImportingPlayersCsv(true);
+                setPlayerImportSummary('');
+                setPlayerImportRows(null);
+                try {
+                    const content = await file.text();
+                    await waitForDb();
+                    const currentPlayers = await db.players.toArray();
+                    setPlayersList(currentPlayers);
+                    const rows = parsePlayerImportRows(content, currentPlayers);
+                    setPlayerImportRows(rows);
+                } catch (err) {
+                    alert('Import failed: ' + err.message);
+                } finally {
+                    setIsImportingPlayersCsv(false);
+                    if (playerImportRef.current) playerImportRef.current.value = '';
+                }
+            };
+
+            const updatePlayerImportRow = (index, changes) => {
+                setPlayerImportRows(prev => {
+                    if (!prev) return prev;
+                    return prev.map((row, idx) => idx === index ? { ...row, ...changes } : row);
+                });
+            };
+
+            const addPositionToImportRow = (index, code) => {
+                if (!code) return;
+                const normalized = normalizePositionToken(code);
+                if (!normalized) return;
+                setPlayerImportRows(prev => {
+                    if (!prev) return prev;
+                    return prev.map((row, idx) => {
+                        if (idx !== index) return row;
+                        if (row.selectedPositions.includes(normalized)) {
+                            return { ...row, customPositionInput: '' };
+                        }
+                        return {
+                            ...row,
+                            selectedPositions: [...row.selectedPositions, normalized],
+                            customPositionInput: ''
+                        };
+                    });
+                });
+            };
+
+            const removePositionFromImportRow = (index, code) => {
+                if (!code) return;
+                const normalized = normalizePositionToken(code);
+                if (!normalized) return;
+                setPlayerImportRows(prev => {
+                    if (!prev) return prev;
+                    return prev.map((row, idx) => {
+                        if (idx !== index) return row;
+                        return { ...row, selectedPositions: row.selectedPositions.filter(pos => pos !== normalized) };
+                    });
+                });
+            };
+
+            const togglePlayerImportRowDrop = (index) => {
+                setPlayerImportRows(prev => {
+                    if (!prev) return prev;
+                    return prev.map((row, idx) => idx === index ? { ...row, drop: !row.drop } : row);
+                });
+            };
+
+            const cancelPlayerImport = () => {
+                setPlayerImportRows(null);
+            };
+
+            const confirmPlayerImport = async () => {
+                if (!playerImportRows) return;
+                const rows = playerImportRows.filter(row => !row.drop);
+                if (!rows.length) {
+                    setPlayerImportRows(null);
+                    return;
+                }
+                const missing = rows.filter(row => row.selectedPositions.length === 0);
+                if (missing.length) {
+                    alert('Each row must have at least one selected position.');
+                    return;
+                }
+                startImportProgress('Importing players…');
+                try {
+                    await waitForDb();
+                    const existingPlayers = await db.players.toArray();
+                    const nameIndex = {};
+                    existingPlayers.forEach(player => {
+                        const key = sanitizeNameKey(`${player.firstName} ${player.lastName}`);
+                        if (key) nameIndex[key] = player;
+                    });
+                    let created = 0;
+                    let updated = 0;
+                    for (const row of rows) {
+                        const key = sanitizeNameKey(`${row.firstName} ${row.lastName}`);
+                        const existing = row.matchedPlayerId ? existingPlayers.find(p => String(p.id) === row.matchedPlayerId) : (key ? nameIndex[key] : null);
+                        const positionsText = row.selectedPositions.join(', ');
+                        const primaryPosition = row.selectedPositions[0] || existing?.position || 'MID';
+                        const preferredPosition = row.selectedPositions[1] || existing?.preferredPosition || primaryPosition;
+                        const currentRaw = (row.currentPlayer || '').toLowerCase();
+                        const hasCurrent = row.currentPlayer !== undefined && row.currentPlayer !== '';
+                        const isActive = hasCurrent ? CURRENT_PLAYER_TRUE.has(currentRaw) : (existing?.isActive !== false);
+                        const payload = {
+                            firstName: row.firstName,
+                            lastName: row.lastName,
+                            position: primaryPosition,
+                            preferredPosition,
+                            phone: overrideIfValue(row.record.phone, existing?.phone || ''),
+                            age: row.record.age ? Number(row.record.age) : (existing?.age ?? null),
+                            dateOfBirth: overrideIfValue(row.record.dateOfBirth, existing?.dateOfBirth || ''),
+                            positions: positionsText,
+                            shirtNumber: overrideIfValue(row.record.shirtNumber, existing?.shirtNumber || ''),
+                            isActive
+                        };
+                        if (existing) {
+                            await db.players.update(existing.id, payload);
+                            updated++;
+                        } else {
+                            await db.players.add(payload);
+                            created++;
+                        }
+                    }
+                    setPlayerImportRows(null);
+                    const updatedPlayers = await db.players.toArray();
+                    setPlayersList(updatedPlayers);
+                    setPlayerImportSummary(`Imported ${created} new player${created === 1 ? '' : 's'} · updated ${updated} record${updated === 1 ? '' : 's'}.`);
+                    window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'players' } }));
+                } finally {
+                    finishImportProgress();
+                }
             };
 
             const parseCsvLine = (line) => {
@@ -7424,7 +7661,7 @@
                             <input className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Add category (e.g. Pitch Hire)" value={newCat} onChange={e => setNewCat(e.target.value)} />
                             <button onClick={addCategory} className="bg-slate-900 text-white font-bold rounded-lg px-4">Add</button>
                         </div>
-                        <div className="text-[11px] text-slate-500">Defaults include Referee Fee and Match Fee. New categories become available when adding costs.</div>
+                        <div className="text-[11px] text-slate-500">Defaults include Referee Fee and Pitch Fee. New categories become available when adding costs.</div>
                     </div>
 
                     <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
@@ -7552,6 +7789,21 @@
                                 All data backed up at {new Date(lastBackupSummary.timestamp).toLocaleString()} ({lastBackupSummary.details}).
                             </div>
                         )}
+                        <div className="mt-4 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Player CSV Import</div>
+                                    <div className="text-[11px] text-slate-500">Upload roster CSV (Full Name, Phone Number, Age, Position, Date of Birth, Shirt Number, Current Player or Not).</div>
+                                </div>
+                                <button onClick={() => playerImportRef.current?.click()} disabled={isImportingPlayersCsv} className={`px-3 py-2 rounded-lg text-sm font-bold ${isImportingPlayersCsv ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'}`}>
+                                    {isImportingPlayersCsv ? 'Importing…' : 'Import players CSV'}
+                                </button>
+                            </div>
+                            {playerImportSummary && (
+                                <div className="text-[11px] text-emerald-600 mt-2">{playerImportSummary}</div>
+                            )}
+                        </div>
+                        <input type="file" accept=".csv,text/csv" ref={playerImportRef} className="hidden" onChange={handlePlayerCsvFile} />
                         <div className="mt-4 p-3 rounded-xl bg-slate-50 border border-slate-200">
                             <div className="flex items-center justify-between">
                                 <div>
@@ -7784,6 +8036,78 @@
                         </div>
                     </Modal>
 
+                    <Modal isOpen={Boolean(playerImportRows && playerImportRows.length)} onClose={() => setPlayerImportRows(null)} title="Review player import">
+                        {playerImportRows ? (
+                            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+                                {playerImportRows.map((row, idx) => (
+                                    <div key={row.id} className={`p-3 rounded-xl border ${row.drop ? 'border-slate-200 bg-slate-50' : row.needsReview ? 'border-amber-200 bg-amber-50/60' : 'border-slate-100 bg-white'} space-y-2`}>
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div>
+                                                <div className="text-sm font-bold text-slate-900">{row.fullName}</div>
+                                                <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
+                                                    {row.record.phone && <span>Phone: {row.record.phone}</span>}
+                                                    {row.record.age && <span>Age: {row.record.age}</span>}
+                                                    {row.record.positionText && <span>Imported: {row.record.positionText}</span>}
+                                                    {row.record.shirtNumber && <span>Shirt #: {row.record.shirtNumber}</span>}
+                                                </div>
+                                            </div>
+                                            <button onClick={() => togglePlayerImportRowDrop(idx)} className={`text-[11px] font-bold px-3 py-1 rounded-full border ${row.drop ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                                {row.drop ? 'Ignored' : 'Ignore'}
+                                            </button>
+                                        </div>
+                                        <div className="text-[11px] text-slate-500">Match this row to a player and choose their available positions before importing.</div>
+                                        <div className="space-y-2">
+                                            <div className="flex flex-wrap gap-2">
+                                                {positionDefinitions.map(def => {
+                                                    const active = row.selectedPositions.includes(def.code);
+                                                    return (
+                                                        <button key={`${row.id}-pos-${def.code}`} onClick={() => active ? removePositionFromImportRow(idx, def.code) : addPositionToImportRow(idx, def.code)}
+                                                            className={`text-[11px] font-bold px-3 py-1 rounded-full border ${active ? 'bg-brand-600 text-white border-brand-600' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                                            {def.code} · {def.label}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <input value={row.customPositionInput || ''} onChange={e => updatePlayerImportRow(idx, { customPositionInput: e.target.value })} placeholder="Custom position" className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" />
+                                                <button onClick={() => addPositionToImportRow(idx, row.customPositionInput)} className="px-3 py-1 rounded-lg bg-slate-900 text-white text-xs font-bold">Add</button>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2 text-[11px] text-slate-500">
+                                                {row.selectedPositions.map(pos => (
+                                                    <span key={`${row.id}-selected-${pos}`} className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">{pos}</span>
+                                                ))}
+                                            </div>
+                                            <div className="flex flex-col gap-2">
+                                                <select className="bg-white border border-slate-200 rounded-lg p-2 text-sm" value={row.matchedPlayerId || ''} onChange={e => updatePlayerImportRow(idx, { matchedPlayerId: e.target.value || null })}>
+                                                    <option value="">Assign player</option>
+                                                    {row.suggestions?.map((sugg, sIdx) => (
+                                                        <option key={`sugg-${idx}-${sIdx}`} value={String(sugg.player.id)}>
+                                                            {sugg.player.firstName} {sugg.player.lastName} ({Math.round(sugg.score * 100)}%)
+                                                        </option>
+                                                    ))}
+                                                    <optgroup label="All players">
+                                                        {playersList.map(player => (
+                                                            <option key={`all-${idx}-${player.id}`} value={String(player.id)}>{player.firstName} {player.lastName}</option>
+                                                        ))}
+                                                    </optgroup>
+                                                </select>
+                                                {row.suggestions && row.suggestions[0] && (
+                                                    <div className="text-[11px] text-slate-400">Nearest match: {row.suggestions[0].player.firstName} {row.suggestions[0].player.lastName} ({Math.round(row.suggestions[0].score * 100)}%)</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                                <div className="flex gap-2 sticky bottom-0 bg-white/80 backdrop-blur-sm pt-2">
+                                    <button onClick={cancelPlayerImport} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
+                                    <button onClick={confirmPlayerImport} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg">Import {playerImportRows.filter(row => !row.drop).length} rows</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-sm text-slate-500">Parsing import rows…</div>
+                        )}
+                    </Modal>
+
                     <Modal isOpen={legacyPreview.length > 0} onClose={() => setLegacyPreview([])} title="Review Legacy Import">
                         <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
                             {legacyPreview.map(row => (
@@ -7974,23 +8298,40 @@
                     if (!db?.settings) {
                         console.warn('Settings collection unavailable; using defaults.');
                         settingsLoadedRef.current = true;
+                        await runFeeCategoryMigration();
                         return;
                     }
                     try {
                         const all = await db.settings.toArray();
                         const existing = all.find(item => String(item.id) === SETTINGS_DOC_ID) || all[0];
                         if (existing) {
-                            applySettings(normalizeSettings(existing));
+                            let normalized = normalizeSettings(existing);
+                            const normalizedCategories = normalizeCostCategories(normalized.categories);
+                            const categoriesChanged = normalizedCategories.length !== normalized.categories.length
+                                || normalizedCategories.some((cat, idx) => cat !== normalized.categories[idx]);
+                            if (categoriesChanged) {
+                                normalized = { ...normalized, categories: normalizedCategories };
+                                if (!READ_ONLY) await saveSettingsPatch({ categories: normalizedCategories });
+                            }
+                            applySettings(normalized);
                             clearLegacySettings();
                             settingsLoadedRef.current = true;
+                            await runFeeCategoryMigration();
                             return;
                         }
                         const legacy = loadLegacySettings();
-                        const normalized = normalizeSettings(legacy || {});
+                        let normalized = normalizeSettings(legacy || {});
+                        const normalizedCategories = normalizeCostCategories(normalized.categories);
+                        const categoriesChanged = normalizedCategories.length !== normalized.categories.length
+                            || normalizedCategories.some((cat, idx) => cat !== normalized.categories[idx]);
+                        if (categoriesChanged) {
+                            normalized = { ...normalized, categories: normalizedCategories };
+                        }
                         const didSave = await saveSettingsPatch(normalized);
                         if (didSave) clearLegacySettings();
                         applySettings(normalized);
                         settingsLoadedRef.current = true;
+                        await runFeeCategoryMigration();
                     } catch (err) {
                         console.warn('Unable to load settings', err);
                         settingsLoadedRef.current = true;
