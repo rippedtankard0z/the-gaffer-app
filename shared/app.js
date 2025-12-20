@@ -1,6 +1,6 @@
 'use strict';
         const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
-        const MASTER_BUILD_VERSION = '2024.12.06-12';
+        const MASTER_BUILD_VERSION = '2024.12.06-13';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
