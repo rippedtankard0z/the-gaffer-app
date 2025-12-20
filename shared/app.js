@@ -999,9 +999,11 @@
                     localStorage.removeItem('gaffer:focusPlayerId');
                 }
                 const focusName = localStorage.getItem('gaffer:focusPlayerName');
-                if (!hasFocusedPlayer && focusName) {
-                    const target = list.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase().includes(focusName.toLowerCase()));
-                    if(target) openPlayerDetails(target);
+                if (focusName) {
+                    if (!hasFocusedPlayer) {
+                        const target = list.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase().includes(focusName.toLowerCase()));
+                        if(target) openPlayerDetails(target);
+                    }
                     localStorage.removeItem('gaffer:focusPlayerName');
                 }
             };
@@ -2075,10 +2077,22 @@
                 setAllTx(txs);
                 if(seasonCategories?.length && !selectedSeason) setSelectedSeason(seasonCategories[0]);
 
+                let hasFocusedFixture = false;
+                const focusFixtureId = localStorage.getItem('gaffer:focusFixtureId');
+                if (focusFixtureId) {
+                    const targetById = list.find(f => String(f.id) === String(focusFixtureId));
+                    if (targetById) {
+                        openMatchMode(targetById);
+                        hasFocusedFixture = true;
+                    }
+                    localStorage.removeItem('gaffer:focusFixtureId');
+                }
                 const focusOpp = localStorage.getItem('gaffer:focusFixtureOpponent');
                 if(focusOpp) {
-                    const target = list.find(f => (f.opponent || '').toLowerCase().includes(focusOpp.toLowerCase()));
-                    if(target) openMatchMode(target);
+                    if(!hasFocusedFixture) {
+                        const target = list.find(f => (f.opponent || '').toLowerCase().includes(focusOpp.toLowerCase()));
+                        if(target) openMatchMode(target);
+                    }
                     localStorage.removeItem('gaffer:focusFixtureOpponent');
                 }
             };
@@ -4606,6 +4620,7 @@
                             const player = playerLookup[String(tx.playerId)];
                             if (!player) return null;
                             const fixture = tx.fixtureId ? fixtureLookup[String(tx.fixtureId)] : null;
+                            const fixtureOpponent = fixture?.opponent || '';
                             const categoryLabel = formatCategoryLabel(tx.category);
                             const paymentDescription = tx.description || categoryLabel || 'Charge';
                             const displayLabel = fixture ? (categoryLabel || paymentDescription) : paymentDescription;
@@ -4625,6 +4640,7 @@
                                 paymentDescription,
                                 category: tx.category || PLAYER_FEE_CATEGORY,
                                 fixtureId: tx.fixtureId,
+                                fixtureOpponent,
                                 amount: tx.amount,
                                 date: dateSource || tx.date,
                                 context: metaParts.join(' · ')
@@ -4738,6 +4754,27 @@
                 }
             };
 
+            const openFixtureFromUnpaid = (item) => {
+                if (!item?.fixtureId || !onNavigate) return;
+                localStorage.setItem('gaffer:focusFixtureId', String(item.fixtureId));
+                if (item.fixtureOpponent) localStorage.setItem('gaffer:focusFixtureOpponent', item.fixtureOpponent);
+                onNavigate('fixtures');
+            };
+
+            const openPlayerFromUnpaid = (group) => {
+                if (!group?.playerId || !onNavigate) return;
+                localStorage.setItem('gaffer:focusPlayerId', String(group.playerId));
+                if (group.playerName) localStorage.setItem('gaffer:focusPlayerName', group.playerName);
+                onNavigate('players');
+            };
+
+            const handleKeyActivate = (event, action) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    action();
+                }
+            };
+
             return (
                 <div className="space-y-6 pb-28 animate-slide-up">
                     <header className="flex justify-between items-center pt-2 px-1">
@@ -4807,23 +4844,44 @@
                             <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
                                 {unpaidGroups.map(group => (
                                     <div key={group.playerId} className="rounded-xl border border-amber-100 bg-amber-50/50 p-3 space-y-2">
-                                        <div className="flex items-center justify-between">
+                                        <div
+                                            className="flex items-center justify-between cursor-pointer"
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => openPlayerFromUnpaid(group)}
+                                            onKeyDown={(e) => handleKeyActivate(e, () => openPlayerFromUnpaid(group))}
+                                        >
                                             <div className="text-sm font-bold text-slate-900">{group.playerName}</div>
                                             <div className="text-[11px] font-bold text-amber-700">Owes {formatCurrency(group.total, { maximumFractionDigits: 0 })}</div>
                                         </div>
                                         <div className="space-y-2">
-                                            {group.items.map(item => (
-                                                <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-amber-100 bg-white/90 px-3 py-2">
-                                                    <div className="min-w-0">
-                                                        <div className="text-[12px] font-semibold text-slate-800 truncate">{item.label}</div>
-                                                        {item.context && <div className="text-[10px] text-slate-500">{item.context}</div>}
+                                            {group.items.map(item => {
+                                                const canOpenFixture = !!item.fixtureId;
+                                                return (
+                                                    <div
+                                                        key={item.id}
+                                                        className={`flex items-center justify-between gap-3 rounded-lg border border-amber-100 bg-white/90 px-3 py-2 ${canOpenFixture ? 'cursor-pointer hover:border-brand-200' : ''}`}
+                                                        onClick={() => canOpenFixture && openFixtureFromUnpaid(item)}
+                                                        role={canOpenFixture ? 'button' : undefined}
+                                                        tabIndex={canOpenFixture ? 0 : undefined}
+                                                        onKeyDown={canOpenFixture ? (e) => handleKeyActivate(e, () => openFixtureFromUnpaid(item)) : undefined}
+                                                    >
+                                                        <div className="min-w-0">
+                                                            <div className="text-[12px] font-semibold text-slate-800 truncate">{item.label}</div>
+                                                            {item.context && <div className="text-[10px] text-slate-500">{item.context}</div>}
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="text-[11px] font-bold text-rose-600">{formatCurrency(Math.abs(item.amount), { maximumFractionDigits: 0 })}</div>
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); setPendingPayment(item); }}
+                                                                className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-1 rounded-md shadow-sm"
+                                                            >
+                                                                Paid
+                                                            </button>
+                                                        </div>
                                                     </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="text-[11px] font-bold text-rose-600">{formatCurrency(Math.abs(item.amount), { maximumFractionDigits: 0 })}</div>
-                                                        <button onClick={() => setPendingPayment(item)} className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-1 rounded-md shadow-sm">Paid</button>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                 ))}
@@ -5104,6 +5162,8 @@
             const [isReassigning, setIsReassigning] = useState(false);
             const [facts, setFacts] = useState({ opponentFacts: {}, venueFacts: {} });
             const [leagueTable, setLeagueTable] = useState([]);
+            const [leagueTotals, setLeagueTotals] = useState({ played: 0, wins: 0, draws: 0, losses: 0, points: 0 });
+            const [seasonLeagueTotals, setSeasonLeagueTotals] = useState([]);
             const [viewTab, setViewTab] = useState('opponents');
             const emptyOpponentForm = { name: '', contact: '', phone: '', payee: '' };
             const [selectedOpponent, setSelectedOpponent] = useState(null);
@@ -5148,6 +5208,7 @@
                 const opponentFacts = {};
                 const venueFacts = {};
                 const leagueStats = {};
+                const seasonTotals = {};
 
                 fx.forEach(f => {
                     // Opponent facts
@@ -5171,19 +5232,28 @@
                     const opponentName = (f.opponent || '').trim();
                     const hasScore = typeof f.homeScore === 'number' && typeof f.awayScore === 'number';
                     if(opponentName && hasScore) {
+                        const seasonKey = f.seasonTag || 'Unknown Season';
+                        if(!seasonTotals[seasonKey]) seasonTotals[seasonKey] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0 };
                         if(!leagueStats[opponentName]) leagueStats[opponentName] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0 };
                         const our = Number(f.homeScore || 0);
                         const their = Number(f.awayScore || 0);
                         leagueStats[opponentName].played += 1;
+                        seasonTotals[seasonKey].played += 1;
                         if(our > their) {
                             leagueStats[opponentName].wins += 1;
                             leagueStats[opponentName].points += 3;
+                            seasonTotals[seasonKey].wins += 1;
+                            seasonTotals[seasonKey].points += 3;
                         } else if(our === their) {
                             leagueStats[opponentName].draws += 1;
                             leagueStats[opponentName].points += 1;
+                            seasonTotals[seasonKey].draws += 1;
+                            seasonTotals[seasonKey].points += 1;
                         } else {
                             leagueStats[opponentName].losses += 1;
                             leagueStats[opponentName].points += 3;
+                            seasonTotals[seasonKey].losses += 1;
+                            seasonTotals[seasonKey].points += 3;
                         }
                     }
                 });
@@ -5209,7 +5279,22 @@
                     .map(([name, stats]) => ({ name, ...stats }))
                     .sort((a, b) => b.points - a.points || b.wins - a.wins || a.name.localeCompare(b.name));
 
+                const totals = leagueRows.reduce((acc, row) => {
+                    acc.played += row.played;
+                    acc.wins += row.wins;
+                    acc.draws += row.draws;
+                    acc.losses += row.losses;
+                    acc.points += row.points;
+                    return acc;
+                }, { played: 0, wins: 0, draws: 0, losses: 0, points: 0 });
+
+                const seasonRows = Object.entries(seasonTotals)
+                    .map(([season, stats]) => ({ season, ...stats }))
+                    .sort((a, b) => a.season.localeCompare(b.season));
+
                 setLeagueTable(leagueRows);
+                setLeagueTotals(totals);
+                setSeasonLeagueTotals(seasonRows);
                 setFacts({ opponentFacts, venueFacts });
             }, [opponents, venues]);
 
@@ -5608,13 +5693,7 @@
                         <div className="space-y-4">
                             <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
                                 <div className="flex items-center justify-between">
-                                    <div>
-                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">League Table</div>
-                                        <div className="text-[11px] text-slate-500">P=Played · W=Win · L=Loss · D=Draw · PTS=3 for win, 1 for draw, 3 for loss.</div>
-                                    </div>
-                                    <div className="text-[11px] px-2 py-1 rounded-full bg-slate-50 text-slate-600 border border-slate-200">
-                                        {leagueTable.length} team{leagueTable.length === 1 ? '' : 's'}
-                                    </div>
+                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">League Table</div>
                                 </div>
                                 <div className="overflow-x-auto">
                                     <table className="min-w-full text-sm">
@@ -5643,8 +5722,51 @@
                                                     <td colSpan={6} className="py-3 text-center text-[11px] text-slate-500">No played games yet.</td>
                                                 </tr>
                                             )}
+                                            {leagueTable.length ? (
+                                                <tr className="border-t border-slate-200 bg-slate-50">
+                                                    <td className="py-2 pr-2 text-left font-bold text-slate-900">Total</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{leagueTotals.played}</td>
+                                                    <td className="py-2 text-center text-emerald-800 font-bold">{leagueTotals.wins}</td>
+                                                    <td className="py-2 text-center text-rose-800 font-bold">{leagueTotals.losses}</td>
+                                                    <td className="py-2 text-center text-amber-800 font-bold">{leagueTotals.draws}</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{leagueTotals.points}</td>
+                                                </tr>
+                                            ) : null}
                                         </tbody>
                                     </table>
+                                </div>
+                                <div className="pt-2 border-t border-slate-100">
+                                    <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Season Totals</div>
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full text-sm">
+                                            <thead className="text-[11px] text-slate-400 uppercase tracking-wider">
+                                                <tr>
+                                                    <th className="text-left py-2 font-bold">Season</th>
+                                                    <th className="text-center py-2 font-bold">P</th>
+                                                    <th className="text-center py-2 font-bold">W</th>
+                                                    <th className="text-center py-2 font-bold">L</th>
+                                                    <th className="text-center py-2 font-bold">D</th>
+                                                    <th className="text-center py-2 font-bold">PTS</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {seasonLeagueTotals.length ? seasonLeagueTotals.map(row => (
+                                                    <tr key={row.season} className="border-t border-slate-100">
+                                                        <td className="py-2 pr-2 text-left font-bold text-slate-900">{row.season}</td>
+                                                        <td className="py-2 text-center text-slate-700">{row.played}</td>
+                                                        <td className="py-2 text-center text-emerald-700">{row.wins}</td>
+                                                        <td className="py-2 text-center text-rose-700">{row.losses}</td>
+                                                        <td className="py-2 text-center text-amber-700">{row.draws}</td>
+                                                        <td className="py-2 text-center font-bold text-slate-900">{row.points}</td>
+                                                    </tr>
+                                                )) : (
+                                                    <tr>
+                                                        <td colSpan={6} className="py-3 text-center text-[11px] text-slate-500">No season totals yet.</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
                             </div>
                             <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
