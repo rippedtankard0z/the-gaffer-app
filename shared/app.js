@@ -988,8 +988,18 @@
                 setParticipations(parts);
                 setTransactions(txs);
 
+                let hasFocusedPlayer = false;
+                const focusPlayerId = localStorage.getItem('gaffer:focusPlayerId');
+                if (focusPlayerId) {
+                    const targetById = list.find(p => String(p.id) === String(focusPlayerId));
+                    if (targetById) {
+                        openPlayerDetails(targetById);
+                        hasFocusedPlayer = true;
+                    }
+                    localStorage.removeItem('gaffer:focusPlayerId');
+                }
                 const focusName = localStorage.getItem('gaffer:focusPlayerName');
-                if(focusName) {
+                if (!hasFocusedPlayer && focusName) {
                     const target = list.find(p => (`${p.firstName} ${p.lastName}`).toLowerCase().includes(focusName.toLowerCase()));
                     if(target) openPlayerDetails(target);
                     localStorage.removeItem('gaffer:focusPlayerName');
@@ -8608,9 +8618,26 @@
             const scrollCurrentTabToTop = useCallback((tab) => {
                 const target = tab || activeTab;
                 const section = document.querySelector(`[data-tab-container="${target}"]`);
-                const scroller = (section && typeof section.scrollTo === 'function') ? section : window;
+                const candidates = [
+                    section,
+                    section?.parentElement,
+                    document.querySelector('main'),
+                    document.scrollingElement,
+                    document.documentElement,
+                    document.body,
+                    window
+                ].filter(Boolean);
+
                 // Defer to next frame so click animations don't block the scroll.
-                requestAnimationFrame(() => scroller.scrollTo({ top: 0, behavior: 'smooth' }));
+                requestAnimationFrame(() => {
+                    candidates.forEach(el => {
+                        if (typeof el.scrollTo === 'function') {
+                            el.scrollTo({ top: 0, behavior: 'smooth' });
+                        } else if ('scrollTop' in el) {
+                            el.scrollTop = 0;
+                        }
+                    });
+                });
             }, [activeTab]);
 
             const navigate = useCallback((tab) => {
