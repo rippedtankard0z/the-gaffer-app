@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2024.12.06-17';
+        const MASTER_BUILD_VERSION = '2024.12.06-19';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -1377,11 +1377,24 @@
 
             const deletePlayerAndRelations = async (player) => {
                 if (!player) return;
+                await waitForDb();
+                const playerKey = String(player.id);
                 await db.participations.where('playerId').equals(player.id).delete();
                 await db.transactions.where('playerId').equals(player.id).delete();
+                if (db?.kitDetails) {
+                    await db.kitDetails.where('playerId').anyOf(player.id, playerKey).delete();
+                }
+                if (db?.kitQueue) {
+                    await db.kitQueue.where('playerId').anyOf(player.id, playerKey).delete();
+                }
                 await db.players.delete(player.id);
                 if (selectedPlayer && selectedPlayer.id === player.id) setSelectedPlayer(null);
                 setPlayers(prev => prev.filter(p => p.id !== player.id));
+                window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'players' } }));
+                window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'transactions' } }));
+                window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'participations' } }));
+                window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'kitDetails' } }));
+                window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'kitQueue' } }));
                 refresh();
             };
 
@@ -1392,7 +1405,52 @@
 
             const confirmDeletePlayer = async (player) => {
                 if (!player) return false;
-                if (!confirm(`Delete ${player.firstName} ${player.lastName} and all linked games/payments?`)) return false;
+                await waitForDb();
+                const playerTxs = await db.transactions.where('playerId').equals(player.id).toArray();
+                const balance = playerTxs.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+                const outstandingCharges = playerTxs.filter(tx => tx.amount < 0 && !transactionHasCoveringPayment(tx, playerTxs));
+                const hasOutstanding = outstandingCharges.length > 0 || Math.abs(balance) >= 0.01;
+                let mode = 'expunge';
+
+                if (hasOutstanding) {
+                    const chargeLabel = outstandingCharges.length
+                        ? `${outstandingCharges.length} unpaid item${outstandingCharges.length === 1 ? '' : 's'}`
+                        : 'No unpaid charges';
+                    const choice = prompt([
+                        `Delete ${player.firstName} ${player.lastName}?`,
+                        `${chargeLabel} · Net balance ${formatCurrency(balance)}`,
+                        'Type "write off" to write off the balance before deleting, or "expunge" to delete all ledger history.',
+                        'Leave blank to cancel.'
+                    ].join('\n'), outstandingCharges.length ? 'write off' : 'expunge');
+                    if (!choice) return false;
+                    const normalized = choice.trim().toLowerCase();
+                    if (['write off', 'write-off', 'writeoff', 'write', 'w'].includes(normalized)) {
+                        mode = 'writeOff';
+                    } else if (['expunge', 'delete', 'remove', 'e'].includes(normalized)) {
+                        mode = 'expunge';
+                    } else {
+                        alert('Delete cancelled.');
+                        return false;
+                    }
+                } else {
+                    if (!confirm(`Delete ${player.firstName} ${player.lastName} and all linked games/payments?`)) return false;
+                }
+
+                if (mode === 'writeOff' && Math.abs(balance) >= 0.01) {
+                    await db.transactions.add({
+                        date: new Date().toISOString(),
+                        category: 'Write-off',
+                        type: balance >= 0 ? 'INCOME' : 'EXPENSE',
+                        flow: balance >= 0 ? 'receivable' : 'payable',
+                        description: `Write-off for deleted player ${player.firstName} ${player.lastName}`,
+                        amount: balance,
+                        isWriteOff: true,
+                        isReconciled: true,
+                        playerId: null
+                    });
+                    window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'transactions' } }));
+                }
+
                 await deletePlayerAndRelations(player);
                 return true;
             };
@@ -1823,6 +1881,10 @@
                                     Active
                                 </label>
                                 <button type="submit" className="w-full bg-brand-600 text-white font-bold py-4 rounded-xl mt-4">Save Changes</button>
+                                <div className="space-y-1 pt-1">
+                                    <button type="button" onClick={() => handleDeletePlayer(editPlayer)} className="w-full border border-rose-200 bg-rose-50 text-rose-700 font-bold py-3 rounded-xl">Delete Player</button>
+                                    <div className="text-[11px] text-slate-500 text-center">Deletes this player, kit links, games, and payments. You can choose to write off or expunge outstanding amounts.</div>
+                                </div>
                             </form>
                         )}
                     </Modal>
@@ -2167,13 +2229,27 @@
             };
 
             const togglePlayer = async (playerId) => {
+                if (!selectedFixture) return;
                 const newState = { ...squad, [playerId]: !squad[playerId] };
                 setSquad(newState);
+                const fixtureId = selectedFixture.id;
                 if (newState[playerId]) {
-                    await db.participations.add({ fixtureId: selectedFixture.id, playerId, status: 'SELECTED' });
+                    await db.participations.add({ fixtureId, playerId, status: 'SELECTED' });
                 } else {
-                    const rec = await db.participations.where({ fixtureId: selectedFixture.id, playerId }).first();
+                    const rec = await db.participations.where({ fixtureId, playerId }).first();
                     if (rec) await db.participations.delete(rec.id);
+                    const playerTx = await db.transactions.where({ fixtureId, playerId }).toArray();
+                    if (playerTx.length) {
+                        await db.transactions.bulkDelete(playerTx.map(t => t.id));
+                        setFixtureTx(prev => prev.filter(tx => !(tx.fixtureId === fixtureId && tx.playerId === playerId)));
+                        setAllTx(prev => prev.filter(tx => !(tx.fixtureId === fixtureId && tx.playerId === playerId)));
+                    }
+                    setFeeEdits(prev => {
+                        if (prev[playerId] === undefined) return prev;
+                        const next = { ...prev };
+                        delete next[playerId];
+                        return next;
+                    });
                 }
             };
 
@@ -4959,6 +5035,26 @@
                     </div>
 
                     <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Match Centre</div>
+                        {nextFixture ? (
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <div className="text-sm font-bold text-slate-900">Next: vs {nextFixture.opponent}</div>
+                                    <div className="text-[11px] text-slate-500">{new Date(nextFixture.date).toLocaleDateString()} · {renderTimeLabel(nextFixture.time)} · {nextFixture.venue || 'TBC'}</div>
+                                </div>
+                                <button onClick={() => onNavigate('fixtures')} className="text-[11px] font-bold text-brand-600 underline">Open</button>
+                            </div>
+                        ) : <div className="text-sm text-slate-500">No upcoming game scheduled.</div>}
+                        {lastResult && (
+                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Last Result</div>
+                                <div className="text-sm font-bold text-slate-900">Exiles {lastResult.score} {lastResult.opponent}</div>
+                                <div className="text-[11px] text-slate-500">{new Date(lastResult.date).toLocaleDateString()}</div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
                         <div className="flex items-start justify-between gap-2">
                             <div>
                                 <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Unpaid Items</div>
@@ -5218,26 +5314,6 @@
                             </div>
                         ) : (
                             <div className="text-xs text-slate-400">No birthdays in the next 60 days.</div>
-                        )}
-                    </div>
-
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
-                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Match Centre</div>
-                        {nextFixture ? (
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <div className="text-sm font-bold text-slate-900">Next: vs {nextFixture.opponent}</div>
-                                    <div className="text-[11px] text-slate-500">{new Date(nextFixture.date).toLocaleDateString()} · {renderTimeLabel(nextFixture.time)} · {nextFixture.venue || 'TBC'}</div>
-                                </div>
-                                <button onClick={() => onNavigate('fixtures')} className="text-[11px] font-bold text-brand-600 underline">Open</button>
-                            </div>
-                        ) : <div className="text-sm text-slate-500">No upcoming game scheduled.</div>}
-                        {lastResult && (
-                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
-                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Last Result</div>
-                                <div className="text-sm font-bold text-slate-900">Exiles {lastResult.score} {lastResult.opponent}</div>
-                                <div className="text-[11px] text-slate-500">{new Date(lastResult.date).toLocaleDateString()}</div>
-                            </div>
                         )}
                     </div>
 
