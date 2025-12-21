@@ -927,6 +927,7 @@
             const [playerSearch, setPlayerSearch] = useState('');
             const [isReleasingKit, setIsReleasingKit] = useState(false);
             const [localSquadTab, setLocalSquadTab] = useState(squadTab || 'players');
+            const [deleteDialog, setDeleteDialog] = useState({ open: false, player: null, balance: 0, outstandingCount: 0, outstandingTotal: 0, outstandingItems: [] });
             useEffect(() => {
                 setLocalSquadTab(squadTab || 'players');
             }, [squadTab]);
@@ -1398,61 +1399,72 @@
                 refresh();
             };
 
-            const handleDeletePlayer = async (player) => {
-                const deleted = await confirmDeletePlayer(player);
-                if (deleted) setIsEditOpen(false);
-            };
-
-            const confirmDeletePlayer = async (player) => {
-                if (!player) return false;
+            const openDeleteDialogForPlayer = async (player) => {
+                if (!player) return;
                 await waitForDb();
                 const playerTxs = await db.transactions.where('playerId').equals(player.id).toArray();
                 const balance = playerTxs.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
                 const outstandingCharges = playerTxs.filter(tx => tx.amount < 0 && !transactionHasCoveringPayment(tx, playerTxs));
-                const hasOutstanding = outstandingCharges.length > 0 || Math.abs(balance) >= 0.01;
-                let mode = 'expunge';
-
-                if (hasOutstanding) {
-                    const chargeLabel = outstandingCharges.length
-                        ? `${outstandingCharges.length} unpaid item${outstandingCharges.length === 1 ? '' : 's'}`
-                        : 'No unpaid charges';
-                    const choice = prompt([
-                        `Delete ${player.firstName} ${player.lastName}?`,
-                        `${chargeLabel} · Net balance ${formatCurrency(balance)}`,
-                        'Type "write off" to write off the balance before deleting, or "expunge" to delete all ledger history.',
-                        'Leave blank to cancel.'
-                    ].join('\n'), outstandingCharges.length ? 'write off' : 'expunge');
-                    if (!choice) return false;
-                    const normalized = choice.trim().toLowerCase();
-                    if (['write off', 'write-off', 'writeoff', 'write', 'w'].includes(normalized)) {
-                        mode = 'writeOff';
-                    } else if (['expunge', 'delete', 'remove', 'e'].includes(normalized)) {
-                        mode = 'expunge';
-                    } else {
-                        alert('Delete cancelled.');
-                        return false;
+                const outstandingTotal = outstandingCharges.reduce((sum, tx) => sum + Math.abs(Number(tx.amount) || 0), 0);
+                const outstandingItems = outstandingCharges.slice(0, 5).map(tx => {
+                    const fixture = fixtures.find(f => f.id === tx.fixtureId);
+                    let label = buildChargeLabel(tx);
+                    if (fixture) {
+                        const dateLabel = fixture.date ? new Date(fixture.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '';
+                        label = [`vs ${fixture.opponent || 'TBC'}`, dateLabel].filter(Boolean).join(' · ');
                     }
-                } else {
-                    if (!confirm(`Delete ${player.firstName} ${player.lastName} and all linked games/payments?`)) return false;
-                }
+                    return { id: tx.id, label, amount: tx.amount };
+                });
+                setDeleteDialog({
+                    open: true,
+                    player,
+                    balance,
+                    outstandingCount: outstandingCharges.length,
+                    outstandingTotal,
+                    outstandingItems
+                });
+            };
 
-                if (mode === 'writeOff' && Math.abs(balance) >= 0.01) {
-                    await db.transactions.add({
-                        date: new Date().toISOString(),
-                        category: 'Write-off',
-                        type: balance >= 0 ? 'INCOME' : 'EXPENSE',
-                        flow: balance >= 0 ? 'receivable' : 'payable',
-                        description: `Write-off for deleted player ${player.firstName} ${player.lastName}`,
-                        amount: balance,
-                        isWriteOff: true,
-                        isReconciled: true,
-                        playerId: null
-                    });
-                    window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'transactions' } }));
-                }
+            const closeDeleteDialog = () => setDeleteDialog({ open: false, player: null, balance: 0, outstandingCount: 0, outstandingTotal: 0, outstandingItems: [] });
 
-                await deletePlayerAndRelations(player);
-                return true;
+            const handleDeletePlayer = async (player) => {
+                await openDeleteDialogForPlayer(player);
+            };
+
+            const confirmDeletePlayer = async (mode = 'expunge') => {
+                const target = deleteDialog.player;
+                if (!target) return false;
+                const intent = mode === 'writeOff' ? 'writeOff' : 'expunge';
+                startImportProgress('Deleting player…');
+                try {
+                    if (intent === 'writeOff' && Math.abs(deleteDialog.balance) >= 0.01) {
+                        const writeOffAmount = Number(deleteDialog.balance) || 0;
+                        const writeOffType = writeOffAmount >= 0 ? 'INCOME' : 'EXPENSE';
+                        await db.transactions.add({
+                            date: new Date().toISOString(),
+                            category: 'Write-off',
+                            type: writeOffType,
+                            flow: deriveFlow(writeOffType),
+                            description: `Write-off for deleted player ${target.firstName} ${target.lastName}`,
+                            amount: writeOffAmount,
+                            isWriteOff: true,
+                            isReconciled: true,
+                            playerId: null
+                        });
+                        window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'transactions' } }));
+                    }
+
+                    await deletePlayerAndRelations(target);
+                    closeDeleteDialog();
+                    setIsEditOpen(false);
+                    return true;
+                } catch (err) {
+                    console.error('Failed to delete player', err);
+                    alert('Unable to delete player. Please try again.');
+                    return false;
+                } finally {
+                    finishImportProgress();
+                }
             };
 
             const generateWallImage = () => {
@@ -1886,6 +1898,71 @@
                                     <div className="text-[11px] text-slate-500 text-center">Deletes this player, kit links, games, and payments. You can choose to write off or expunge outstanding amounts.</div>
                                 </div>
                             </form>
+                        )}
+                    </Modal>
+
+                    <Modal isOpen={deleteDialog.open} onClose={closeDeleteDialog} title="Delete Player">
+                        {deleteDialog.player && (
+                            <div className="space-y-4">
+                                <div className="text-sm text-slate-600">
+                                    Choose how to handle any outstanding amounts before deleting <span className="font-semibold text-slate-900">{deleteDialog.player.firstName} {deleteDialog.player.lastName}</span>.
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                        <div className="text-[10px] uppercase font-bold text-slate-400">Outstanding items</div>
+                                        <div className="text-lg font-display font-bold text-slate-900">{deleteDialog.outstandingCount}</div>
+                                        {deleteDialog.outstandingCount > 0 && (
+                                            <div className="text-[11px] text-slate-500">{formatCurrency(deleteDialog.outstandingTotal, { maximumFractionDigits: 0 })} total</div>
+                                        )}
+                                    </div>
+                                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                        <div className="text-[10px] uppercase font-bold text-slate-400">Net balance</div>
+                                        <div className={`text-lg font-display font-bold ${deleteDialog.balance < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                            {formatCurrency(deleteDialog.balance)}
+                                        </div>
+                                        <div className="text-[11px] text-slate-500">Balance carried into write-off</div>
+                                    </div>
+                                </div>
+                                {deleteDialog.outstandingItems.length ? (
+                                    <div className="space-y-2">
+                                        <div className="text-[11px] font-bold uppercase text-slate-400 tracking-wider">Outstanding details</div>
+                                        <div className="space-y-2 max-h-32 overflow-y-auto">
+                                            {deleteDialog.outstandingItems.map(item => (
+                                                <div key={item.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white border border-slate-100">
+                                                    <div className="text-sm text-slate-700">{item.label}</div>
+                                                    <div className="text-sm font-bold text-rose-600">{formatCurrency(item.amount)}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="text-[12px] text-slate-500">No outstanding amounts. You can safely delete this player.</div>
+                                )}
+                                <div className="grid sm:grid-cols-3 gap-2 pt-2">
+                                    <button
+                                        type="button"
+                                        disabled={Math.abs(deleteDialog.balance) < 0.01 && deleteDialog.outstandingCount === 0}
+                                        onClick={() => confirmDeletePlayer('writeOff')}
+                                        className={`w-full font-bold py-3 rounded-xl border ${Math.abs(deleteDialog.balance) < 0.01 && deleteDialog.outstandingCount === 0 ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'}`}
+                                    >
+                                        Write Off & Delete
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => confirmDeletePlayer('expunge')}
+                                        className="w-full font-bold py-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                                    >
+                                        Expunge & Delete
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={closeDeleteDialog}
+                                        className="w-full font-bold py-3 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
                         )}
                     </Modal>
 
