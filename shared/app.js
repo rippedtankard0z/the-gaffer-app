@@ -5450,6 +5450,7 @@
         const Opponents = ({ opponents, setOpponents, venues, setVenues, referees, setReferees, onNavigate }) => {
             const [newOpponent, setNewOpponent] = useState({ name: '', contact: '', phone: '', payee: '' });
             const [isAddOpponentOpen, setIsAddOpponentOpen] = useState(false);
+            const [isAddVenueOpen, setIsAddVenueOpen] = useState(false);
             const [newVenue, setNewVenue] = useState({ name: '', price: '', homeTeamId: null, address: '', notes: '', payee: '', contact: '' });
             const [newRef, setNewRef] = useState({ name: '', phone: '' });
             const [reassignEntity, setReassignEntity] = useState({ open: false, type: '', item: null, count: 0 });
@@ -5458,21 +5459,35 @@
             const [isReassigning, setIsReassigning] = useState(false);
             const [facts, setFacts] = useState({ opponentFacts: {}, venueFacts: {} });
             const [leagueTable, setLeagueTable] = useState([]);
-            const [leagueTotals, setLeagueTotals] = useState({ played: 0, wins: 0, draws: 0, losses: 0, points: 0 });
+            const [leagueTotals, setLeagueTotals] = useState({ played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 });
             const [seasonLeagueTotals, setSeasonLeagueTotals] = useState([]);
             const [viewTab, setViewTab] = useState('opponents');
             const emptyOpponentForm = { name: '', contact: '', phone: '', payee: '' };
+            const emptyVenueForm = { name: '', price: '', homeTeamId: null, address: '', notes: '', payee: '', contact: '' };
             const [selectedOpponent, setSelectedOpponent] = useState(null);
             const [opponentForm, setOpponentForm] = useState(emptyOpponentForm);
+            const [selectedVenue, setSelectedVenue] = useState(null);
+            const [venueForm, setVenueForm] = useState(emptyVenueForm);
             const [opponentFixtures, setOpponentFixtures] = useState([]);
             const [opponentTransactions, setOpponentTransactions] = useState([]);
+            const [venueFixtures, setVenueFixtures] = useState([]);
+            const [venueTransactions, setVenueTransactions] = useState([]);
             const [isOpponentLoading, setIsOpponentLoading] = useState(false);
+            const [isVenueLoading, setIsVenueLoading] = useState(false);
             const [opponentSaveStatus, setOpponentSaveStatus] = useState('idle');
+            const [venueSaveStatus, setVenueSaveStatus] = useState('idle');
             const opponentSaveTimerRef = useRef(null);
+            const venueSaveTimerRef = useRef(null);
             const clearOpponentSaveTimer = () => {
                 if (opponentSaveTimerRef.current) {
                     clearTimeout(opponentSaveTimerRef.current);
                     opponentSaveTimerRef.current = null;
+                }
+            };
+            const clearVenueSaveTimer = () => {
+                if (venueSaveTimerRef.current) {
+                    clearTimeout(venueSaveTimerRef.current);
+                    venueSaveTimerRef.current = null;
                 }
             };
             useEffect(() => {
@@ -5486,12 +5501,17 @@
             useEffect(() => {
                 return () => {
                     clearOpponentSaveTimer();
+                    clearVenueSaveTimer();
                 };
             }, []);
             useEffect(() => {
                 clearOpponentSaveTimer();
                 setOpponentSaveStatus('idle');
             }, [selectedOpponent?.id]);
+            useEffect(() => {
+                clearVenueSaveTimer();
+                setVenueSaveStatus('idle');
+            }, [selectedVenue?.id]);
 
             const refreshFacts = useCallback(async () => {
                 await waitForDb();
@@ -5529,12 +5549,16 @@
                     const hasScore = typeof f.homeScore === 'number' && typeof f.awayScore === 'number';
                     if(opponentName && hasScore) {
                         const seasonKey = f.seasonTag || 'Unknown Season';
-                        if(!seasonTotals[seasonKey]) seasonTotals[seasonKey] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0 };
-                        if(!leagueStats[opponentName]) leagueStats[opponentName] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0 };
+                        if(!seasonTotals[seasonKey]) seasonTotals[seasonKey] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 };
+                        if(!leagueStats[opponentName]) leagueStats[opponentName] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 };
                         const our = Number(f.homeScore || 0);
                         const their = Number(f.awayScore || 0);
                         leagueStats[opponentName].played += 1;
+                        leagueStats[opponentName].goalsFor += our;
+                        leagueStats[opponentName].goalsAgainst += their;
                         seasonTotals[seasonKey].played += 1;
+                        seasonTotals[seasonKey].goalsFor += our;
+                        seasonTotals[seasonKey].goalsAgainst += their;
                         if(our > their) {
                             leagueStats[opponentName].wins += 1;
                             leagueStats[opponentName].points += 3;
@@ -5567,7 +5591,7 @@
                     const name = (o.name || '').trim();
                     if(!name) return;
                     if(!leagueStats[name]) {
-                        leagueStats[name] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0 };
+                        leagueStats[name] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 };
                     }
                 });
 
@@ -5581,8 +5605,10 @@
                     acc.draws += row.draws;
                     acc.losses += row.losses;
                     acc.points += row.points;
+                    acc.goalsFor += row.goalsFor || 0;
+                    acc.goalsAgainst += row.goalsAgainst || 0;
                     return acc;
-                }, { played: 0, wins: 0, draws: 0, losses: 0, points: 0 });
+                }, { played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 });
 
                 const seasonRows = Object.entries(seasonTotals)
                     .map(([season, stats]) => ({ season, ...stats }))
@@ -5641,6 +5667,35 @@
                 setNewOpponent({ name: '', contact: '', phone: '', payee: '' });
             };
 
+            const openVenueSheet = (venue) => {
+                if (!venue) return;
+                setSelectedVenue(venue);
+                setVenueForm({
+                    name: venue.name || '',
+                    price: venue.price ?? '',
+                    address: venue.address || '',
+                    notes: venue.notes || '',
+                    payee: venue.payee || '',
+                    contact: venue.contact || '',
+                    homeTeamId: venue.homeTeamId ?? null
+                });
+            };
+
+            const closeVenueSheet = () => {
+                setSelectedVenue(null);
+                setVenueForm({ ...emptyVenueForm });
+                setVenueFixtures([]);
+                setVenueTransactions([]);
+                setIsVenueLoading(false);
+                clearVenueSaveTimer();
+                setVenueSaveStatus('idle');
+            };
+
+            const closeAddVenue = () => {
+                setIsAddVenueOpen(false);
+                setNewVenue({ ...emptyVenueForm });
+            };
+
             useEffect(() => {
                 if (!selectedOpponent) return;
                 let active = true;
@@ -5676,6 +5731,43 @@
                     active = false;
                 };
             }, [selectedOpponent?.id, selectedOpponent?.name]);
+
+            useEffect(() => {
+                if (!selectedVenue) return;
+                let active = true;
+                const loadVenueSheet = async () => {
+                    setIsVenueLoading(true);
+                    await waitForDb();
+                    const [fixtures, txs] = await Promise.all([
+                        db.fixtures.toArray(),
+                        db.transactions.toArray()
+                    ]);
+                    if (!active) return;
+                    const lowerName = (selectedVenue.name || '').toLowerCase();
+                    const lowerPayee = (selectedVenue.payee || '').toLowerCase();
+                    const venFixtures = fixtures
+                        .filter(f => f.venueId === selectedVenue.id || (f.venue || '').toLowerCase() === lowerName)
+                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+                    const fixtureIdSet = new Set(venFixtures.map(f => f.id));
+                    const venTxs = txs
+                        .filter(tx => {
+                            const payee = (tx.payee || '').trim().toLowerCase();
+                            const payeeMatch = payee && (payee === lowerName || (!!lowerPayee && payee === lowerPayee));
+                            const fixtureMatch = tx.fixtureId && fixtureIdSet.has(tx.fixtureId);
+                            const isClubTx = tx.playerId === undefined || tx.playerId === null;
+                            const payeeMissing = !payee;
+                            return payeeMatch || (isClubTx && payeeMissing && fixtureMatch);
+                        })
+                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+                    setVenueFixtures(venFixtures);
+                    setVenueTransactions(venTxs);
+                    setIsVenueLoading(false);
+                };
+                loadVenueSheet();
+                return () => {
+                    active = false;
+                };
+            }, [selectedVenue?.id, selectedVenue?.name, selectedVenue?.payee]);
 
             const addOpponent = async () => {
                 const name = newOpponent.name.trim();
@@ -5767,10 +5859,26 @@
             };
 
             const addVenue = async () => {
-                if(!newVenue.name.trim()) return;
-                const id = await db.venues.add({ ...newVenue, price: newVenue.price ? Number(newVenue.price) : null });
-                setVenues([...venues, { ...newVenue, price: newVenue.price ? Number(newVenue.price) : null, id }]);
-                setNewVenue({ name: '', price: '', homeTeamId: null, address: '', notes: '', payee: '', contact: '' });
+                const name = (newVenue.name || '').trim();
+                if(!name) return;
+                const payload = {
+                    name,
+                    price: newVenue.price !== undefined && newVenue.price !== null && newVenue.price !== '' ? Number(newVenue.price) : null,
+                    homeTeamId: newVenue.homeTeamId ? Number(newVenue.homeTeamId) : null,
+                    address: (newVenue.address || '').trim(),
+                    notes: (newVenue.notes || '').trim(),
+                    payee: (newVenue.payee || '').trim(),
+                    contact: (newVenue.contact || '').trim()
+                };
+                const id = await db.venues.add(payload);
+                setVenues([...venues, { ...payload, id }]);
+                setNewVenue({ ...emptyVenueForm });
+                setIsAddVenueOpen(false);
+            };
+
+            const handleAddVenue = async (event) => {
+                event.preventDefault();
+                await addVenue();
             };
 
             const deleteVenue = async (venue) => {
@@ -5791,6 +5899,68 @@
                 const contact = prompt('Edit contact', venue.contact || '') ?? venue.contact;
                 await db.venues.update(venue.id, { name, notes, payee, contact });
                 setVenues(venues.map(v => v.id === venue.id ? { ...v, name, notes, payee, contact } : v));
+            };
+
+            const saveVenueDetails = async () => {
+                if (!selectedVenue) return;
+                const cleanName = (venueForm?.name || '').trim();
+                if (!cleanName) {
+                    alert('Venue name is required.');
+                    return;
+                }
+                const payload = {
+                    name: cleanName,
+                    price: venueForm?.price !== undefined && venueForm?.price !== null && venueForm?.price !== '' ? Number(venueForm.price) : null,
+                    homeTeamId: venueForm?.homeTeamId ? Number(venueForm.homeTeamId) : null,
+                    address: (venueForm?.address || '').trim(),
+                    notes: (venueForm?.notes || '').trim(),
+                    payee: (venueForm?.payee || '').trim(),
+                    contact: (venueForm?.contact || '').trim()
+                };
+                const duplicate = venues.find(v => v.id !== selectedVenue.id && (v.name || '').trim().toLowerCase() === cleanName.toLowerCase());
+                if (duplicate) {
+                    if (!confirm(`"${cleanName}" already exists. Update this venue anyway?`)) return;
+                }
+                clearVenueSaveTimer();
+                setVenueSaveStatus('saving');
+                try {
+                    const prevName = (selectedVenue.name || '').trim();
+                    await db.venues.update(selectedVenue.id, payload);
+                    const nameChanged = prevName !== cleanName;
+                    if (nameChanged) {
+                        const fixtures = await db.fixtures.toArray();
+                        const affected = fixtures.filter(f => f.venueId === selectedVenue.id || (f.venue || '').toLowerCase() === prevName.toLowerCase());
+                        if (affected.length) {
+                            await db.fixtures.bulkPut(affected.map(f => ({ ...f, venue: cleanName, venueId: selectedVenue.id })));
+                        }
+                        try {
+                            await db.transactions.where('payee').equals(prevName).modify({ payee: cleanName });
+                        } catch (err) {
+                            await db.transactions.filter(t => (t.payee || '').toLowerCase() === prevName.toLowerCase()).modify({ payee: cleanName });
+                        }
+                    }
+                    setVenues(venues.map(v => v.id === selectedVenue.id ? { ...v, ...payload } : v));
+                    setSelectedVenue(prev => prev ? { ...prev, ...payload } : prev);
+                    setVenueForm({ ...payload });
+                    setVenueSaveStatus('saved');
+                    venueSaveTimerRef.current = setTimeout(() => {
+                        setVenueSaveStatus('idle');
+                    }, 1200);
+                } catch (err) {
+                    console.error('Unable to update venue', err);
+                    setVenueSaveStatus('error');
+                    venueSaveTimerRef.current = setTimeout(() => {
+                        setVenueSaveStatus('idle');
+                    }, 2000);
+                    alert('Unable to save venue: ' + (err?.message || 'Unexpected error'));
+                }
+            };
+
+            const handleVenueDelete = async () => {
+                if (!selectedVenue) return;
+                const target = selectedVenue;
+                closeVenueSheet();
+                await deleteVenue(target);
             };
 
             const opponentFixtureLookup = useMemo(() => {
@@ -5872,6 +6042,117 @@
                 : 'text-rose-600';
             const opponentDisplayName = (opponentForm?.name || selectedOpponent?.name || '').trim() || 'Opponent';
             const opponentOutstandingTone = opponentPaymentSummary.netOutstanding >= 0 ? 'text-emerald-700' : 'text-rose-700';
+
+            const venueFixtureLookup = useMemo(() => {
+                return venueFixtures.reduce((acc, fixture) => {
+                    acc[String(fixture.id)] = fixture;
+                    return acc;
+                }, {});
+            }, [venueFixtures]);
+
+            const venueStats = useMemo(() => {
+                const summary = {
+                    total: venueFixtures.length,
+                    played: 0,
+                    wins: 0,
+                    draws: 0,
+                    losses: 0,
+                    goalsFor: 0,
+                    goalsAgainst: 0,
+                    lastPlayed: null,
+                    nextFixture: null
+                };
+                if (!venueFixtures.length) return summary;
+                const byDateDesc = [...venueFixtures].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+                const byDateAsc = [...venueFixtures].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+                const now = new Date();
+                byDateDesc.forEach(f => {
+                    const hasScore = typeof f.homeScore === 'number' && typeof f.awayScore === 'number';
+                    if (!hasScore) return;
+                    summary.played += 1;
+                    const our = Number(f.homeScore || 0);
+                    const their = Number(f.awayScore || 0);
+                    summary.goalsFor += our;
+                    summary.goalsAgainst += their;
+                    if (our > their) summary.wins += 1;
+                    else if (our === their) summary.draws += 1;
+                    else summary.losses += 1;
+                });
+                summary.lastPlayed = byDateDesc.find(f => typeof f.homeScore === 'number' && typeof f.awayScore === 'number') || null;
+                summary.nextFixture = byDateAsc.find(f => {
+                    const dateValue = new Date(f.date || 0);
+                    if (Number.isNaN(dateValue.getTime())) return false;
+                    return dateValue >= now && (!f.status || f.status !== 'PLAYED');
+                }) || null;
+                return summary;
+            }, [venueFixtures]);
+
+            const venuePaymentSummary = useMemo(() => {
+                const summary = { total: 0, outstandingReceivable: 0, outstandingPayable: 0, netOutstanding: 0 };
+                venueTransactions.forEach(tx => {
+                    const amount = Number(tx.amount) || 0;
+                    summary.total += amount;
+                    if (!tx.isReconciled) {
+                        if (amount > 0 || tx.flow === 'receivable') summary.outstandingReceivable += amount;
+                        if (amount < 0 || tx.flow === 'payable') summary.outstandingPayable += amount;
+                    }
+                });
+                summary.netOutstanding = summary.outstandingReceivable + summary.outstandingPayable;
+                return summary;
+            }, [venueTransactions]);
+
+            const normalizeVenuePrice = (value) => {
+                if (value === undefined || value === null || value === '') return null;
+                const num = Number(value);
+                return Number.isNaN(num) ? null : num;
+            };
+
+            const venueIsDirty = useMemo(() => {
+                if (!selectedVenue) return false;
+                const clean = (value) => (value ?? '').toString().trim();
+                return (
+                    clean(venueForm?.name) !== clean(selectedVenue.name) ||
+                    clean(venueForm?.address) !== clean(selectedVenue.address) ||
+                    clean(venueForm?.notes) !== clean(selectedVenue.notes) ||
+                    clean(venueForm?.payee) !== clean(selectedVenue.payee) ||
+                    clean(venueForm?.contact) !== clean(selectedVenue.contact) ||
+                    (venueForm?.homeTeamId ? Number(venueForm.homeTeamId) : null) !== (selectedVenue.homeTeamId ?? null) ||
+                    normalizeVenuePrice(venueForm?.price) !== normalizeVenuePrice(selectedVenue.price)
+                );
+            }, [venueForm, selectedVenue]);
+
+            const venueSaveLabel = venueSaveStatus === 'saved'
+                ? 'Saved'
+                : venueSaveStatus === 'error'
+                    ? 'Save failed'
+                    : '';
+            const venueSaveTone = venueSaveStatus === 'saved'
+                ? 'text-emerald-600'
+                : 'text-rose-600';
+            const venueDisplayName = (venueForm?.name || selectedVenue?.name || '').trim() || 'Venue';
+            const venueOutstandingTone = venuePaymentSummary.netOutstanding >= 0 ? 'text-emerald-700' : 'text-rose-700';
+
+            const getVenueFacts = (venueName) => {
+                if (!venueName) return null;
+                const lower = venueName.toLowerCase();
+                const entry = Object.entries(facts.venueFacts).find(([key]) => key.toLowerCase() === lower);
+                return entry ? entry[1] : null;
+            };
+
+            const selectedVenueFacts = useMemo(() => getVenueFacts((selectedVenue?.name || '').trim()), [facts.venueFacts, selectedVenue?.name]);
+
+            const buildMapEmbedUrl = (address) => {
+                const query = (address || '').trim();
+                if (!query) return '';
+                return `https://www.google.com/maps?q=${encodeURIComponent(query)}&z=15&output=embed`;
+            };
+
+            const venueMapUrl = useMemo(() => buildMapEmbedUrl(selectedVenue?.address || selectedVenue?.name || ''), [selectedVenue?.address, selectedVenue?.name]);
+
+            const opponentById = useMemo(() => opponents.reduce((acc, item) => {
+                if (item?.id !== undefined && item?.id !== null) acc[item.id] = item;
+                return acc;
+            }, {}), [opponents]);
 
             const renderVenueFacts = () => (
                 <div className="space-y-2">
@@ -6000,6 +6281,8 @@
                                                 <th className="text-center py-2 font-bold">W</th>
                                                 <th className="text-center py-2 font-bold">L</th>
                                                 <th className="text-center py-2 font-bold">D</th>
+                                                <th className="text-center py-2 font-bold">F</th>
+                                                <th className="text-center py-2 font-bold">A</th>
                                                 <th className="text-center py-2 font-bold">PTS</th>
                                             </tr>
                                         </thead>
@@ -6011,11 +6294,13 @@
                                                     <td className="py-2 text-center text-emerald-700">{row.wins}</td>
                                                     <td className="py-2 text-center text-rose-700">{row.losses}</td>
                                                     <td className="py-2 text-center text-amber-700">{row.draws}</td>
+                                                    <td className="py-2 text-center text-slate-700">{row.goalsFor || 0}</td>
+                                                    <td className="py-2 text-center text-slate-700">{row.goalsAgainst || 0}</td>
                                                     <td className="py-2 text-center font-bold text-slate-900">{row.points}</td>
                                                 </tr>
                                             )) : (
                                                 <tr>
-                                                    <td colSpan={6} className="py-3 text-center text-[11px] text-slate-500">No played games yet.</td>
+                                                    <td colSpan={8} className="py-3 text-center text-[11px] text-slate-500">No played games yet.</td>
                                                 </tr>
                                             )}
                                             {leagueTable.length ? (
@@ -6025,6 +6310,8 @@
                                                     <td className="py-2 text-center text-emerald-800 font-bold">{leagueTotals.wins}</td>
                                                     <td className="py-2 text-center text-rose-800 font-bold">{leagueTotals.losses}</td>
                                                     <td className="py-2 text-center text-amber-800 font-bold">{leagueTotals.draws}</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{leagueTotals.goalsFor}</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{leagueTotals.goalsAgainst}</td>
                                                     <td className="py-2 text-center text-slate-900 font-bold">{leagueTotals.points}</td>
                                                 </tr>
                                             ) : null}
@@ -6036,14 +6323,16 @@
                                     <div className="overflow-x-auto">
                                         <table className="min-w-full text-sm">
                                             <thead className="text-[11px] text-slate-400 uppercase tracking-wider">
-                                                <tr>
-                                                    <th className="text-left py-2 font-bold">Season</th>
-                                                    <th className="text-center py-2 font-bold">P</th>
-                                                    <th className="text-center py-2 font-bold">W</th>
-                                                    <th className="text-center py-2 font-bold">L</th>
-                                                    <th className="text-center py-2 font-bold">D</th>
-                                                    <th className="text-center py-2 font-bold">PTS</th>
-                                                </tr>
+                                            <tr>
+                                                <th className="text-left py-2 font-bold">Season</th>
+                                                <th className="text-center py-2 font-bold">P</th>
+                                                <th className="text-center py-2 font-bold">W</th>
+                                                <th className="text-center py-2 font-bold">L</th>
+                                                <th className="text-center py-2 font-bold">D</th>
+                                                <th className="text-center py-2 font-bold">F</th>
+                                                <th className="text-center py-2 font-bold">A</th>
+                                                <th className="text-center py-2 font-bold">PTS</th>
+                                            </tr>
                                             </thead>
                                             <tbody>
                                                 {seasonLeagueTotals.length ? seasonLeagueTotals.map(row => (
@@ -6053,11 +6342,13 @@
                                                         <td className="py-2 text-center text-emerald-700">{row.wins}</td>
                                                         <td className="py-2 text-center text-rose-700">{row.losses}</td>
                                                         <td className="py-2 text-center text-amber-700">{row.draws}</td>
+                                                        <td className="py-2 text-center text-slate-700">{row.goalsFor || 0}</td>
+                                                        <td className="py-2 text-center text-slate-700">{row.goalsAgainst || 0}</td>
                                                         <td className="py-2 text-center font-bold text-slate-900">{row.points}</td>
                                                     </tr>
                                                 )) : (
                                                     <tr>
-                                                        <td colSpan={6} className="py-3 text-center text-[11px] text-slate-500">No season totals yet.</td>
+                                                        <td colSpan={8} className="py-3 text-center text-[11px] text-slate-500">No season totals yet.</td>
                                                     </tr>
                                                 )}
                                             </tbody>
