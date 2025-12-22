@@ -2254,6 +2254,14 @@
                     }
                     localStorage.removeItem('gaffer:focusFixtureOpponent');
                 }
+                const focusVenue = localStorage.getItem('gaffer:focusFixtureVenue');
+                if(focusVenue) {
+                    if(!hasFocusedFixture) {
+                        const targetByVenue = list.find(f => (f.venue || '').toLowerCase().includes(focusVenue.toLowerCase()));
+                        if(targetByVenue) openMatchMode(targetByVenue);
+                    }
+                    localStorage.removeItem('gaffer:focusFixtureVenue');
+                }
             };
 
             useEffect(() => {
@@ -5641,6 +5649,12 @@
                 onNavigate && onNavigate('fixtures');
             };
 
+            const jumpToVenueGames = (name) => {
+                if (!name) return;
+                localStorage.setItem('gaffer:focusFixtureVenue', name);
+                onNavigate && onNavigate('fixtures');
+            };
+
             const openOpponentSheet = (opponent) => {
                 if (!opponent) return;
                 setSelectedOpponent(opponent);
@@ -6154,36 +6168,66 @@
                 return acc;
             }, {}), [opponents]);
 
-            const renderVenueFacts = () => (
-                <div className="space-y-2">
-                    {Object.entries(facts.venueFacts).map(([name, info]) => (
-                        <div key={name} className="p-3 bg-white border border-slate-100 rounded-xl shadow-sm">
-                            <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                                <span>{name}</span>
-                                <button onClick={() => { localStorage.setItem('gaffer:focusFixtureOpponent', name); onNavigate && onNavigate('fixtures'); }} className="text-[10px] text-brand-600 underline">View games</button>
-                            </div>
-                            <div className="text-[11px] text-slate-500">Games: {info.count} · Dates: {info.dates.map(d => new Date(d).toLocaleDateString()).join(', ') || '—'}</div>
-                            <div className="text-[11px] text-slate-500">Opponents: {info.opponents.map(n => (
-                                <button key={n} onClick={() => { localStorage.setItem('gaffer:focusFixtureOpponent', n); onNavigate && onNavigate('fixtures'); }} className="underline mr-1">{n}</button>
-                            ))}</div>
-                            <div className="text-[11px] text-slate-500">Players here: {info.players.map(n => (
-                                <button key={n} onClick={() => { localStorage.setItem('gaffer:focusPlayerName', n); onNavigate && onNavigate('players'); }} className="underline mr-1">{n}</button>
-                            ))}</div>
-                            {(() => {
-                                const v = venues.find(v => v.name === name);
-                                if(!v) return null;
-                                return (
-                                    <>
-                                        {v.notes && <div className="text-[11px] text-slate-500 mt-1">Notes: {v.notes}</div>}
-                                        {v.payee && <div className="text-[11px] text-slate-500">Payee: {v.payee}</div>}
-                                        {v.contact && <div className="text-[11px] text-slate-500">Contact: {v.contact}</div>}
-                                    </>
-                                );
-                            })()}
-                        </div>
-                    ))}
-                </div>
-            );
+            const selectedVenueHomeTeam = useMemo(() => {
+                if (!selectedVenue || selectedVenue.homeTeamId === undefined || selectedVenue.homeTeamId === null) return null;
+                const homeId = Number(selectedVenue.homeTeamId);
+                if (Number.isNaN(homeId)) return null;
+                return opponentById[homeId] || null;
+            }, [selectedVenue?.homeTeamId, opponentById]);
+
+            const renderVenueFacts = () => {
+                const entries = Object.entries(facts.venueFacts);
+                if (!entries.length) {
+                    return <div className="text-sm text-slate-400">No venue data yet.</div>;
+                }
+                return (
+                    <div className="space-y-2">
+                        {entries.sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0])).map(([name, info]) => {
+                            const v = venues.find(ven => (ven.name || '').toLowerCase() === name.toLowerCase());
+                            return (
+                                <div key={name} className="p-3 bg-slate-50 border border-slate-100 rounded-xl shadow-sm space-y-1">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                            <div className="font-bold text-slate-900 text-sm">{name}</div>
+                                            <div className="text-[11px] text-slate-500">Games {info.count} · Opponents {info.opponents.length} · Players {info.players.length}</div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            {v && (
+                                                <button onClick={() => openVenueSheet(v)} className="text-[10px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-2 py-1">
+                                                    Open
+                                                </button>
+                                            )}
+                                            <button onClick={() => jumpToVenueGames(name)} className="text-[10px] font-bold text-brand-600 underline">
+                                                Games
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {info.opponents.length ? (
+                                        <div className="text-[11px] text-slate-500 flex flex-wrap gap-1">
+                                            {info.opponents.slice(0, 6).map(n => (
+                                                <span key={n} className="px-2 py-0.5 rounded-full bg-white border border-slate-200">{n}</span>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                    {info.players.length ? (
+                                        <div className="text-[11px] text-slate-500 flex flex-wrap gap-1">
+                                            {info.players.slice(0, 6).map(n => (
+                                                <button key={n} onClick={() => { localStorage.setItem('gaffer:focusPlayerName', n); onNavigate && onNavigate('players'); }} className="px-2 py-0.5 rounded-full bg-white border border-slate-200 underline">
+                                                    {n}
+                                                </button>
+                                            ))}
+                                            {info.players.length > 6 && <span className="text-[10px] text-slate-400">+{info.players.length - 6} more</span>}
+                                        </div>
+                                    ) : null}
+                                    {v?.notes && <div className="text-[11px] text-slate-500">Notes: {v.notes}</div>}
+                                    {v?.payee && <div className="text-[11px] text-slate-500">Payee: {v.payee}</div>}
+                                    {v?.contact && <div className="text-[11px] text-slate-500">Contact: {v.contact}</div>}
+                                </div>
+                            );
+                        })}
+                    </div>
+                );
+            };
 
             const applyReassignEntity = async () => {
                 const { item, type } = reassignEntity;
@@ -6399,30 +6443,74 @@
                     {viewTab === 'venues' && (
                         <div className="space-y-4">
                             <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
-                                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Venues List</div>
-                                <div className="flex flex-wrap gap-2">
-                                    {venues.map(v => (
-                                        <div key={v.id} className="px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2">
-                                            <button onClick={() => editVenue(v)} className="underline">{v.name} {v.price ? `(${formatCurrency(v.price)})` : ''}</button>
-                                            <button onClick={() => deleteVenue(v)} className="text-rose-600">✕</button>
-                                        </div>
-                                    ))}
-                                </div>
-                               <div className="grid grid-cols-2 gap-2">
-                                    <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Venue name" value={newVenue.name} onChange={e => setNewVenue({ ...newVenue, name: e.target.value })} />
-                                    <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Address" value={newVenue.address} onChange={e => setNewVenue({ ...newVenue, address: e.target.value })} />
-                                    <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" placeholder="Price" value={newVenue.price} onChange={e => setNewVenue({ ...newVenue, price: e.target.value })} />
-                                    <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={newVenue.homeTeamId ?? ''} onChange={e => setNewVenue({ ...newVenue, homeTeamId: e.target.value ? Number(e.target.value) : null })}>
-                                        <option value="">Home team (optional)</option>
-                                        {opponents.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                                    </select>
-                                    <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Payee (who you pay/receive)" value={newVenue.payee} onChange={e => setNewVenue({ ...newVenue, payee: e.target.value })} />
-                                    <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Contact phone/email" value={newVenue.contact} onChange={e => setNewVenue({ ...newVenue, contact: e.target.value })} />
-                                    <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm col-span-2" placeholder="Notes about the venue" value={newVenue.notes} onChange={e => setNewVenue({ ...newVenue, notes: e.target.value })} />
-                                    <div className="col-span-2 flex justify-end">
-                                        <button onClick={addVenue} className="bg-slate-900 text-white font-bold rounded-lg px-4 py-2">Add Venue</button>
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Venues</div>
+                                        <div className="text-[11px] text-slate-500">Tap a venue to view details, history, and the map.</div>
                                     </div>
-                               </div>
+                                    <button onClick={() => { setIsAddVenueOpen(true); setNewVenue({ ...emptyVenueForm }); }} className="bg-slate-900 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1">
+                                        <Icon name="Plus" size={14} /> Add Venue
+                                    </button>
+                                </div>
+                                <div className="grid sm:grid-cols-2 gap-3">
+                                    {venues.length ? [...venues].sort((a,b)=>a.name.localeCompare(b.name)).map(v => {
+                                        const factsForVenue = getVenueFacts(v.name) || { count: 0, opponents: [], players: [], dates: [] };
+                                        const mapUrl = buildMapEmbedUrl(v.address || v.name);
+                                        const homeTeamId = v.homeTeamId ? Number(v.homeTeamId) : null;
+                                        const homeTeam = homeTeamId ? opponentById[homeTeamId] : null;
+                                        const metaParts = [];
+                                        if (v.price !== undefined && v.price !== null && v.price !== '') metaParts.push(formatCurrency(Number(v.price) || 0));
+                                        if (homeTeam) metaParts.push(`Home: ${homeTeam.name}`);
+                                        if (v.payee) metaParts.push(v.payee);
+                                        const meta = metaParts.join(' · ');
+                                        return (
+                                            <div
+                                                key={v.id}
+                                                role="button"
+                                                tabIndex={0}
+                                                onClick={() => openVenueSheet(v)}
+                                                onKeyDown={e => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openVenueSheet(v); } }}
+                                                className="group rounded-2xl border border-slate-100 bg-slate-50 hover:bg-slate-100 transition-colors shadow-sm p-3 cursor-pointer space-y-2"
+                                            >
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div>
+                                                        <div className="font-bold text-slate-900 text-sm">{v.name || 'Venue'}</div>
+                                                        {meta && <div className="text-[11px] text-slate-500">{meta}</div>}
+                                                        {v.address && <div className="text-[11px] text-slate-500">{v.address}</div>}
+                                                    </div>
+                                                    <span className="px-2 py-1 rounded-lg bg-white text-[10px] font-bold text-slate-700 border border-slate-200">Games {factsForVenue?.count || 0}</span>
+                                                </div>
+                                                {mapUrl ? (
+                                                    <div className="w-full h-32 rounded-xl overflow-hidden border border-slate-200 shadow-inner">
+                                                        <iframe
+                                                            title={`Map of ${v.name || 'venue'}`}
+                                                            src={mapUrl}
+                                                            className="w-full h-full"
+                                                            loading="lazy"
+                                                            allowFullScreen
+                                                            referrerPolicy="no-referrer-when-downgrade"
+                                                        />
+                                                    </div>
+                                                ) : (
+                                                    <div className="w-full h-32 rounded-xl border border-dashed border-slate-200 text-[11px] text-slate-400 flex items-center justify-center">
+                                                        Add an address to preview the map
+                                                    </div>
+                                                )}
+                                                <div className="flex flex-wrap gap-1 text-[10px] text-slate-600">
+                                                    {factsForVenue?.opponents?.length ? factsForVenue.opponents.slice(0, 4).map(opp => (
+                                                        <span key={`${v.id}-${opp}`} className="px-2 py-1 rounded-full bg-white border border-slate-200">{opp}</span>
+                                                    )) : (
+                                                        <span className="text-[11px] text-slate-400">No opponents logged yet.</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    }) : (
+                                        <div className="p-6 text-center text-sm text-slate-500 border border-dashed border-slate-200 rounded-2xl bg-slate-50">
+                                            No venues yet. Add your first one.
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                             <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100">
                                 <div className="flex items-center justify-between mb-3">
@@ -6435,6 +6523,60 @@
                             </div>
                         </div>
                     )}
+
+                    <Modal isOpen={isAddVenueOpen} onClose={closeAddVenue} title="Add Venue">
+                        <form onSubmit={handleAddVenue} className="space-y-4">
+                            <input
+                                required
+                                placeholder="Venue name"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                value={newVenue.name}
+                                onChange={e => setNewVenue({ ...newVenue, name: e.target.value })}
+                            />
+                            <input
+                                placeholder="Address (for map)"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                value={newVenue.address}
+                                onChange={e => setNewVenue({ ...newVenue, address: e.target.value })}
+                            />
+                            <input
+                                type="number"
+                                placeholder="Pitch price / hire fee"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                value={newVenue.price}
+                                onChange={e => setNewVenue({ ...newVenue, price: e.target.value })}
+                            />
+                            <select
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                value={newVenue.homeTeamId ?? ''}
+                                onChange={e => setNewVenue({ ...newVenue, homeTeamId: e.target.value ? Number(e.target.value) : null })}
+                            >
+                                <option value="">Home team (optional)</option>
+                                {opponents.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                            </select>
+                            <input
+                                placeholder="Payee / bank"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                value={newVenue.payee}
+                                onChange={e => setNewVenue({ ...newVenue, payee: e.target.value })}
+                            />
+                            <input
+                                placeholder="Contact name/email/phone"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                value={newVenue.contact}
+                                onChange={e => setNewVenue({ ...newVenue, contact: e.target.value })}
+                            />
+                            <textarea
+                                placeholder="Notes about the venue"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none min-h-[80px]"
+                                value={newVenue.notes}
+                                onChange={e => setNewVenue({ ...newVenue, notes: e.target.value })}
+                            />
+                            <button type="submit" className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">
+                                Add Venue
+                            </button>
+                        </form>
+                    </Modal>
 
                     <Modal isOpen={isAddOpponentOpen} onClose={closeAddOpponent} title="Add Opponent">
                         <form onSubmit={handleAddOpponent} className="space-y-4">
@@ -6467,6 +6609,191 @@
                                 Add Opponent
                             </button>
                         </form>
+                    </Modal>
+
+                    <Modal isOpen={!!selectedVenue} onClose={closeVenueSheet} title={venueDisplayName}>
+                        {selectedVenue && (
+                            <div className="space-y-4">
+                                <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 text-white p-4 shadow-soft space-y-1">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-white/60">Venue Sheet</div>
+                                    <div className="text-2xl font-display font-bold">{venueDisplayName}</div>
+                                    {selectedVenue.address && <div className="text-[11px] text-white/70">{selectedVenue.address}</div>}
+                                    <div className="text-[11px] text-white/70">Games {venueStats.total} · Record W{venueStats.wins} D{venueStats.draws} L{venueStats.losses}</div>
+                                    {venueStats.lastPlayed && (
+                                        <div className="text-[11px] text-white/60 mt-1">
+                                            Last played {new Date(venueStats.lastPlayed.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · Exiles {venueStats.lastPlayed.homeScore ?? '-'}-{venueStats.lastPlayed.awayScore ?? '-'} vs {venueStats.lastPlayed.opponent || 'Opponent'}
+                                        </div>
+                                    )}
+                                    {venueStats.nextFixture && (
+                                        <div className="text-[11px] text-white/60">
+                                            Next: {new Date(venueStats.nextFixture.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · {venueStats.nextFixture.opponent || 'Opponent'} · {(venueStats.nextFixture.competitionType || 'LEAGUE').replace('_', ' ')}
+                                        </div>
+                                    )}
+                                    {selectedVenueFacts?.opponents?.length ? (
+                                        <div className="flex flex-wrap gap-1 pt-1">
+                                            {selectedVenueFacts.opponents.slice(0, 4).map(n => (
+                                                <span key={n} className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 border border-white/20">{n}</span>
+                                            ))}
+                                            {selectedVenueFacts.opponents.length > 4 && <span className="text-[10px] text-white/70">+{selectedVenueFacts.opponents.length - 4} more</span>}
+                                        </div>
+                                    ) : null}
+                                </div>
+
+                                {venueMapUrl && (
+                                    <div className="overflow-hidden rounded-2xl border border-slate-200 shadow-inner h-48">
+                                        <iframe
+                                            title={`Map of ${venueDisplayName}`}
+                                            src={venueMapUrl}
+                                            className="w-full h-full"
+                                            loading="lazy"
+                                            allowFullScreen
+                                            referrerPolicy="no-referrer-when-downgrade"
+                                        />
+                                    </div>
+                                )}
+
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                        <div className="text-[10px] font-bold uppercase text-slate-500">Games</div>
+                                        <div className="text-xl font-display font-bold text-slate-900">{venueStats.total}</div>
+                                        <div className="text-[11px] text-slate-500">Played {venueStats.played}</div>
+                                    </div>
+                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                        <div className="text-[10px] font-bold uppercase text-slate-500">Record</div>
+                                        <div className="text-xl font-display font-bold text-slate-900">{venueStats.wins}-{venueStats.draws}-{venueStats.losses}</div>
+                                        <div className="text-[11px] text-slate-500">W-D-L</div>
+                                    </div>
+                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                        <div className="text-[10px] font-bold uppercase text-slate-500">Venue</div>
+                                        <div className="text-xl font-display font-bold text-slate-900">{selectedVenue.price !== undefined && selectedVenue.price !== null && selectedVenue.price !== '' ? formatCurrency(Number(selectedVenue.price) || 0) : 'No default fee'}</div>
+                                        <div className="text-[11px] text-slate-500">
+                                            {selectedVenueHomeTeam ? `Home: ${selectedVenueHomeTeam.name}` : 'No home team set'}
+                                        </div>
+                                    </div>
+                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
+                                        <div className="text-[10px] font-bold uppercase text-slate-500">Outstanding</div>
+                                        <div className={`text-xl font-display font-bold ${venueOutstandingTone}`}>{formatCurrency(venuePaymentSummary.netOutstanding)}</div>
+                                        <div className="text-[11px] text-slate-500">Recv {formatCurrency(venuePaymentSummary.outstandingReceivable)} · Pay {formatCurrency(Math.abs(venuePaymentSummary.outstandingPayable))}</div>
+                                    </div>
+                                </div>
+
+                                <div className="grid sm:grid-cols-2 gap-4">
+                                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Edit Details</div>
+                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Venue name" value={venueForm.name} onChange={e => setVenueForm(prev => ({ ...prev, name: e.target.value }))} />
+                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Address" value={venueForm.address} onChange={e => setVenueForm(prev => ({ ...prev, address: e.target.value }))} />
+                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" type="number" placeholder="Pitch price" value={venueForm.price ?? ''} onChange={e => setVenueForm(prev => ({ ...prev, price: e.target.value }))} />
+                                        <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" value={venueForm.homeTeamId ?? ''} onChange={e => setVenueForm(prev => ({ ...prev, homeTeamId: e.target.value ? Number(e.target.value) : null }))}>
+                                            <option value="">Home team (optional)</option>
+                                            {opponents.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                                        </select>
+                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Payee / bank" value={venueForm.payee} onChange={e => setVenueForm(prev => ({ ...prev, payee: e.target.value }))} />
+                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Contact name/email" value={venueForm.contact} onChange={e => setVenueForm(prev => ({ ...prev, contact: e.target.value }))} />
+                                        <textarea className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm min-h-[80px]" placeholder="Notes about the venue" value={venueForm.notes} onChange={e => setVenueForm(prev => ({ ...prev, notes: e.target.value }))} />
+                                        <div className="flex items-center gap-2">
+                                            <button onClick={handleVenueDelete} className="flex-1 bg-rose-50 text-rose-700 font-bold py-2 rounded-lg border border-rose-200">Delete</button>
+                                            <button onClick={saveVenueDetails} disabled={!venueIsDirty || venueSaveStatus === 'saving'} className={`flex-1 font-bold py-2 rounded-lg ${venueIsDirty ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'} disabled:opacity-60`}>
+                                                {venueSaveStatus === 'saving' ? 'Saving...' : 'Save'}
+                                            </button>
+                                        </div>
+                                        {venueSaveLabel && (
+                                            <div className={`text-[11px] font-bold ${venueSaveTone}`}>{venueSaveLabel}</div>
+                                        )}
+                                    </div>
+                                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments</div>
+                                            {isVenueLoading && <div className="text-[10px] text-slate-400">Loading...</div>}
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 text-[11px]">
+                                            <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold">Receivable: {formatCurrency(venuePaymentSummary.outstandingReceivable)}</span>
+                                            <span className="px-2 py-1 rounded-full bg-rose-50 text-rose-700 font-bold">Payable: {formatCurrency(Math.abs(venuePaymentSummary.outstandingPayable))}</span>
+                                            <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 font-bold">Net: {formatCurrency(venuePaymentSummary.netOutstanding)}</span>
+                                        </div>
+                                        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                                            {venueTransactions.length ? venueTransactions.slice(0, 8).map(tx => {
+                                                const fixture = tx.fixtureId ? venueFixtureLookup[String(tx.fixtureId)] : null;
+                                                const dateSource = fixture?.date || tx.date;
+                                                const dateLabel = dateSource ? new Date(dateSource).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+                                                const hasScore = fixture && typeof fixture.homeScore === 'number' && typeof fixture.awayScore === 'number';
+                                                const scoreLabel = hasScore ? `Exiles ${fixture.homeScore}-${fixture.awayScore}` : '';
+                                                const metaParts = [];
+                                                if (dateLabel) metaParts.push(dateLabel);
+                                                if (fixture?.opponent) metaParts.push(fixture.opponent);
+                                                if (fixture?.competitionType) metaParts.push((fixture.competitionType || '').replace('_',' '));
+                                                if (scoreLabel) metaParts.push(scoreLabel);
+                                                const meta = metaParts.join(' · ');
+                                                const label = tx.description || formatCategoryLabel(tx.category) || 'Payment';
+                                                const prefix = tx.amount > 0 ? '+' : tx.amount < 0 ? '-' : '';
+                                                const amountLabel = `${prefix}${formatCurrency(Math.abs(tx.amount))}`;
+                                                const tone = tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600';
+                                                const badgeTone = tx.isReconciled
+                                                    ? 'bg-slate-100 text-slate-600 border-slate-200'
+                                                    : tx.amount > 0
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                                        : 'bg-rose-50 text-rose-700 border-rose-100';
+                                                return (
+                                                    <div key={tx.id} className="flex justify-between items-start gap-2 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                                        <div>
+                                                            <div className="text-xs font-bold text-slate-900">{label}</div>
+                                                            {meta && <div className="text-[10px] text-slate-500">{meta}</div>}
+                                                            {!meta && dateLabel && <div className="text-[10px] text-slate-500">{dateLabel}</div>}
+                                                        </div>
+                                                        <div className="flex flex-col items-end gap-1">
+                                                            <div className={`text-xs font-bold ${tone}`}>{amountLabel}</div>
+                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeTone}`}>
+                                                                {tx.isReconciled ? 'Settled' : (tx.amount > 0 ? 'Receivable' : 'Payable')}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }) : (
+                                                <div className="text-sm text-slate-400 text-center">{isVenueLoading ? 'Loading payments...' : 'No payments recorded yet.'}</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Games & Schedule</div>
+                                        <button onClick={() => jumpToVenueGames(selectedVenue.name)} className="text-[11px] text-brand-600 underline">Open games</button>
+                                    </div>
+                                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                        {venueFixtures.length ? venueFixtures.slice(0, 8).map(f => {
+                                            const dateLabel = f.date ? new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Date TBC';
+                                            const hasScore = typeof f.homeScore === 'number' && typeof f.awayScore === 'number';
+                                            const result = hasScore ? (f.homeScore > f.awayScore ? 'W' : f.homeScore === f.awayScore ? 'D' : 'L') : '';
+                                            const resultTone = result === 'W'
+                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                                : result === 'D'
+                                                    ? 'bg-amber-50 text-amber-700 border-amber-100'
+                                                    : 'bg-rose-50 text-rose-700 border-rose-100';
+                                            return (
+                                                <div key={f.id} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-white">
+                                                    <div>
+                                                        <div className="text-xs font-bold text-slate-900">{dateLabel} · {(f.competitionType || 'LEAGUE').replace('_',' ')}</div>
+                                                        <div className="text-[11px] text-slate-500">{f.opponent || 'Opponent TBC'}</div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        {hasScore ? (
+                                                            <>
+                                                                <div className="text-sm font-bold text-slate-900">Exiles {f.homeScore}-{f.awayScore}</div>
+                                                                <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${resultTone}`}>{result}</span>
+                                                            </>
+                                                        ) : (
+                                                            <div className="text-[11px] text-slate-400">Score TBC</div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        }) : (
+                                            <div className="text-sm text-slate-400 text-center">{isVenueLoading ? 'Loading games...' : 'No games recorded yet.'}</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </Modal>
 
                     <Modal isOpen={!!selectedOpponent} onClose={closeOpponentSheet} title={opponentDisplayName}>
