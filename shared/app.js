@@ -5469,6 +5469,9 @@
             const [leagueTable, setLeagueTable] = useState([]);
             const [leagueTotals, setLeagueTotals] = useState({ played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 });
             const [seasonLeagueTotals, setSeasonLeagueTotals] = useState([]);
+            const [venueLeagueTable, setVenueLeagueTable] = useState([]);
+            const [venueLeagueTotals, setVenueLeagueTotals] = useState({ played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 });
+            const [venueSeasonTotals, setVenueSeasonTotals] = useState([]);
             const [viewTab, setViewTab] = useState('opponents');
             const emptyOpponentForm = { name: '', contact: '', phone: '', payee: '' };
             const emptyVenueForm = { name: '', price: '', homeTeamId: null, address: '', notes: '', payee: '', contact: '' };
@@ -5484,6 +5487,8 @@
             const [isVenueLoading, setIsVenueLoading] = useState(false);
             const [opponentSaveStatus, setOpponentSaveStatus] = useState('idle');
             const [venueSaveStatus, setVenueSaveStatus] = useState('idle');
+            const [isAddressLookupRunning, setIsAddressLookupRunning] = useState(false);
+            const [addressLookupMessage, setAddressLookupMessage] = useState('');
             const opponentSaveTimerRef = useRef(null);
             const venueSaveTimerRef = useRef(null);
             const clearOpponentSaveTimer = () => {
@@ -5533,6 +5538,8 @@
                 const venueFacts = {};
                 const leagueStats = {};
                 const seasonTotals = {};
+                const venueLeagueStats = {};
+                const venueSeasonTotalsMap = {};
 
                 fx.forEach(f => {
                     // Opponent facts
@@ -5583,6 +5590,31 @@
                             seasonTotals[seasonKey].losses += 1;
                             // Loss: no points awarded
                         }
+                        const venueName = (f.venue || '').trim();
+                        if(venueName) {
+                            if(!venueLeagueStats[venueName]) venueLeagueStats[venueName] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 };
+                            if(!venueSeasonTotalsMap[seasonKey]) venueSeasonTotalsMap[seasonKey] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 };
+                            venueLeagueStats[venueName].played += 1;
+                            venueLeagueStats[venueName].goalsFor += our;
+                            venueLeagueStats[venueName].goalsAgainst += their;
+                            venueSeasonTotalsMap[seasonKey].played += 1;
+                            venueSeasonTotalsMap[seasonKey].goalsFor += our;
+                            venueSeasonTotalsMap[seasonKey].goalsAgainst += their;
+                            if(our > their) {
+                                venueLeagueStats[venueName].wins += 1;
+                                venueLeagueStats[venueName].points += 3;
+                                venueSeasonTotalsMap[seasonKey].wins += 1;
+                                venueSeasonTotalsMap[seasonKey].points += 3;
+                            } else if(our === their) {
+                                venueLeagueStats[venueName].draws += 1;
+                                venueLeagueStats[venueName].points += 1;
+                                venueSeasonTotalsMap[seasonKey].draws += 1;
+                                venueSeasonTotalsMap[seasonKey].points += 1;
+                            } else {
+                                venueLeagueStats[venueName].losses += 1;
+                                venueSeasonTotalsMap[seasonKey].losses += 1;
+                            }
+                        }
                     }
                 });
 
@@ -5600,6 +5632,13 @@
                     if(!name) return;
                     if(!leagueStats[name]) {
                         leagueStats[name] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 };
+                    }
+                });
+                venues.forEach(v => {
+                    const name = (v.name || '').trim();
+                    if(!name) return;
+                    if(!venueLeagueStats[name]) {
+                        venueLeagueStats[name] = { played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 };
                     }
                 });
 
@@ -5622,9 +5661,31 @@
                     .map(([season, stats]) => ({ season, ...stats }))
                     .sort((a, b) => a.season.localeCompare(b.season));
 
+                const venueLeagueRows = Object.entries(venueLeagueStats)
+                    .map(([name, stats]) => ({ name, ...stats }))
+                    .sort((a, b) => b.points - a.points || b.wins - a.wins || a.name.localeCompare(b.name));
+
+                const venueTotals = venueLeagueRows.reduce((acc, row) => {
+                    acc.played += row.played;
+                    acc.wins += row.wins;
+                    acc.draws += row.draws;
+                    acc.losses += row.losses;
+                    acc.points += row.points;
+                    acc.goalsFor += row.goalsFor || 0;
+                    acc.goalsAgainst += row.goalsAgainst || 0;
+                    return acc;
+                }, { played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 });
+
+                const venueSeasonRows = Object.entries(venueSeasonTotalsMap)
+                    .map(([season, stats]) => ({ season, ...stats }))
+                    .sort((a, b) => a.season.localeCompare(b.season));
+
                 setLeagueTable(leagueRows);
                 setLeagueTotals(totals);
                 setSeasonLeagueTotals(seasonRows);
+                setVenueLeagueTable(venueLeagueRows);
+                setVenueLeagueTotals(venueTotals);
+                setVenueSeasonTotals(venueSeasonRows);
                 setFacts({ opponentFacts, venueFacts });
             }, [opponents, venues]);
 
@@ -5701,6 +5762,8 @@
                 setVenueFixtures([]);
                 setVenueTransactions([]);
                 setIsVenueLoading(false);
+                setAddressLookupMessage('');
+                setIsAddressLookupRunning(false);
                 clearVenueSaveTimer();
                 setVenueSaveStatus('idle');
             };
@@ -5708,6 +5771,8 @@
             const closeAddVenue = () => {
                 setIsAddVenueOpen(false);
                 setNewVenue({ ...emptyVenueForm });
+                setAddressLookupMessage('');
+                setIsAddressLookupRunning(false);
             };
 
             useEffect(() => {
@@ -6161,7 +6226,14 @@
                 return `https://www.google.com/maps?q=${encodeURIComponent(query)}&z=15&output=embed`;
             };
 
+            const buildMapSearchUrl = (address) => {
+                const query = (address || '').trim();
+                if (!query) return '';
+                return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+            };
+
             const venueMapUrl = useMemo(() => buildMapEmbedUrl(selectedVenue?.address || selectedVenue?.name || ''), [selectedVenue?.address, selectedVenue?.name]);
+            const venueMapSearchUrl = useMemo(() => buildMapSearchUrl(selectedVenue?.address || selectedVenue?.name || ''), [selectedVenue?.address, selectedVenue?.name]);
 
             const opponentById = useMemo(() => opponents.reduce((acc, item) => {
                 if (item?.id !== undefined && item?.id !== null) acc[item.id] = item;
@@ -6175,59 +6247,67 @@
                 return opponentById[homeId] || null;
             }, [selectedVenue?.homeTeamId, opponentById]);
 
-            const renderVenueFacts = () => {
-                const entries = Object.entries(facts.venueFacts);
-                if (!entries.length) {
-                    return <div className="text-sm text-slate-400">No venue data yet.</div>;
-                }
-                return (
-                    <div className="space-y-2">
-                        {entries.sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0])).map(([name, info]) => {
-                            const v = venues.find(ven => (ven.name || '').toLowerCase() === name.toLowerCase());
-                            return (
-                                <div key={name} className="p-3 bg-slate-50 border border-slate-100 rounded-xl shadow-sm space-y-1">
-                                    <div className="flex items-start justify-between gap-2">
-                                        <div>
-                                            <div className="font-bold text-slate-900 text-sm">{name}</div>
-                                            <div className="text-[11px] text-slate-500">Games {info.count} · Opponents {info.opponents.length} · Players {info.players.length}</div>
-                                        </div>
-                                        <div className="flex gap-2">
-                                            {v && (
-                                                <button onClick={() => openVenueSheet(v)} className="text-[10px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-2 py-1">
-                                                    Open
-                                                </button>
-                                            )}
-                                            <button onClick={() => jumpToVenueGames(name)} className="text-[10px] font-bold text-brand-600 underline">
-                                                Games
-                                            </button>
-                                        </div>
-                                    </div>
-                                    {info.opponents.length ? (
-                                        <div className="text-[11px] text-slate-500 flex flex-wrap gap-1">
-                                            {info.opponents.slice(0, 6).map(n => (
-                                                <span key={n} className="px-2 py-0.5 rounded-full bg-white border border-slate-200">{n}</span>
-                                            ))}
-                                        </div>
-                                    ) : null}
-                                    {info.players.length ? (
-                                        <div className="text-[11px] text-slate-500 flex flex-wrap gap-1">
-                                            {info.players.slice(0, 6).map(n => (
-                                                <button key={n} onClick={() => { localStorage.setItem('gaffer:focusPlayerName', n); onNavigate && onNavigate('players'); }} className="px-2 py-0.5 rounded-full bg-white border border-slate-200 underline">
-                                                    {n}
-                                                </button>
-                                            ))}
-                                            {info.players.length > 6 && <span className="text-[10px] text-slate-400">+{info.players.length - 6} more</span>}
-                                        </div>
-                                    ) : null}
-                                    {v?.notes && <div className="text-[11px] text-slate-500">Notes: {v.notes}</div>}
-                                    {v?.payee && <div className="text-[11px] text-slate-500">Payee: {v.payee}</div>}
-                                    {v?.contact && <div className="text-[11px] text-slate-500">Contact: {v.contact}</div>}
-                                </div>
-                            );
-                        })}
-                    </div>
-                );
+            const buildVenueShareMessage = (venue) => {
+                if (!venue) return '';
+                const mapUrl = buildMapSearchUrl(venue.address || venue.name || '');
+                const parts = [
+                    venue.name || 'Venue',
+                    venue.address ? `Address: ${venue.address}` : '',
+                    mapUrl ? `Map: ${mapUrl}` : '',
+                    venue.notes ? `Notes: ${venue.notes}` : ''
+                ].filter(Boolean);
+                return parts.join('\n');
             };
+
+            const shareVenueToWhatsApp = (venue) => {
+                const message = buildVenueShareMessage(venue);
+                if (!message) {
+                    alert('No venue details to share yet.');
+                    return;
+                }
+                const waUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
+                window.open(waUrl, '_blank');
+            };
+
+            const googleMapsApiKey = typeof window !== 'undefined' ? window.GAFFER_GOOGLE_MAPS_API_KEY : null;
+
+            const lookupAddressFromGoogle = async (target) => {
+                const query = target === 'new'
+                    ? (newVenue.address || newVenue.name || '').trim()
+                    : (venueForm.address || venueForm.name || selectedVenue?.name || '').trim();
+                if (!query) {
+                    alert('Enter a venue name or partial address first.');
+                    return;
+                }
+                if (!googleMapsApiKey) {
+                    alert('Add GAFFER_GOOGLE_MAPS_API_KEY to enable Google address lookup.');
+                    return;
+                }
+                setIsAddressLookupRunning(true);
+                setAddressLookupMessage('Looking up address...');
+                try {
+                    const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${googleMapsApiKey}`);
+                    const data = await res.json();
+                    const formatted = data?.results?.[0]?.formatted_address;
+                    if (data?.status !== 'OK' || !formatted) {
+                        setAddressLookupMessage('No match found.');
+                        return;
+                    }
+                    if (target === 'new') {
+                        setNewVenue(prev => ({ ...prev, address: formatted }));
+                    } else {
+                        setVenueForm(prev => ({ ...prev, address: formatted }));
+                    }
+                    setAddressLookupMessage('Address auto-filled.');
+                } catch (err) {
+                    console.error('Address lookup failed', err);
+                    setAddressLookupMessage('Lookup failed.');
+                } finally {
+                    setIsAddressLookupRunning(false);
+                    setTimeout(() => setAddressLookupMessage(''), 2000);
+                }
+            };
+
 
             const applyReassignEntity = async () => {
                 const { item, type } = reassignEntity;
@@ -6443,6 +6523,88 @@
                     {viewTab === 'venues' && (
                         <div className="space-y-4">
                             <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Venue League Table</div>
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full text-sm">
+                                        <thead className="text-[11px] text-slate-400 uppercase tracking-wider">
+                                            <tr>
+                                                <th className="text-left py-2 font-bold">Venue</th>
+                                                <th className="text-center py-2 font-bold">P</th>
+                                                <th className="text-center py-2 font-bold">W</th>
+                                                <th className="text-center py-2 font-bold">L</th>
+                                                <th className="text-center py-2 font-bold">D</th>
+                                                <th className="text-center py-2 font-bold">F</th>
+                                                <th className="text-center py-2 font-bold">A</th>
+                                                <th className="text-center py-2 font-bold">PTS</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {venueLeagueTable.length ? venueLeagueTable.map(row => (
+                                                <tr key={row.name} className="border-t border-slate-100">
+                                                    <td className="py-2 pr-2 text-left font-bold text-slate-900">{row.name}</td>
+                                                    <td className="py-2 text-center text-slate-700">{row.played}</td>
+                                                    <td className="py-2 text-center text-emerald-700">{row.wins}</td>
+                                                    <td className="py-2 text-center text-rose-700">{row.losses}</td>
+                                                    <td className="py-2 text-center text-amber-700">{row.draws}</td>
+                                                    <td className="py-2 text-center text-slate-700">{row.goalsFor || 0}</td>
+                                                    <td className="py-2 text-center text-slate-700">{row.goalsAgainst || 0}</td>
+                                                    <td className="py-2 text-center font-bold text-slate-900">{row.points}</td>
+                                                </tr>
+                                            )) : (
+                                                <tr>
+                                                    <td colSpan={8} className="py-3 text-center text-[11px] text-slate-500">No played games yet.</td>
+                                                </tr>
+                                            )}
+                                            {venueLeagueTable.length ? (
+                                                <tr className="border-t border-slate-200 bg-slate-50">
+                                                    <td className="py-2 pr-2 text-left font-bold text-slate-900">Total</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.played}</td>
+                                                    <td className="py-2 text-center text-emerald-800 font-bold">{venueLeagueTotals.wins}</td>
+                                                    <td className="py-2 text-center text-rose-800 font-bold">{venueLeagueTotals.losses}</td>
+                                                    <td className="py-2 text-center text-amber-800 font-bold">{venueLeagueTotals.draws}</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.goalsFor}</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.goalsAgainst}</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.points}</td>
+                                                </tr>
+                                            ) : null}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="pt-2 border-t border-slate-100">
+                                    <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Season Totals</div>
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full text-sm">
+                                            <thead className="text-[11px] text-slate-400 uppercase tracking-wider">
+                                                <tr>
+                                                    <th className="text-left py-2 font-bold">Season</th>
+                                                    <th className="text-center py-2 font-bold">P</th>
+                                                    <th className="text-center py-2 font-bold">W</th>
+                                                    <th className="text-center py-2 font-bold">L</th>
+                                                    <th className="text-center py-2 font-bold">D</th>
+                                                    <th className="text-center py-2 font-bold">PTS</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {venueSeasonTotals.length ? venueSeasonTotals.map(row => (
+                                                    <tr key={row.season} className="border-t border-slate-100">
+                                                        <td className="py-2 pr-2 text-left font-bold text-slate-900">{row.season}</td>
+                                                        <td className="py-2 text-center text-slate-700">{row.played}</td>
+                                                        <td className="py-2 text-center text-emerald-700">{row.wins}</td>
+                                                        <td className="py-2 text-center text-rose-700">{row.losses}</td>
+                                                        <td className="py-2 text-center text-amber-700">{row.draws}</td>
+                                                        <td className="py-2 text-center font-bold text-slate-900">{row.points}</td>
+                                                    </tr>
+                                                )) : (
+                                                    <tr>
+                                                        <td colSpan={6} className="py-3 text-center text-[11px] text-slate-500">No season totals yet.</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Venues</div>
@@ -6512,15 +6674,6 @@
                                     )}
                                 </div>
                             </div>
-                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100">
-                                <div className="flex items-center justify-between mb-3">
-                                    <div>
-                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Venue Facts</div>
-                                        <div className="text-[11px] text-slate-500">Games, opponents, players, and notes</div>
-                                    </div>
-                                </div>
-                                {renderVenueFacts()}
-                            </div>
                         </div>
                     )}
 
@@ -6539,6 +6692,12 @@
                                 value={newVenue.address}
                                 onChange={e => setNewVenue({ ...newVenue, address: e.target.value })}
                             />
+                            <div className="flex justify-end">
+                                <button type="button" onClick={() => lookupAddressFromGoogle('new')} className="text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                                    {isAddressLookupRunning ? 'Looking…' : 'Auto-fill from Google'}
+                                </button>
+                            </div>
+                            {addressLookupMessage && <div className="text-[11px] text-slate-500">{addressLookupMessage}</div>}
                             <input
                                 type="number"
                                 placeholder="Pitch price / hire fee"
@@ -6615,7 +6774,6 @@
                         {selectedVenue && (
                             <div className="space-y-4">
                                 <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 text-white p-4 shadow-soft space-y-1">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-white/60">Venue Sheet</div>
                                     <div className="text-2xl font-display font-bold">{venueDisplayName}</div>
                                     {selectedVenue.address && <div className="text-[11px] text-white/70">{selectedVenue.address}</div>}
                                     <div className="text-[11px] text-white/70">Games {venueStats.total} · Record W{venueStats.wins} D{venueStats.draws} L{venueStats.losses}</div>
@@ -6651,6 +6809,16 @@
                                         />
                                     </div>
                                 )}
+                                <div className="flex flex-wrap gap-2">
+                                    {venueMapSearchUrl && (
+                                        <a href={venueMapSearchUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                                            <Icon name="MapPin" size={14} /> Open in Google Maps
+                                        </a>
+                                    )}
+                                    <button onClick={() => shareVenueToWhatsApp(selectedVenue)} className="text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg px-3 py-2 flex items-center gap-2">
+                                        <Icon name="Send" size={14} /> Share address (WhatsApp)
+                                    </button>
+                                </div>
 
                                 <div className="grid grid-cols-2 gap-2">
                                     <div className="bg-white p-3 rounded-xl border border-slate-100">
@@ -6682,6 +6850,12 @@
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Edit Details</div>
                                         <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Venue name" value={venueForm.name} onChange={e => setVenueForm(prev => ({ ...prev, name: e.target.value }))} />
                                         <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Address" value={venueForm.address} onChange={e => setVenueForm(prev => ({ ...prev, address: e.target.value }))} />
+                                        <div className="flex justify-end">
+                                            <button onClick={() => lookupAddressFromGoogle('existing')} className="text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-2" type="button">
+                                                {isAddressLookupRunning ? 'Looking…' : 'Auto-fill from Google'}
+                                            </button>
+                                        </div>
+                                        {addressLookupMessage && <div className="text-[11px] text-slate-500">{addressLookupMessage}</div>}
                                         <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" type="number" placeholder="Pitch price" value={venueForm.price ?? ''} onChange={e => setVenueForm(prev => ({ ...prev, price: e.target.value }))} />
                                         <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" value={venueForm.homeTeamId ?? ''} onChange={e => setVenueForm(prev => ({ ...prev, homeTeamId: e.target.value ? Number(e.target.value) : null }))}>
                                             <option value="">Home team (optional)</option>
@@ -6760,7 +6934,7 @@
                                         <button onClick={() => jumpToVenueGames(selectedVenue.name)} className="text-[11px] text-brand-600 underline">Open games</button>
                                     </div>
                                     <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                                        {venueFixtures.length ? venueFixtures.slice(0, 8).map(f => {
+                                        {venueFixtures.length ? venueFixtures.map(f => {
                                             const dateLabel = f.date ? new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Date TBC';
                                             const hasScore = typeof f.homeScore === 'number' && typeof f.awayScore === 'number';
                                             const result = hasScore ? (f.homeScore > f.awayScore ? 'W' : f.homeScore === f.awayScore ? 'D' : 'L') : '';
