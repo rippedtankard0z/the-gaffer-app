@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2024.12.06-20';
+        const MASTER_BUILD_VERSION = '2024.12.06-21';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -5727,6 +5727,23 @@
                 });
             };
 
+            const handleLeagueRowSelect = async (name) => {
+                const cleanName = (name || '').trim();
+                if (!cleanName) return;
+                const match = opponents.find(o => (o.name || '').trim().toLowerCase() === cleanName.toLowerCase());
+                if (match) {
+                    openOpponentSheet(match);
+                    return;
+                }
+                if (!confirm(`"${cleanName}" isn't in Opponents yet. Add it now?`)) return;
+                await waitForDb();
+                const payload = { name: cleanName, contact: '', phone: '', payee: '' };
+                const id = await db.opponents.add(payload);
+                const created = { id, ...payload };
+                setOpponents([...opponents, created]);
+                openOpponentSheet(created);
+            };
+
             const closeOpponentSheet = () => {
                 setSelectedOpponent(null);
                 setOpponentForm({ ...emptyOpponentForm });
@@ -6269,9 +6286,7 @@
                 window.open(waUrl, '_blank');
             };
 
-            const googleMapsApiKey = typeof window !== 'undefined' ? window.GAFFER_GOOGLE_MAPS_API_KEY : null;
-
-            const lookupAddressFromGoogle = async (target) => {
+            const lookupAddressFromOsm = async (target) => {
                 const query = target === 'new'
                     ? (newVenue.address || newVenue.name || '').trim()
                     : (venueForm.address || venueForm.name || selectedVenue?.name || '').trim();
@@ -6279,17 +6294,16 @@
                     alert('Enter a venue name or partial address first.');
                     return;
                 }
-                if (!googleMapsApiKey) {
-                    alert('Add GAFFER_GOOGLE_MAPS_API_KEY to enable Google address lookup.');
-                    return;
-                }
                 setIsAddressLookupRunning(true);
-                setAddressLookupMessage('Looking up address...');
+                setAddressLookupMessage('Looking up address (OpenStreetMap)…');
                 try {
-                    const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${googleMapsApiKey}`);
+                    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`, {
+                        headers: { 'Accept': 'application/json' }
+                    });
                     const data = await res.json();
-                    const formatted = data?.results?.[0]?.formatted_address;
-                    if (data?.status !== 'OK' || !formatted) {
+                    const best = Array.isArray(data) && data.length ? data[0] : null;
+                    const formatted = best?.display_name;
+                    if (!formatted) {
                         setAddressLookupMessage('No match found.');
                         return;
                     }
@@ -6298,7 +6312,7 @@
                     } else {
                         setVenueForm(prev => ({ ...prev, address: formatted }));
                     }
-                    setAddressLookupMessage('Address auto-filled.');
+                    setAddressLookupMessage('Address auto-filled from OpenStreetMap.');
                 } catch (err) {
                     console.error('Address lookup failed', err);
                     setAddressLookupMessage('Lookup failed.');
@@ -6412,7 +6426,19 @@
                                         </thead>
                                         <tbody>
                                             {leagueTable.length ? leagueTable.map(row => (
-                                                <tr key={row.name} className="border-t border-slate-100">
+                                                <tr
+                                                    key={row.name}
+                                                    className="border-t border-slate-100 cursor-pointer hover:bg-slate-50"
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    onClick={() => handleLeagueRowSelect(row.name)}
+                                                    onKeyDown={(event) => {
+                                                        if (event.key === 'Enter' || event.key === ' ') {
+                                                            event.preventDefault();
+                                                            handleLeagueRowSelect(row.name);
+                                                        }
+                                                    }}
+                                                >
                                                     <td className="py-2 pr-2 text-left font-bold text-slate-900">{row.name}</td>
                                                     <td className="py-2 text-center text-slate-700">{row.played}</td>
                                                     <td className="py-2 text-center text-emerald-700">{row.wins}</td>
@@ -6523,88 +6549,6 @@
                     {viewTab === 'venues' && (
                         <div className="space-y-4">
                             <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
-                                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Venue League Table</div>
-                                <div className="overflow-x-auto">
-                                    <table className="min-w-full text-sm">
-                                        <thead className="text-[11px] text-slate-400 uppercase tracking-wider">
-                                            <tr>
-                                                <th className="text-left py-2 font-bold">Venue</th>
-                                                <th className="text-center py-2 font-bold">P</th>
-                                                <th className="text-center py-2 font-bold">W</th>
-                                                <th className="text-center py-2 font-bold">L</th>
-                                                <th className="text-center py-2 font-bold">D</th>
-                                                <th className="text-center py-2 font-bold">F</th>
-                                                <th className="text-center py-2 font-bold">A</th>
-                                                <th className="text-center py-2 font-bold">PTS</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {venueLeagueTable.length ? venueLeagueTable.map(row => (
-                                                <tr key={row.name} className="border-t border-slate-100">
-                                                    <td className="py-2 pr-2 text-left font-bold text-slate-900">{row.name}</td>
-                                                    <td className="py-2 text-center text-slate-700">{row.played}</td>
-                                                    <td className="py-2 text-center text-emerald-700">{row.wins}</td>
-                                                    <td className="py-2 text-center text-rose-700">{row.losses}</td>
-                                                    <td className="py-2 text-center text-amber-700">{row.draws}</td>
-                                                    <td className="py-2 text-center text-slate-700">{row.goalsFor || 0}</td>
-                                                    <td className="py-2 text-center text-slate-700">{row.goalsAgainst || 0}</td>
-                                                    <td className="py-2 text-center font-bold text-slate-900">{row.points}</td>
-                                                </tr>
-                                            )) : (
-                                                <tr>
-                                                    <td colSpan={8} className="py-3 text-center text-[11px] text-slate-500">No played games yet.</td>
-                                                </tr>
-                                            )}
-                                            {venueLeagueTable.length ? (
-                                                <tr className="border-t border-slate-200 bg-slate-50">
-                                                    <td className="py-2 pr-2 text-left font-bold text-slate-900">Total</td>
-                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.played}</td>
-                                                    <td className="py-2 text-center text-emerald-800 font-bold">{venueLeagueTotals.wins}</td>
-                                                    <td className="py-2 text-center text-rose-800 font-bold">{venueLeagueTotals.losses}</td>
-                                                    <td className="py-2 text-center text-amber-800 font-bold">{venueLeagueTotals.draws}</td>
-                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.goalsFor}</td>
-                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.goalsAgainst}</td>
-                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.points}</td>
-                                                </tr>
-                                            ) : null}
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div className="pt-2 border-t border-slate-100">
-                                    <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Season Totals</div>
-                                    <div className="overflow-x-auto">
-                                        <table className="min-w-full text-sm">
-                                            <thead className="text-[11px] text-slate-400 uppercase tracking-wider">
-                                                <tr>
-                                                    <th className="text-left py-2 font-bold">Season</th>
-                                                    <th className="text-center py-2 font-bold">P</th>
-                                                    <th className="text-center py-2 font-bold">W</th>
-                                                    <th className="text-center py-2 font-bold">L</th>
-                                                    <th className="text-center py-2 font-bold">D</th>
-                                                    <th className="text-center py-2 font-bold">PTS</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {venueSeasonTotals.length ? venueSeasonTotals.map(row => (
-                                                    <tr key={row.season} className="border-t border-slate-100">
-                                                        <td className="py-2 pr-2 text-left font-bold text-slate-900">{row.season}</td>
-                                                        <td className="py-2 text-center text-slate-700">{row.played}</td>
-                                                        <td className="py-2 text-center text-emerald-700">{row.wins}</td>
-                                                        <td className="py-2 text-center text-rose-700">{row.losses}</td>
-                                                        <td className="py-2 text-center text-amber-700">{row.draws}</td>
-                                                        <td className="py-2 text-center font-bold text-slate-900">{row.points}</td>
-                                                    </tr>
-                                                )) : (
-                                                    <tr>
-                                                        <td colSpan={6} className="py-3 text-center text-[11px] text-slate-500">No season totals yet.</td>
-                                                    </tr>
-                                                )}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Venues</div>
@@ -6674,6 +6618,95 @@
                                     )}
                                 </div>
                             </div>
+                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Venue League Table</div>
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full text-[11px]">
+                                        <thead className="text-[10px] text-slate-400 uppercase tracking-wider">
+                                            <tr>
+                                                <th className="text-left py-2 font-bold">Venue</th>
+                                                <th className="text-center py-2 font-bold">P</th>
+                                                <th className="text-center py-2 font-bold">W</th>
+                                                <th className="text-center py-2 font-bold">L</th>
+                                                <th className="text-center py-2 font-bold">D</th>
+                                                <th className="text-center py-2 font-bold">F</th>
+                                                <th className="text-center py-2 font-bold">A</th>
+                                                <th className="text-center py-2 font-bold">PTS</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {venueLeagueTable.length ? venueLeagueTable.map(row => (
+                                                <tr
+                                                    key={row.name}
+                                                    className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer"
+                                                    onClick={() => {
+                                                        const target = venues.find(v => (v.name || '').toLowerCase() === (row.name || '').toLowerCase());
+                                                        if (target) openVenueSheet(target);
+                                                    }}
+                                                >
+                                                    <td className="py-2 pr-2 text-left font-bold text-slate-900">{row.name}</td>
+                                                    <td className="py-2 text-center text-slate-700">{row.played}</td>
+                                                    <td className="py-2 text-center text-emerald-700">{row.wins}</td>
+                                                    <td className="py-2 text-center text-rose-700">{row.losses}</td>
+                                                    <td className="py-2 text-center text-amber-700">{row.draws}</td>
+                                                    <td className="py-2 text-center text-slate-700">{row.goalsFor || 0}</td>
+                                                    <td className="py-2 text-center text-slate-700">{row.goalsAgainst || 0}</td>
+                                                    <td className="py-2 text-center font-bold text-slate-900">{row.points}</td>
+                                                </tr>
+                                            )) : (
+                                                <tr>
+                                                    <td colSpan={8} className="py-3 text-center text-[11px] text-slate-500">No played games yet.</td>
+                                                </tr>
+                                            )}
+                                            {venueLeagueTable.length ? (
+                                                <tr className="border-t border-slate-200 bg-slate-50">
+                                                    <td className="py-2 pr-2 text-left font-bold text-slate-900">Total</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.played}</td>
+                                                    <td className="py-2 text-center text-emerald-800 font-bold">{venueLeagueTotals.wins}</td>
+                                                    <td className="py-2 text-center text-rose-800 font-bold">{venueLeagueTotals.losses}</td>
+                                                    <td className="py-2 text-center text-amber-800 font-bold">{venueLeagueTotals.draws}</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.goalsFor}</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.goalsAgainst}</td>
+                                                    <td className="py-2 text-center text-slate-900 font-bold">{venueLeagueTotals.points}</td>
+                                                </tr>
+                                            ) : null}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="pt-2 border-t border-slate-100">
+                                    <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Season Totals</div>
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full text-[11px]">
+                                            <thead className="text-[10px] text-slate-400 uppercase tracking-wider">
+                                                <tr>
+                                                    <th className="text-left py-2 font-bold">Season</th>
+                                                    <th className="text-center py-2 font-bold">P</th>
+                                                    <th className="text-center py-2 font-bold">W</th>
+                                                    <th className="text-center py-2 font-bold">L</th>
+                                                    <th className="text-center py-2 font-bold">D</th>
+                                                    <th className="text-center py-2 font-bold">PTS</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {venueSeasonTotals.length ? venueSeasonTotals.map(row => (
+                                                    <tr key={row.season} className="border-t border-slate-100">
+                                                        <td className="py-2 pr-2 text-left font-bold text-slate-900">{row.season}</td>
+                                                        <td className="py-2 text-center text-slate-700">{row.played}</td>
+                                                        <td className="py-2 text-center text-emerald-700">{row.wins}</td>
+                                                        <td className="py-2 text-center text-rose-700">{row.losses}</td>
+                                                        <td className="py-2 text-center text-amber-700">{row.draws}</td>
+                                                        <td className="py-2 text-center font-bold text-slate-900">{row.points}</td>
+                                                    </tr>
+                                                )) : (
+                                                    <tr>
+                                                        <td colSpan={6} className="py-3 text-center text-[11px] text-slate-500">No season totals yet.</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     )}
 
@@ -6693,8 +6726,8 @@
                                 onChange={e => setNewVenue({ ...newVenue, address: e.target.value })}
                             />
                             <div className="flex justify-end">
-                                <button type="button" onClick={() => lookupAddressFromGoogle('new')} className="text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-2">
-                                    {isAddressLookupRunning ? 'Looking…' : 'Auto-fill from Google'}
+                                <button type="button" onClick={() => lookupAddressFromOsm('new')} className="text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                                    {isAddressLookupRunning ? 'Looking…' : 'Auto-fill (OpenStreetMap)'}
                                 </button>
                             </div>
                             {addressLookupMessage && <div className="text-[11px] text-slate-500">{addressLookupMessage}</div>}
@@ -6851,8 +6884,8 @@
                                         <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Venue name" value={venueForm.name} onChange={e => setVenueForm(prev => ({ ...prev, name: e.target.value }))} />
                                         <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Address" value={venueForm.address} onChange={e => setVenueForm(prev => ({ ...prev, address: e.target.value }))} />
                                         <div className="flex justify-end">
-                                            <button onClick={() => lookupAddressFromGoogle('existing')} className="text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-2" type="button">
-                                                {isAddressLookupRunning ? 'Looking…' : 'Auto-fill from Google'}
+                                            <button onClick={() => lookupAddressFromOsm('existing')} className="text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-2" type="button">
+                                                {isAddressLookupRunning ? 'Looking…' : 'Auto-fill (OpenStreetMap)'}
                                             </button>
                                         </div>
                                         {addressLookupMessage && <div className="text-[11px] text-slate-500">{addressLookupMessage}</div>}
