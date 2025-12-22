@@ -2382,22 +2382,36 @@
                     contact: (quickOpponent.contact || '').trim(),
                     phone: (quickOpponent.phone || '').trim()
                 };
-                const id = await db.opponents.add(payload);
-                const newOpp = { id, ...payload };
-                setOpponents([...opponents, newOpp]);
-                setQuickOpponent({ name: '', payee: '', contact: '', phone: '' });
-                return newOpp;
+                try {
+                    await waitForDb();
+                    const id = await db.opponents.add(payload);
+                    const newOpp = { id, ...payload };
+                    setOpponents([...opponents, newOpp]);
+                    setQuickOpponent({ name: '', payee: '', contact: '', phone: '' });
+                    return newOpp;
+                } catch (err) {
+                    console.error('Unable to save opponent', err);
+                    alert('Unable to save opponent: ' + (err?.message || 'Unexpected error'));
+                    return null;
+                }
             };
 
             const createQuickVenue = async () => {
                 const name = quickVenue.name.trim();
                 if(!name) return null;
                 const payload = { ...quickVenue, price: quickVenue.price ? Number(quickVenue.price) : null };
-                const id = await db.venues.add(payload);
-                const newVen = { ...payload, id };
-                setVenues([...venues, newVen]);
-                setQuickVenue({ name: '', price: '', address: '', payee: '', contact: '' });
-                return newVen;
+                try {
+                    await waitForDb();
+                    const id = await db.venues.add(payload);
+                    const newVen = { ...payload, id };
+                    setVenues([...venues, newVen]);
+                    setQuickVenue({ name: '', price: '', address: '', payee: '', contact: '' });
+                    return newVen;
+                } catch (err) {
+                    console.error('Unable to save venue', err);
+                    alert('Unable to save venue: ' + (err?.message || 'Unexpected error'));
+                    return null;
+                }
             };
 
             const updateFeeForPlayer = async (playerId) => {
@@ -5736,12 +5750,17 @@
                     return;
                 }
                 if (!confirm(`"${cleanName}" isn't in Opponents yet. Add it now?`)) return;
-                await waitForDb();
-                const payload = { name: cleanName, contact: '', phone: '', payee: '' };
-                const id = await db.opponents.add(payload);
-                const created = { id, ...payload };
-                setOpponents([...opponents, created]);
-                openOpponentSheet(created);
+                try {
+                    await waitForDb();
+                    const payload = { name: cleanName, contact: '', phone: '', payee: '' };
+                    const id = await db.opponents.add(payload);
+                    const created = { id, ...payload };
+                    setOpponents([...opponents, created]);
+                    openOpponentSheet(created);
+                } catch (err) {
+                    console.error('Unable to add opponent', err);
+                    alert('Unable to add opponent: ' + (err?.message || 'Unexpected error'));
+                }
             };
 
             const closeOpponentSheet = () => {
@@ -5874,9 +5893,15 @@
                     phone: (newOpponent.phone || '').trim(),
                     payee: (newOpponent.payee || '').trim()
                 };
-                const id = await db.opponents.add(payload);
-                setOpponents([...opponents, { id, ...payload }]);
-                closeAddOpponent();
+                try {
+                    await waitForDb();
+                    const id = await db.opponents.add(payload);
+                    setOpponents([...opponents, { id, ...payload }]);
+                    closeAddOpponent();
+                } catch (err) {
+                    console.error('Unable to add opponent', err);
+                    alert('Unable to add opponent: ' + (err?.message || 'Unexpected error'));
+                }
             };
 
             const handleAddOpponent = async (event) => {
@@ -5885,14 +5910,20 @@
             };
 
             const deleteOpponent = async (opponent) => {
-                const fixtures = await db.fixtures.toArray();
-                const linked = fixtures.filter(f => f.opponentId === opponent.id || (f.opponent || '').toLowerCase() === opponent.name.toLowerCase());
-                if(linked.length) {
-                    setReassignEntity({ open: true, type: 'opponent', item: opponent, count: linked.length });
-                    return;
+                try {
+                    await waitForDb();
+                    const fixtures = await db.fixtures.toArray();
+                    const linked = fixtures.filter(f => f.opponentId === opponent.id || (f.opponent || '').toLowerCase() === opponent.name.toLowerCase());
+                    if(linked.length) {
+                        setReassignEntity({ open: true, type: 'opponent', item: opponent, count: linked.length });
+                        return;
+                    }
+                    await db.opponents.delete(opponent.id);
+                    setOpponents(opponents.filter(o => o.id !== opponent.id));
+                } catch (err) {
+                    console.error('Unable to delete opponent', err);
+                    alert('Unable to delete opponent: ' + (err?.message || 'Unexpected error'));
                 }
-                await db.opponents.delete(opponent.id);
-                setOpponents(opponents.filter(o => o.id !== opponent.id));
             };
 
             const saveOpponentDetails = async () => {
@@ -5915,6 +5946,7 @@
                 clearOpponentSaveTimer();
                 setOpponentSaveStatus('saving');
                 try {
+                    await waitForDb();
                     const prevName = (selectedOpponent.name || '').trim();
                     await db.opponents.update(selectedOpponent.id, payload);
                     const nameChanged = prevName !== cleanName;
@@ -5966,10 +5998,16 @@
                     payee: (newVenue.payee || '').trim(),
                     contact: (newVenue.contact || '').trim()
                 };
-                const id = await db.venues.add(payload);
-                setVenues([...venues, { ...payload, id }]);
-                setNewVenue({ ...emptyVenueForm });
-                setIsAddVenueOpen(false);
+                try {
+                    await waitForDb();
+                    const id = await db.venues.add(payload);
+                    setVenues([...venues, { ...payload, id }]);
+                    setNewVenue({ ...emptyVenueForm });
+                    setIsAddVenueOpen(false);
+                } catch (err) {
+                    console.error('Unable to add venue', err);
+                    alert('Unable to add venue: ' + (err?.message || 'Unexpected error'));
+                }
             };
 
             const handleAddVenue = async (event) => {
@@ -5978,14 +6016,20 @@
             };
 
             const deleteVenue = async (venue) => {
-                const fixtures = await db.fixtures.toArray();
-                const linked = fixtures.filter(f => f.venueId === venue.id || (f.venue || '').toLowerCase() === venue.name.toLowerCase());
-                if(linked.length) {
-                    setReassignEntity({ open: true, type: 'venue', item: venue, count: linked.length });
-                    return;
+                try {
+                    await waitForDb();
+                    const fixtures = await db.fixtures.toArray();
+                    const linked = fixtures.filter(f => f.venueId === venue.id || (f.venue || '').toLowerCase() === venue.name.toLowerCase());
+                    if(linked.length) {
+                        setReassignEntity({ open: true, type: 'venue', item: venue, count: linked.length });
+                        return;
+                    }
+                    await db.venues.delete(venue.id);
+                    setVenues(venues.filter(v => v.id !== venue.id));
+                } catch (err) {
+                    console.error('Unable to delete venue', err);
+                    alert('Unable to delete venue: ' + (err?.message || 'Unexpected error'));
                 }
-                await db.venues.delete(venue.id);
-                setVenues(venues.filter(v => v.id !== venue.id));
             };
 
             const editVenue = async (venue) => {
@@ -6020,6 +6064,7 @@
                 clearVenueSaveTimer();
                 setVenueSaveStatus('saving');
                 try {
+                    await waitForDb();
                     const prevName = (selectedVenue.name || '').trim();
                     await db.venues.update(selectedVenue.id, payload);
                     const nameChanged = prevName !== cleanName;
@@ -6331,6 +6376,7 @@
                 if(!targetName) { alert('Choose or enter a replacement'); return; }
                 setIsReassigning(true);
                 try {
+                    await waitForDb();
                     const lowerName = targetName.toLowerCase();
                     if(type === 'opponent') {
                         let target = opponents.find(o => o.id !== item.id && o.name.toLowerCase() === lowerName);
@@ -8523,6 +8569,7 @@
             };
 
             const exportEntity = async (key) => {
+                await waitForDb();
                 const stamp = new Date().toISOString().split('T')[0];
                 let data = [];
                 switch(key) {
@@ -8548,6 +8595,7 @@
             };
 
             const importEntityData = async (key, data) => {
+                await waitForDb();
                 const runListWithProgress = async (label, list, action) => {
                     if(!Array.isArray(list) || !list.length) return 0;
                     const total = list.length;
@@ -8731,6 +8779,7 @@
             };
 
             const backupData = async () => {
+                await waitForDb();
                 const [
                     players,
                     fixtures,
@@ -8844,6 +8893,7 @@
                     markImportStep(key, 'done');
                 };
                 try {
+                    await waitForDb();
                     addProgressDetail('Clearing existing records…');
                     await db.fixtures.clear();
                     await db.players.clear();
