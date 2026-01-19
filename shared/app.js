@@ -5099,16 +5099,15 @@
                 <div className="space-y-6 pb-28 animate-slide-up">
                     <header className="flex justify-between items-center pt-2 px-1">
                         <div className="flex items-center gap-3">
-                            <img src={TEAM_LOGO_SRC} alt="The British Exiles crest" className="h-12 w-12 rounded-2xl border border-white shadow-glass object-cover" />
+                            <button type="button" onClick={onAuthLogoClick} aria-label={authActionLabel} className="h-12 w-12 rounded-2xl border border-white shadow-glass overflow-hidden bg-white/70">
+                                <img src={TEAM_LOGO_SRC} alt="The British Exiles crest" className="h-full w-full object-cover" />
+                            </button>
                             <div>
                                 <div className="text-brand-600 font-display font-bold text-lg tracking-tight">THE BRITISH EXILES</div>
                                 <div className="text-slate-400 text-xs font-sans font-medium uppercase tracking-widest">Manager Dashboard</div>
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
-                            <button onClick={onAuthLogoClick} aria-label={authActionLabel} className="w-10 h-10 rounded-xl border border-slate-200 bg-white/80 flex items-center justify-center shadow-soft hover:bg-white transition">
-                                <img src={TEAM_LOGO_SRC} alt="" className="h-7 w-7 rounded-lg object-cover" />
-                            </button>
                             <button onClick={onOpenSettings} className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-700 hover:bg-slate-100 transition">
                                 <Icon name="Settings" size={18} />
                             </button>
@@ -9722,8 +9721,9 @@
                 if (typeof window === 'undefined') return;
                 const signIn = window.gafferAuthSignIn;
                 const signOut = window.gafferAuthSignOut;
-                if (!signIn && !signOut) {
-                    alert('Auth controls are not available on this page.');
+                const showLogin = window.gafferAuthShowLogin;
+                if (!signIn && !signOut && !showLogin) {
+                    alert('Login controls are not available on this page.');
                     return;
                 }
                 if (authUser) {
@@ -9741,14 +9741,16 @@
                     }
                     return;
                 }
-                if (typeof signIn !== 'function') {
-                    alert('Log in is not available right now.');
-                    return;
-                }
-                const ok = window.confirm('Log in anonymously to the database?');
+                const ok = window.confirm('Log in to the database?');
                 if (!ok) return;
                 try {
-                    await signIn();
+                    if (typeof signIn === 'function') {
+                        await signIn();
+                    } else if (typeof showLogin === 'function') {
+                        showLogin();
+                    } else {
+                        alert('Log in is not available right now.');
+                    }
                 } catch (err) {
                     console.error('Unable to log in', err);
                     alert('Unable to log in: ' + (err?.message || 'Unexpected error'));

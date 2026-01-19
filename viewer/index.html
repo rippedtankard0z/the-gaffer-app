@@ -82,6 +82,7 @@
             window.gafferAuthUser = auth.currentUser || null;
             window.gafferAuthSignIn = () => signInAnonymously(auth);
             window.gafferAuthSignOut = () => signOut(auth);
+            window.gafferAuthShowLogin = () => signInAnonymously(auth);
             onAuthStateChanged(auth, (user) => publishAuthState(user));
 
             const cache = {
