@@ -4707,7 +4707,7 @@
             );
         };
         // --- DASHBOARD MODULE ---
-        const Dashboard = ({ onNavigate, kitDetails = [], kitQueue = [], kitNumberLimit = DEFAULT_KIT_NUMBER_LIMIT, onOpenSettings = () => {} }) => {
+        const Dashboard = ({ onNavigate, kitDetails = [], kitQueue = [], kitNumberLimit = DEFAULT_KIT_NUMBER_LIMIT, onOpenSettings = () => {}, authStatus = null, onAuthLogoClick = () => {} }) => {
             const buildInfo = READ_ONLY ? formatBuildLabel(APP_VERSION, true) : formatBuildLabel(APP_VERSION, false);
             const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [], outstanding: { receivable: 0, payable: 0 } });
             const [nextFixture, setNextFixture] = useState(null);
@@ -5091,6 +5091,9 @@
                     action();
                 }
             };
+            const authLabel = authStatus?.label;
+            const authTone = authStatus?.tone || 'text-slate-400';
+            const authActionLabel = authStatus?.actionLabel || 'Toggle database login';
 
             return (
                 <div className="space-y-6 pb-28 animate-slide-up">
@@ -5103,12 +5106,16 @@
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
+                            <button onClick={onAuthLogoClick} aria-label={authActionLabel} className="w-10 h-10 rounded-xl border border-slate-200 bg-white/80 flex items-center justify-center shadow-soft hover:bg-white transition">
+                                <img src={TEAM_LOGO_SRC} alt="" className="h-7 w-7 rounded-lg object-cover" />
+                            </button>
                             <button onClick={onOpenSettings} className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-700 hover:bg-slate-100 transition">
                                 <Icon name="Settings" size={18} />
                             </button>
                             <span className="text-[10px] font-semibold text-slate-400 leading-tight text-right">
                                 {buildInfo.label}
                                 {buildInfo.version && <span className="block">{buildInfo.version}</span>}
+                                {authLabel && <span className={`block ${authTone}`}>{authLabel}</span>}
                             </span>
                         </div>
                     </header>
@@ -9657,6 +9664,14 @@
             const [importCount, setImportCount] = useState(0);
             const [importMessage, setImportMessage] = useState('');
             const [progressDetails, setProgressDetails] = useState([]);
+            const [authUser, setAuthUser] = useState(() => {
+                if (typeof window === 'undefined') return null;
+                return window.gafferAuthUser || null;
+            });
+            const [isAuthReady, setIsAuthReady] = useState(() => {
+                if (typeof window === 'undefined') return false;
+                return window.gafferAuthUser !== undefined;
+            });
             const settingsLoadedRef = useRef(false);
             const isVersionMismatch = hasLocalVersionMismatch || hasRemoteVersionMismatch;
             const startImportProgress = useCallback((label = 'Updating data…') => {
@@ -9693,6 +9708,66 @@
                 progressDetails,
                 isImporting: importCount > 0
             }), [startImportProgress, finishImportProgress, addProgressDetail, progressDetails, importCount]);
+            const authStatus = useMemo(() => {
+                if (!isAuthReady) {
+                    return { label: 'DB: Connecting...', tone: 'text-slate-400', actionLabel: 'Check database login' };
+                }
+                if (authUser) {
+                    const label = authUser.isAnonymous ? 'DB: Signed in (anon)' : 'DB: Signed in';
+                    return { label, tone: 'text-emerald-600', actionLabel: 'Log out of the database' };
+                }
+                return { label: 'DB: Signed out', tone: 'text-rose-500', actionLabel: 'Log in to the database' };
+            }, [authUser, isAuthReady]);
+            const handleAuthLogoClick = useCallback(async () => {
+                if (typeof window === 'undefined') return;
+                const signIn = window.gafferAuthSignIn;
+                const signOut = window.gafferAuthSignOut;
+                if (!signIn && !signOut) {
+                    alert('Auth controls are not available on this page.');
+                    return;
+                }
+                if (authUser) {
+                    if (typeof signOut !== 'function') {
+                        alert('Log out is not available right now.');
+                        return;
+                    }
+                    const ok = window.confirm('Log out of the database?');
+                    if (!ok) return;
+                    try {
+                        await signOut();
+                    } catch (err) {
+                        console.error('Unable to log out', err);
+                        alert('Unable to log out: ' + (err?.message || 'Unexpected error'));
+                    }
+                    return;
+                }
+                if (typeof signIn !== 'function') {
+                    alert('Log in is not available right now.');
+                    return;
+                }
+                const ok = window.confirm('Log in anonymously to the database?');
+                if (!ok) return;
+                try {
+                    await signIn();
+                } catch (err) {
+                    console.error('Unable to log in', err);
+                    alert('Unable to log in: ' + (err?.message || 'Unexpected error'));
+                }
+            }, [authUser]);
+
+            useEffect(() => {
+                if (typeof window === 'undefined') return () => {};
+                const handleAuthState = (event) => {
+                    setAuthUser(event?.detail?.user || null);
+                    setIsAuthReady(true);
+                };
+                window.addEventListener('gaffer-auth-state', handleAuthState);
+                if (window.gafferAuthUser !== undefined) {
+                    setAuthUser(window.gafferAuthUser || null);
+                    setIsAuthReady(true);
+                }
+                return () => window.removeEventListener('gaffer-auth-state', handleAuthState);
+            }, []);
 
             useEffect(() => {
                 let isActive = true;
@@ -10024,9 +10099,9 @@
                         )}
 
                         <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
-{activeTab === 'dashboard' && (
+                            {activeTab === 'dashboard' && (
                                 <div data-tab-container="dashboard">
-                                    <Dashboard onNavigate={navigate} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} />
+                                    <Dashboard onNavigate={navigate} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} authStatus={authStatus} onAuthLogoClick={handleAuthLogoClick} />
                                 </div>
                             )}
                             {activeTab === 'finances' && (

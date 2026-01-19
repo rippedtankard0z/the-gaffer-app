@@ -46,7 +46,7 @@
     <!-- Firebase SDKs & Firestore bridge -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
+        import { getAuth, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
         import { 
             getFirestore, collection, doc, setDoc, addDoc, updateDoc, deleteDoc, 
             getDocs, onSnapshot 
@@ -73,6 +73,16 @@
             const app = initializeApp(validatedConfig);
             const auth = getAuth(app);
             const fs = getFirestore(app);
+            const publishAuthState = (user) => {
+                window.gafferAuthUser = user || null;
+                window.dispatchEvent(new CustomEvent('gaffer-auth-state', { detail: { user: user || null } }));
+            };
+
+            window.gafferAuth = auth;
+            window.gafferAuthUser = auth.currentUser || null;
+            window.gafferAuthSignIn = () => signInAnonymously(auth);
+            window.gafferAuthSignOut = () => signOut(auth);
+            onAuthStateChanged(auth, (user) => publishAuthState(user));
 
             const cache = {
                 players: [],
