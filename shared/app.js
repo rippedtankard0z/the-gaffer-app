@@ -2119,6 +2119,11 @@
             const [quickVenue, setQuickVenue] = useState({ name: '', price: '', address: '', payee: '', contact: '' });
             const [selectedSeason, setSelectedSeason] = useState(seasonCategories?.[0] || '2025/2026 Season');
             const [magicFixtureTarget, setMagicFixtureTarget] = useState('new');
+            const [showScheduledMagic, setShowScheduledMagic] = useState(true);
+            const magicFixtureOptions = useMemo(() => {
+                const allowed = showScheduledMagic ? ['PLAYED', 'SCHEDULED'] : ['PLAYED'];
+                return fixtures.filter(f => allowed.includes(f.status));
+            }, [fixtures, showScheduledMagic]);
             const homeVenueForMatch = useMemo(() => {
                 if (!selectedFixture?.venue) return null;
                 return venues.find(v => (v.name || '').toLowerCase() === (selectedFixture.venue || '').toLowerCase()) || null;
@@ -3977,18 +3982,25 @@
                                         <input type="radio" value="new" checked={magicFixtureTarget === 'new'} onChange={e => setMagicFixtureTarget(e.target.value)} />
                                         Create new game (default)
                                     </label>
+                                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                        <input type="checkbox" checked={showScheduledMagic} onChange={e => setShowScheduledMagic(e.target.checked)} />
+                                        Include scheduled games
+                                    </label>
                                     <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
-                                        {fixtures.filter(f => f.status === 'PLAYED').sort((a,b)=>new Date(b.date)-new Date(a.date)).map(f => (
+                                        {magicFixtureOptions.sort((a,b)=>new Date(b.date)-new Date(a.date)).map(f => (
                                             <label key={`magic-fixture-${f.id}`} className={`flex items-start gap-2 p-2 rounded-lg border ${magicFixtureTarget === String(f.id) ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-white'}`}>
                                                 <input type="radio" value={String(f.id)} checked={magicFixtureTarget === String(f.id)} onChange={e => setMagicFixtureTarget(e.target.value)} />
                                                 <div className="text-xs text-slate-600">
                                                     <div className="font-bold text-slate-900">vs {f.opponent || 'Unknown'} · {new Date(f.date).toLocaleDateString()}</div>
-                                                    <div className="text-[11px] text-slate-500">Score {f.homeScore ?? '-'}:{f.awayScore ?? '-'} · {f.venue || 'Venue TBC'}</div>
+                                                    <div className="text-[11px] text-slate-500">
+                                                        {f.status === 'PLAYED' ? `Score ${f.homeScore ?? '-'}:${f.awayScore ?? '-'}` : 'Scheduled'}
+                                                        {` · ${f.venue || 'Venue TBC'}`}
+                                                    </div>
                                                 </div>
                                             </label>
                                         ))}
-                                        {fixtures.filter(f => f.status === 'PLAYED').length === 0 && (
-                                            <div className="text-[11px] text-slate-400">No previously played games available.</div>
+                                        {magicFixtureOptions.length === 0 && (
+                                            <div className="text-[11px] text-slate-400">No matching games available.</div>
                                         )}
                                     </div>
                                     <div className="text-[11px] text-slate-500">Selecting an existing game replaces its squad list and player-fee entries.</div>
