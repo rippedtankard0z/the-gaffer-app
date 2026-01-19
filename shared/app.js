@@ -148,6 +148,11 @@
 
         const isWriteOffTx = (tx) => !!(tx && tx.isWriteOff);
 
+        const getTxId = (value) => {
+            if (value === undefined || value === null) return null;
+            return String(value);
+        };
+
         const chargeMatchesTx = (charge, tx) => {
             if (!charge || !tx) return false;
             if (tx.playerId !== charge.playerId) return false;
@@ -167,22 +172,136 @@
 
         const paymentCoversCharge = (charge, tx) => {
             if (!charge || !tx || isWriteOffTx(tx) || tx.amount <= 0) return false;
+            if (tx.paymentOf !== undefined && tx.paymentOf !== null && charge.id !== undefined && charge.id !== null) {
+                return String(tx.paymentOf) === String(charge.id) && Math.abs(tx.amount) >= Math.abs(charge.amount);
+            }
             return chargeMatchesTx(charge, tx) && Math.abs(tx.amount) >= Math.abs(charge.amount);
+        };
+
+        const chargeCoverageCache = new WeakMap();
+
+        const buildChargeCoverage = (txList = []) => {
+            if (!Array.isArray(txList) || !txList.length) return new Map();
+            if (chargeCoverageCache.has(txList)) return chargeCoverageCache.get(txList);
+
+            const charges = txList.filter(tx => tx && tx.amount < 0);
+            const payments = txList.filter(tx => tx && tx.amount > 0 && !tx.isWriteOff);
+            const writeOffs = txList.filter(tx => tx && tx.amount > 0 && tx.isWriteOff);
+
+            const coverage = new Map();
+            const usedPaymentIds = new Set();
+            const usedWriteOffIds = new Set();
+
+            const sortTxs = (a, b) => {
+                const aTime = a?.date ? new Date(a.date).getTime() : 0;
+                const bTime = b?.date ? new Date(b.date).getTime() : 0;
+                if (aTime !== bTime) return aTime - bTime;
+                return String(a?.id ?? '').localeCompare(String(b?.id ?? ''));
+            };
+
+            const writeOffByCharge = new Map();
+            const looseWriteOffs = [];
+            writeOffs.forEach((tx) => {
+                const chargeId = getTxId(tx.writeOffOf);
+                if (chargeId) {
+                    if (!writeOffByCharge.has(chargeId)) writeOffByCharge.set(chargeId, tx);
+                } else {
+                    looseWriteOffs.push(tx);
+                }
+            });
+
+            const paymentByCharge = new Map();
+            const loosePayments = [];
+            payments.forEach((tx) => {
+                const chargeId = getTxId(tx.paymentOf);
+                if (chargeId) {
+                    if (!paymentByCharge.has(chargeId)) paymentByCharge.set(chargeId, tx);
+                } else {
+                    loosePayments.push(tx);
+                }
+            });
+
+            const sortedCharges = [...charges].sort(sortTxs);
+            const sortedPayments = [...loosePayments].sort(sortTxs);
+            const sortedWriteOffs = [...looseWriteOffs].sort(sortTxs);
+
+            const pickMatch = (charge, list, usedSet, matcher) => {
+                if (!list.length) return null;
+                const candidates = list.filter(tx => {
+                    if (!tx) return false;
+                    const txId = getTxId(tx.id);
+                    if (!txId || usedSet.has(txId)) return false;
+                    return matcher(charge, tx);
+                });
+                if (!candidates.length) return null;
+                if (!charge.fixtureId) {
+                    const withoutFixture = candidates.find(tx => !tx.fixtureId);
+                    if (withoutFixture) return withoutFixture;
+                }
+                return candidates[0] || null;
+            };
+
+            sortedCharges.forEach((charge) => {
+                const chargeId = getTxId(charge.id);
+                if (!chargeId) return;
+                const directWriteOff = writeOffByCharge.get(chargeId);
+                if (directWriteOff) {
+                    coverage.set(chargeId, { writeOff: directWriteOff, payment: null });
+                    const writeOffId = getTxId(directWriteOff.id);
+                    if (writeOffId) usedWriteOffIds.add(writeOffId);
+                    return;
+                }
+                const directPayment = paymentByCharge.get(chargeId);
+                if (directPayment) {
+                    coverage.set(chargeId, { writeOff: null, payment: directPayment });
+                    const paymentId = getTxId(directPayment.id);
+                    if (paymentId) usedPaymentIds.add(paymentId);
+                    return;
+                }
+                const payment = pickMatch(charge, sortedPayments, usedPaymentIds, paymentCoversCharge);
+                if (payment) {
+                    coverage.set(chargeId, { writeOff: null, payment });
+                    const paymentId = getTxId(payment.id);
+                    if (paymentId) usedPaymentIds.add(paymentId);
+                    return;
+                }
+                const writeOff = pickMatch(charge, sortedWriteOffs, usedWriteOffIds, writeOffCoversCharge);
+                if (writeOff) {
+                    coverage.set(chargeId, { writeOff, payment: null });
+                    const writeOffId = getTxId(writeOff.id);
+                    if (writeOffId) usedWriteOffIds.add(writeOffId);
+                    return;
+                }
+                coverage.set(chargeId, { writeOff: null, payment: null });
+            });
+
+            chargeCoverageCache.set(txList, coverage);
+            return coverage;
         };
 
         const findWriteOffForCharge = (charge, txList = []) => {
             if (!charge || !Array.isArray(txList) || !txList.length) return null;
-            return txList.find(tx => writeOffCoversCharge(charge, tx)) || null;
+            const chargeId = getTxId(charge.id);
+            if (!chargeId) return txList.find(tx => writeOffCoversCharge(charge, tx)) || null;
+            const coverage = buildChargeCoverage(txList);
+            return coverage.get(chargeId)?.writeOff || null;
         };
 
         const findPaymentForCharge = (charge, txList = []) => {
             if (!charge || !Array.isArray(txList) || !txList.length) return null;
-            return txList.find(tx => paymentCoversCharge(charge, tx)) || null;
+            const chargeId = getTxId(charge.id);
+            if (!chargeId) return txList.find(tx => paymentCoversCharge(charge, tx)) || null;
+            const coverage = buildChargeCoverage(txList);
+            return coverage.get(chargeId)?.payment || null;
         };
 
         const transactionHasCoveringPayment = (charge, txList = []) => {
             if (!charge || !Array.isArray(txList) || !txList.length) return false;
-            return txList.some(tx => writeOffCoversCharge(charge, tx) || paymentCoversCharge(charge, tx));
+            const chargeId = getTxId(charge.id);
+            if (!chargeId) return txList.some(tx => writeOffCoversCharge(charge, tx) || paymentCoversCharge(charge, tx));
+            const coverage = buildChargeCoverage(txList);
+            const match = coverage.get(chargeId);
+            return !!(match?.writeOff || match?.payment);
         };
 
         const SETTINGS_DOC_ID = 'app';
@@ -1127,7 +1246,8 @@
                         flow: 'receivable',
                         playerId: selectedPlayer.id,
                         fixtureId: tx.fixtureId,
-                        isReconciled: true
+                        isReconciled: true,
+                        paymentOf: tx.id
                     });
                     openPlayerDetails(selectedPlayer);
                     refresh();
@@ -2445,6 +2565,7 @@
             const togglePayment = async (playerId) => {
                 if(!selectedFixture) return;
                 const fee = Number(feeEdits[playerId] ?? (selectedFixture.feeAmount || 20)) || 0;
+                const feeTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: PLAYER_FEE_CATEGORY }).and(t => t.amount < 0).first();
                 const payTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: PLAYER_FEE_CATEGORY }).and(t => t.amount > 0 && !t.isWriteOff).first();
                 if(payTx) {
                     await db.transactions.delete(payTx.id);
@@ -2458,7 +2579,8 @@
                         flow: 'receivable',
                         playerId,
                         fixtureId: selectedFixture.id,
-                        isReconciled: true
+                        isReconciled: true,
+                        paymentOf: feeTx?.id
                     });
                 }
                 reloadSelected();
@@ -5039,7 +5161,8 @@
                         flow: 'receivable',
                         playerId: pendingPayment.playerId,
                         fixtureId: pendingPayment.fixtureId,
-                        isReconciled: true
+                        isReconciled: true,
+                        paymentOf: pendingPayment.id
                     });
                     setPendingPayment(null);
                     await loadDashboard();
