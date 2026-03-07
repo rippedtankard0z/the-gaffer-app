@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2024.12.06-22';
+        const MASTER_BUILD_VERSION = '2026.03.07-01';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -7955,6 +7955,7 @@
             { key: 'referees', type: 'collection', label: 'Referees & contacts', description: 'Officials with saved phone numbers.' },
             { key: 'kitDetails', type: 'collection', label: 'Kit holders', description: 'Current kit assignments and status.' },
             { key: 'kitQueue', type: 'collection', label: 'Kit order queue', description: 'Upcoming kit requests and priorities.' },
+            { key: 'settings', type: 'collection', label: 'Settings records', description: 'Raw settings documents, including advanced app settings.' },
             { key: 'kitSettings', type: 'setting', label: 'Kit settings', description: 'Number limits and available size options.' },
             { key: 'positionDefinitions', type: 'collection', label: 'Position definitions', description: 'Master list that powers player roles.' },
             { key: 'categories', type: 'collection', label: 'Cost categories', description: 'Custom buckets for expenses and income.' },
@@ -7977,6 +7978,7 @@
                 referees: countList(data.referees),
                 kitDetails: countList(data.kitDetails),
                 kitQueue: countList(data.kitQueue),
+                settings: countList(data.settings),
                 kitSettings: (hasKitLimit || hasKitSizes) ? 1 : 0,
                 positionDefinitions: countList(data.positionDefinitions),
                 categories: countList(data.categories),
@@ -8915,6 +8917,21 @@
                 }
             };
 
+            const normalizeSettingsFromBackup = (data = {}) => {
+                const settingsDocs = Array.isArray(data.settings) ? data.settings : [];
+                const appDoc = settingsDocs.find(doc => String(doc?.id) === SETTINGS_DOC_ID) || null;
+                const fallback = {
+                    categories: data.categories,
+                    itemCategories: data.itemCategories,
+                    seasonCategories: data.seasonCategories,
+                    refDefaults: data.refDefaults,
+                    positionDefinitions: data.positionDefinitions,
+                    kitNumberLimit: data.kitNumberLimit,
+                    kitSizeOptions: data.kitSizeOptions
+                };
+                return normalizeSettings(appDoc ? { ...fallback, ...appDoc } : fallback);
+            };
+
             const exportEntity = async (key) => {
                 await waitForDb();
                 const stamp = new Date().toISOString().split('T')[0];
@@ -9039,6 +9056,7 @@
                         await db.referees.clear();
                         await db.kitDetails.clear();
                         await db.kitQueue.clear();
+                        await db.settings.clear();
                         const playerCount = await runStep('players', async () => runListWithProgress('Restoring squad', data.players, rec => db.players.add(rec))) || 0;
                         const fixtureCount = await runStep('fixtures', async () => runListWithProgress('Restoring fixtures', data.fixtures, rec => db.fixtures.add(rec))) || 0;
                         const txCount = await runStep('transactions', async () => runListWithProgress('Rebuilding ledger entries', data.transactions?.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) })), rec => db.transactions.add(rec))) || 0;
@@ -9049,36 +9067,25 @@
                         await runStep('kitDetails', async () => runListWithProgress('Restoring kit holders', data.kitDetails, rec => db.kitDetails.add(rec)));
                         await runStep('kitQueue', async () => runListWithProgress('Restoring kit queue', data.kitQueue, rec => db.kitQueue.add(rec)));
                         setImportAllStatus('Applying saved settings…');
-                        const nextCatsAll = Array.isArray(data.categories) ? data.categories : [];
-                        setCategories(nextCatsAll);
-                        persistCategories(nextCatsAll);
-                        const nextItemCatsAll = Array.isArray(data.itemCategories) ? data.itemCategories : [];
-                        setItemCategories(nextItemCatsAll);
-                        persistItemCategories(nextItemCatsAll);
-                        const nextSeasonCatsAll = Array.isArray(data.seasonCategories) ? data.seasonCategories : [];
-                        setSeasonCategories(nextSeasonCatsAll);
-                        persistSeasonCategories(nextSeasonCatsAll);
-                        if(data.refDefaults) { setRefDefaults(data.refDefaults); persistRefDefaults(data.refDefaults); }
-                        if(Number.isFinite(Number(data?.kitNumberLimit))) {
-                            const limit = Math.max(1, Number(data.kitNumberLimit));
-                            setKitNumberLimit(limit);
-                            persistKitNumberLimit(limit);
+                        if (Array.isArray(data.settings) && data.settings.length) {
+                            setImportAllStatus(`Restoring settings records (${data.settings.length})…`);
+                            await db.settings.bulkPut(data.settings);
                         }
-                        if(Array.isArray(data?.kitSizeOptions)) {
-                            setKitSizeOptions(data.kitSizeOptions);
-                            persistKitSizeOptions(data.kitSizeOptions);
-                        }
-                        if(Array.isArray(data?.positionDefinitions)) {
-                            const cleanedPositions = data.positionDefinitions.map(item => {
-                                const code = (item?.code || '').toString().trim();
-                                const label = (item?.label || '').toString().trim();
-                                return code && label ? { code, label } : null;
-                            }).filter(Boolean);
-                            if(cleanedPositions.length) {
-                                setPositionDefinitions(cleanedPositions);
-                                persistPositionDefinitions(cleanedPositions);
-                            }
-                        }
+                        const normalizedSettings = normalizeSettingsFromBackup(data);
+                        setCategories(normalizedSettings.categories);
+                        persistCategories(normalizedSettings.categories);
+                        setItemCategories(normalizedSettings.itemCategories);
+                        persistItemCategories(normalizedSettings.itemCategories);
+                        setSeasonCategories(normalizedSettings.seasonCategories);
+                        persistSeasonCategories(normalizedSettings.seasonCategories);
+                        setRefDefaults(normalizedSettings.refDefaults);
+                        persistRefDefaults(normalizedSettings.refDefaults);
+                        setKitNumberLimit(normalizedSettings.kitNumberLimit);
+                        persistKitNumberLimit(normalizedSettings.kitNumberLimit);
+                        setKitSizeOptions(normalizedSettings.kitSizeOptions);
+                        persistKitSizeOptions(normalizedSettings.kitSizeOptions);
+                        setPositionDefinitions(normalizedSettings.positionDefinitions);
+                        persistPositionDefinitions(normalizedSettings.positionDefinitions);
                         markImportStep('settings', 'done');
                         setOpponents(await db.opponents.toArray());
                         setVenues(await db.venues.toArray());
@@ -9136,7 +9143,8 @@
                     venues,
                     referees,
                     kitDetails,
-                    kitQueueEntries
+                    kitQueueEntries,
+                    settingsRecords
                 ] = await Promise.all([
                     db.players.toArray(),
                     db.fixtures.toArray(),
@@ -9146,7 +9154,8 @@
                     db.venues.toArray(),
                     db.referees.toArray(),
                     db.kitDetails.toArray(),
-                    db.kitQueue.toArray()
+                    db.kitQueue.toArray(),
+                    db.settings.toArray()
                 ]);
                 const generatedAt = new Date();
                 const payload = {
@@ -9159,6 +9168,7 @@
                     referees,
                     kitDetails,
                     kitQueue: kitQueueEntries,
+                    settings: settingsRecords,
                     kitNumberLimit,
                     kitSizeOptions,
                     positionDefinitions,
@@ -9182,7 +9192,8 @@
                     venues: venues.length,
                     referees: referees.length,
                     kitDetails: kitDetails.length,
-                    kitQueue: kitQueueEntries.length
+                    kitQueue: kitQueueEntries.length,
+                    settings: settingsRecords.length
                 };
                 const summaryParts = [
                     ['players', 'players'],
@@ -9193,7 +9204,8 @@
                     ['venues', 'venues'],
                     ['referees', 'referees'],
                     ['kitDetails', 'kit holders'],
-                    ['kitQueue', 'kit queue entries']
+                    ['kitQueue', 'kit queue entries'],
+                    ['settings', 'settings records']
                 ].map(([key, label]) => {
                     const value = counts[key];
                     return typeof value === 'number' ? `${value} ${label}` : null;
@@ -9251,6 +9263,7 @@
                     await db.referees.clear();
                     await db.kitDetails.clear();
                     await db.kitQueue.clear();
+                    await db.settings.clear();
                     await runStep('players', async () => {
                         if(data.players?.length) {
                             addProgressDetail(`Restoring ${data.players.length} players…`);
@@ -9307,46 +9320,26 @@
                         }
                     });
                     await runStep('settings', async () => {
-                        const nextCats = Array.isArray(data.categories) ? data.categories : [];
-                        if(nextCats.length) addProgressDetail('Updating cost categories…');
-                        setCategories(nextCats);
-                        persistCategories(nextCats);
-                        const nextItemCats = Array.isArray(data.itemCategories) ? data.itemCategories : [];
-                        if(nextItemCats.length) addProgressDetail('Updating player item categories…');
-                        setItemCategories(nextItemCats);
-                        persistItemCategories(nextItemCats);
-                        const nextSeasonCats = Array.isArray(data.seasonCategories) ? data.seasonCategories : [];
-                        if(nextSeasonCats.length) addProgressDetail('Updating seasons…');
-                        setSeasonCategories(nextSeasonCats);
-                        persistSeasonCategories(nextSeasonCats);
-                        if(data.refDefaults) {
-                            addProgressDetail('Restoring referee defaults…');
-                            setRefDefaults(data.refDefaults);
-                            persistRefDefaults(data.refDefaults);
+                        if (Array.isArray(data.settings) && data.settings.length) {
+                            addProgressDetail(`Restoring ${data.settings.length} settings records…`);
+                            await db.settings.bulkPut(data.settings);
                         }
-                        if(Number.isFinite(Number(data?.kitNumberLimit))) {
-                            const limit = Math.max(1, Number(data.kitNumberLimit));
-                            addProgressDetail(`Setting kit number limit to ${limit}…`);
-                            setKitNumberLimit(limit);
-                            persistKitNumberLimit(limit);
-                        }
-                        if(Array.isArray(data?.kitSizeOptions)) {
-                            addProgressDetail('Updating kit sizes…');
-                            setKitSizeOptions(data.kitSizeOptions);
-                            persistKitSizeOptions(data.kitSizeOptions);
-                        }
-                        if(Array.isArray(data?.positionDefinitions)) {
-                            addProgressDetail('Restoring position definitions…');
-                            const cleanedPositions = data.positionDefinitions.map(item => {
-                                const code = (item?.code || '').toString().trim();
-                                const label = (item?.label || '').toString().trim();
-                                return code && label ? { code, label } : null;
-                            }).filter(Boolean);
-                            if(cleanedPositions.length) {
-                                setPositionDefinitions(cleanedPositions);
-                                persistPositionDefinitions(cleanedPositions);
-                            }
-                        }
+                        const normalizedSettings = normalizeSettingsFromBackup(data);
+                        addProgressDetail('Applying saved app settings…');
+                        setCategories(normalizedSettings.categories);
+                        persistCategories(normalizedSettings.categories);
+                        setItemCategories(normalizedSettings.itemCategories);
+                        persistItemCategories(normalizedSettings.itemCategories);
+                        setSeasonCategories(normalizedSettings.seasonCategories);
+                        persistSeasonCategories(normalizedSettings.seasonCategories);
+                        setRefDefaults(normalizedSettings.refDefaults);
+                        persistRefDefaults(normalizedSettings.refDefaults);
+                        setKitNumberLimit(normalizedSettings.kitNumberLimit);
+                        persistKitNumberLimit(normalizedSettings.kitNumberLimit);
+                        setKitSizeOptions(normalizedSettings.kitSizeOptions);
+                        persistKitSizeOptions(normalizedSettings.kitSizeOptions);
+                        setPositionDefinitions(normalizedSettings.positionDefinitions);
+                        persistPositionDefinitions(normalizedSettings.positionDefinitions);
                     });
                     setOpponents(await db.opponents.toArray());
                     setVenues(await db.venues.toArray());
