@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-20';
+        const MASTER_BUILD_VERSION = '2026.03.07-21';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -4926,7 +4926,7 @@
                         )}
                     </div>
 
-                    <Modal isOpen={isAddOpen} onClose={() => { setIsAddOpen(false); setMatchdayOpenAfterAdd(false); }} title="Add Fixture">
+                    <Modal isOpen={isAddOpen} onClose={() => { setIsAddOpen(false); setMatchdayOpenAfterAdd(false); }} title={isMatchdayWorkspace ? 'Create Match Day Plan' : 'Add Fixture'}>
                         <form onSubmit={handleAdd} className="space-y-4">
                                 <select required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
                                     value={newFixture.opponent} onChange={e => setNewFixture({...newFixture, opponent: e.target.value})}>
@@ -4964,18 +4964,26 @@
                                     <button type="button" onClick={async () => { const ven = await createQuickVenue(); if(ven) setNewFixture({ ...newFixture, venue: ven.name }); }} className="w-full bg-slate-900 text-white font-bold rounded-lg py-2 text-sm">Save Venue</button>
                                 </div>
                             )}
-                            <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" value={newFixture.competitionType} onChange={e => setNewFixture({ ...newFixture, competitionType: e.target.value })}>
-                                {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
-                            </select>
-                            <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" value={normalizeForfeitResult(newFixture.forfeitResult)} onChange={e => setNewFixture({ ...newFixture, forfeitResult: e.target.value })}>
-                                {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                            </select>
-                            <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" value={newFixture.seasonTag} onChange={e => setNewFixture({ ...newFixture, seasonTag: e.target.value })}>
-                                {seasonCategories.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                            <input type="number" min="0" step="1" placeholder="Player Fee (default 20)" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
-                                value={newFixture.feeAmount} onChange={e => setNewFixture({...newFixture, feeAmount: Number(e.target.value)})} />
-                            <button type="submit" className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl mt-4">Schedule Match</button>
+                            {isMatchdayWorkspace ? (
+                                <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                                    Match Day plan only. Finance and fee setup stays in Games.
+                                </div>
+                            ) : (
+                                <>
+                                    <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" value={newFixture.competitionType} onChange={e => setNewFixture({ ...newFixture, competitionType: e.target.value })}>
+                                        {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
+                                    </select>
+                                    <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" value={normalizeForfeitResult(newFixture.forfeitResult)} onChange={e => setNewFixture({ ...newFixture, forfeitResult: e.target.value })}>
+                                        {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                    </select>
+                                    <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" value={newFixture.seasonTag} onChange={e => setNewFixture({ ...newFixture, seasonTag: e.target.value })}>
+                                        {seasonCategories.map(s => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                    <input type="number" min="0" step="1" placeholder="Player Fee (default 20)" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                        value={newFixture.feeAmount} onChange={e => setNewFixture({...newFixture, feeAmount: Number(e.target.value)})} />
+                                </>
+                            )}
+                            <button type="submit" className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl mt-4">{isMatchdayWorkspace ? 'Create Match Day Plan' : 'Schedule Match'}</button>
                         </form>
                     </Modal>
 
