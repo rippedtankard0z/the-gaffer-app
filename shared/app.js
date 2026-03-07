@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-16';
+        const MASTER_BUILD_VERSION = '2026.03.07-18';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -807,19 +807,20 @@
 
         // --- 3. UI Primitives ---
 
-        const Modal = ({ isOpen, onClose, title, children }) => {
+        const Modal = ({ isOpen, onClose, title, children, placement = 'sheet' }) => {
             useEffect(() => {
                 if (!isOpen) return;
                 lockBodyScrollForModal();
                 return () => unlockBodyScrollForModal();
             }, [isOpen]);
             if (!isOpen) return null;
+            const isCentered = placement === 'center';
             return (
-                <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true">
+                <div className={`fixed inset-0 z-[300] flex justify-center ${isCentered ? 'items-center p-4' : 'items-end sm:items-center sm:p-4'}`} role="dialog" aria-modal="true">
                     <div className="absolute inset-0 bg-slate-900/30" onClick={onClose}></div>
-                    <div className="relative w-full h-[100dvh] sm:h-auto sm:max-h-[92dvh] max-w-md bg-white sm:rounded-3xl rounded-t-3xl shadow-2xl animate-fade-in overflow-hidden">
+                    <div className={`relative w-full max-w-md bg-white shadow-2xl animate-fade-in overflow-hidden ${isCentered ? 'rounded-3xl max-h-[85dvh]' : 'h-[100dvh] sm:h-auto sm:max-h-[92dvh] sm:rounded-3xl rounded-t-3xl'}`}>
                         <div className="px-5 pt-4 pb-3 sm:px-6 sm:pt-5 sm:pb-4 border-b border-slate-100 bg-white/95 backdrop-blur sticky top-0 z-10">
-                            <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-3 sm:hidden"></div>
+                            {!isCentered && <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-3 sm:hidden"></div>}
                             <div className="flex justify-between items-center">
                                 <h3 className="text-xl font-display font-bold text-slate-900">{title}</h3>
                                 <button onClick={onClose} className="h-11 w-11 flex items-center justify-center bg-slate-100 rounded-full hover:bg-slate-200 transition-colors">
@@ -827,7 +828,7 @@
                                 </button>
                             </div>
                         </div>
-                        <div className="px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:px-6 sm:pt-5 overflow-y-auto overscroll-contain max-h-[calc(100dvh-5.75rem)] sm:max-h-[calc(92dvh-5.25rem)]">
+                        <div className={`px-5 pt-4 sm:px-6 sm:pt-5 overflow-y-auto overscroll-contain ${isCentered ? 'pb-5 sm:pb-6 max-h-[calc(85dvh-5.25rem)]' : 'pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[calc(100dvh-5.75rem)] sm:max-h-[calc(92dvh-5.25rem)]'}`}>
                             {children}
                         </div>
                     </div>
@@ -2152,7 +2153,7 @@
                         )}
                     </Modal>
 
-                    <Modal isOpen={deleteDialog.open} onClose={closeDeleteDialog} title="Delete Player">
+                    <Modal isOpen={deleteDialog.open} onClose={closeDeleteDialog} title="Delete Player" placement="center">
                         {deleteDialog.player && (
                             <div className="space-y-4">
                                 <div className="text-sm text-slate-600">
@@ -2536,6 +2537,17 @@
                 }
             };
         };
+        const defaultFixtureDraft = (seasonCategories = []) => ({
+            opponent: '',
+            date: new Date().toISOString().split('T')[0],
+            venue: '',
+            time: 'TBC',
+            feeAmount: 20,
+            competitionType: 'LEAGUE',
+            seasonTag: seasonCategories?.[0] || '2025/2026 Season',
+            manOfTheMatch: '',
+            forfeitResult: FORFEIT_RESULT.NONE
+        });
 
         const Fixtures = ({ categories, opponents, venues, referees, refDefaults, seasonCategories, setOpponents, setVenues, onNavigate, launchMode = 'schedule' }) => {
             const [fixtures, setFixtures] = useState([]);
@@ -2545,7 +2557,7 @@
             const [fixtureTx, setFixtureTx] = useState([]);
             const [allTx, setAllTx] = useState([]);
             const [isAddOpen, setIsAddOpen] = useState(false);
-            const [newFixture, setNewFixture] = useState({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: 'TBC', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season', manOfTheMatch: '', forfeitResult: FORFEIT_RESULT.NONE });
+            const [newFixture, setNewFixture] = useState(() => defaultFixtureDraft(seasonCategories));
             const [feeEdits, setFeeEdits] = useState({});
             const [newCost, setNewCost] = useState({ description: '', amount: '', category: 'Referee Fee', flow: 'payable' });
             const [payee, setPayee] = useState({ type: 'referee', value: '' });
@@ -2740,6 +2752,8 @@
             const [matchdayPlanner, setMatchdayPlanner] = useState(matchdayDefaultPlanner());
             const plannerRef = useRef(matchdayDefaultPlanner());
             const matchdayAutoOpenDoneRef = useRef(false);
+            const matchdayQuickCreatePromptedRef = useRef(false);
+            const [matchdayOpenAfterAdd, setMatchdayOpenAfterAdd] = useState(false);
             const [plannerSubSlotId, setPlannerSubSlotId] = useState('');
             const [plannerSubIncomingId, setPlannerSubIncomingId] = useState('');
             const [plannerSwapSlotA, setPlannerSwapSlotA] = useState('');
@@ -3091,8 +3105,20 @@
                 return [...list].sort((a, b) => (toTs(b.date) || 0) - (toTs(a.date) || 0))[0] || null;
             }, []);
 
+            const openAddFixtureModal = useCallback(({ openAfterCreate = false } = {}) => {
+                const draft = defaultFixtureDraft(seasonCategories);
+                if (launchMode === 'matchday') {
+                    draft.date = new Date().toISOString().split('T')[0];
+                }
+                setNewFixture(draft);
+                setMatchdayOpenAfterAdd(!!openAfterCreate);
+                setIsAddOpen(true);
+            }, [launchMode, seasonCategories]);
+
             useEffect(() => {
                 matchdayAutoOpenDoneRef.current = false;
+                matchdayQuickCreatePromptedRef.current = false;
+                setMatchdayOpenAfterAdd(false);
             }, [launchMode]);
 
             useEffect(() => {
@@ -3102,13 +3128,27 @@
                     matchdayAutoOpenDoneRef.current = true;
                     return;
                 }
-                if (!fixtures.length) return;
+                if (!fixtures.length) {
+                    if (!matchdayQuickCreatePromptedRef.current) {
+                        matchdayQuickCreatePromptedRef.current = true;
+                        matchdayAutoOpenDoneRef.current = true;
+                        pushFixtureToast('No upcoming game yet. Create one to open Match Day planner.', 'info');
+                        openAddFixtureModal({ openAfterCreate: true });
+                    }
+                    return;
+                }
                 const target = pickMatchdayFixture(fixtures);
                 matchdayAutoOpenDoneRef.current = true;
                 if (target) {
                     openMatchMode(target);
+                    return;
                 }
-            }, [launchMode, fixtures, selectedFixture?.id, pickMatchdayFixture]);
+                if (!matchdayQuickCreatePromptedRef.current) {
+                    matchdayQuickCreatePromptedRef.current = true;
+                    pushFixtureToast('Create an upcoming game to start Match Day.', 'info');
+                    openAddFixtureModal({ openAfterCreate: true });
+                }
+            }, [launchMode, fixtures, selectedFixture?.id, pickMatchdayFixture, openAddFixtureModal, pushFixtureToast]);
 
             const formatNetValue = (val = 0) => {
                 if (val > 0) return `+${formatCurrency(Math.abs(val))}`;
@@ -4161,14 +4201,21 @@
             const handleAdd = async (e) => {
                 e.preventDefault();
                 const forfeitResult = normalizeForfeitResult(newFixture.forfeitResult);
-                await db.fixtures.add({
+                const fixturePayload = {
                     ...newFixture,
                     forfeitResult,
                     status: forfeitResult !== FORFEIT_RESULT.NONE ? 'PLAYED' : 'SCHEDULED'
-                });
-                setNewFixture({ opponent: '', date: new Date().toISOString().split('T')[0], venue: '', time: 'TBC', feeAmount: 20, competitionType: 'LEAGUE', seasonTag: seasonCategories?.[0] || '2025/2026 Season', manOfTheMatch: '', forfeitResult: FORFEIT_RESULT.NONE });
+                };
+                const createdFixtureId = await db.fixtures.add(fixturePayload);
+                const shouldOpenMatchdayAfterCreate = launchMode === 'matchday' || matchdayOpenAfterAdd;
+                setNewFixture(defaultFixtureDraft(seasonCategories));
+                setMatchdayOpenAfterAdd(false);
                 setIsAddOpen(false);
-                refresh();
+                await refresh();
+                if (shouldOpenMatchdayAfterCreate) {
+                    await openMatchMode({ ...fixturePayload, id: createdFixtureId });
+                    pushFixtureToast('Upcoming game created. Match Day planner is ready.', 'success');
+                }
             };
             
             // --- MAGIC PASTE LOGIC (ADVANCED) ---
@@ -4673,9 +4720,9 @@
                         subtitle={launchMode === 'matchday' ? 'Quick access to today and upcoming fixtures.' : 'Season schedule and result history.'}
                         actions={
                             <>
-                                <button onClick={() => setIsAddOpen(true)} className="min-h-[44px] px-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/20 flex items-center gap-1.5 hover:bg-slate-800 transition-colors text-xs font-bold">
+                                <button onClick={() => openAddFixtureModal({ openAfterCreate: launchMode === 'matchday' })} className="min-h-[44px] px-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/20 flex items-center gap-1.5 hover:bg-slate-800 transition-colors text-xs font-bold">
                                     <Icon name="Plus" size={16} />
-                                    New Game
+                                    {launchMode === 'matchday' ? 'Setup Upcoming' : 'New Game'}
                                 </button>
                                 <button onClick={() => setIsLegacyResultsOpen(true)} className="min-h-[44px] px-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/20 flex items-center gap-1.5 hover:bg-slate-800 transition-colors text-xs font-bold">
                                     <Icon name="History" size={16} />
@@ -4747,7 +4794,17 @@
 
                     <div className="space-y-4">
                         {fixturesBySeason.order.length === 0 && (
-                            <div className="text-sm text-slate-400 text-center">No games scheduled yet.</div>
+                            launchMode === 'matchday' ? (
+                                <div className="bg-white border border-slate-100 rounded-2xl p-5 shadow-soft text-center space-y-3">
+                                    <div className="text-sm text-slate-500">No upcoming game yet.</div>
+                                    <button onClick={() => openAddFixtureModal({ openAfterCreate: true })} className="min-h-[44px] px-4 bg-slate-900 text-white rounded-xl font-bold text-sm inline-flex items-center gap-2">
+                                        <Icon name="Plus" size={16} />
+                                        Create Upcoming Game
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="text-sm text-slate-400 text-center">No games scheduled yet.</div>
+                            )
                         )}
                         {fixturesBySeason.order.map(season => {
                             const isOpen = openSeasonTags.includes(season);
@@ -5777,7 +5834,7 @@
                         </div>
                     </Modal>
 
-                    <Modal isOpen={!!costDeleteTarget} onClose={() => setCostDeleteTarget(null)} title="Delete Cost Entry">
+                    <Modal isOpen={!!costDeleteTarget} onClose={() => setCostDeleteTarget(null)} title="Delete Cost Entry" placement="center">
                         <div className="space-y-4">
                             <div className="text-sm text-slate-600">
                                 Delete <span className="font-bold text-slate-900">{costDeleteTarget?.description || 'this entry'}</span>? This cannot be undone.
@@ -6042,7 +6099,7 @@
                     )}
                 </Modal>
 
-                <Modal isOpen={fixtureConfirm.open} onClose={() => closeFixtureConfirmation(false)} title={fixtureConfirm.title}>
+                <Modal isOpen={fixtureConfirm.open} onClose={() => closeFixtureConfirmation(false)} title={fixtureConfirm.title} placement="center">
                     <div className="space-y-4">
                         <div className="text-sm text-slate-600">{fixtureConfirm.message}</div>
                         <div className="flex gap-2">
@@ -7504,7 +7561,7 @@
                         </>
                     )}
 
-                    <Modal isOpen={!!pendingPayment} onClose={closePaymentModal} title="Confirm Received Payment">
+                    <Modal isOpen={!!pendingPayment} onClose={closePaymentModal} title="Confirm Received Payment" placement="center">
                         {pendingPayment && (
                             <div className="space-y-4">
                                 <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
@@ -13001,7 +13058,7 @@
                         </div>
                     )}
 
-                    <Modal isOpen={confirmDialog.open} onClose={() => closeSettingsConfirmation(false)} title={confirmDialog.title}>
+                    <Modal isOpen={confirmDialog.open} onClose={() => closeSettingsConfirmation(false)} title={confirmDialog.title} placement="center">
                         <div className="space-y-4">
                             <div className="text-sm text-slate-600">{confirmDialog.description}</div>
                             <div className="flex gap-2">
@@ -13013,7 +13070,7 @@
                         </div>
                     </Modal>
 
-                    <Modal isOpen={textPrompt.open} onClose={() => closeSettingsPrompt(false)} title={textPrompt.title}>
+                    <Modal isOpen={textPrompt.open} onClose={() => closeSettingsPrompt(false)} title={textPrompt.title} placement="center">
                         <div className="space-y-4">
                             <div className="text-sm text-slate-600">{textPrompt.description}</div>
                             <input
@@ -13032,7 +13089,7 @@
                         </div>
                     </Modal>
 
-                    <Modal isOpen={typedConfirm.open} onClose={() => closeTypedConfirmation(false)} title={typedConfirm.title}>
+                    <Modal isOpen={typedConfirm.open} onClose={() => closeTypedConfirmation(false)} title={typedConfirm.title} placement="center">
                         <div className="space-y-4">
                             <div className="text-sm text-slate-600">{typedConfirm.description}</div>
                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
