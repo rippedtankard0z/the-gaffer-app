@@ -4,13 +4,14 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-28';
+        const MASTER_BUILD_VERSION = '2026.03.07-29';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
         const APP_VERSION = window.GAFFER_BUILD_VERSION;
         const READ_ONLY = !!window.GAFFER_READ_ONLY;
         const VERSION_STORAGE_KEY = 'gaffer:lastBuildVersion';
+        const LAST_BACKUP_AT_KEY = 'gaffer:lastBackupAt';
         console.info('[Gaffer] Loaded build version:', APP_VERSION);
 
         // --- 1. Database & Domain Models (Firestore) ---
@@ -7597,7 +7598,7 @@
 
         // --- SHELL ---
         const Nav = ({ activeTab, setTab }) => {
-            const isMoreSection = ['more', 'players', 'kit', 'opponents', 'venues', 'settings', 'finances', 'appdb', 'motmboard'].includes(activeTab);
+            const isMoreSection = ['more', 'players', 'kit', 'opponents', 'venues', 'settings', 'finances', 'appdb', 'motmboard', 'reports', 'opponentintel', 'sponsors', 'auditcontrols'].includes(activeTab);
             const items = [
                 { id: 'dashboard', icon: 'LayoutGrid', label: 'Home' },
                 { id: 'fixtures', icon: 'Calendar', label: 'Games' },
@@ -7624,9 +7625,165 @@
             );
         };
 
-        const MoreHub = ({ onNavigate = () => {}, authStatus = null, buildInfo = null, onAuthAction = () => {} }) => {
+        const MoreHub = ({ onNavigate = () => {} }) => {
+            const actions = [
+                {
+                    id: 'appdb',
+                    label: 'App & Database',
+                    sub: 'Build and database login controls',
+                    icon: 'Shield',
+                    tab: 'appdb'
+                },
+                {
+                    id: 'motmboard',
+                    label: 'Man of the Match Board',
+                    sub: 'All MOTM awards from recorded games',
+                    icon: 'Trophy',
+                    tab: 'motmboard'
+                },
+                {
+                    id: 'reports',
+                    label: 'Reports',
+                    sub: 'P&L, cashflow, fixture profitability, exports',
+                    icon: 'Wallet',
+                    tab: 'reports'
+                },
+                {
+                    id: 'opponentintel',
+                    label: 'Opponent Intel',
+                    sub: 'H2H trends, danger players, win snapshot',
+                    icon: 'Shield',
+                    tab: 'opponentintel'
+                },
+                {
+                    id: 'sponsors',
+                    label: 'Sponsors & Revenue',
+                    sub: 'Deals, schedules, invoices, ROI',
+                    icon: 'Banknote',
+                    tab: 'sponsors'
+                },
+                {
+                    id: 'auditcontrols',
+                    label: 'Audit & Controls',
+                    sub: 'Change log, reconciliation, backup integrity',
+                    icon: 'Settings',
+                    tab: 'auditcontrols'
+                },
+                {
+                    id: 'squad',
+                    label: 'Squad',
+                    sub: 'Players, balances, attendance',
+                    icon: 'Users',
+                    tab: 'players'
+                },
+                {
+                    id: 'kit',
+                    label: 'Kit',
+                    sub: 'Assignments, queue, sizes, numbers',
+                    icon: 'Package',
+                    tab: 'kit'
+                },
+                {
+                    id: 'bank',
+                    label: 'Bank',
+                    sub: 'Ledger, receivables, payables, export',
+                    icon: 'Wallet',
+                    tab: 'finances'
+                },
+                {
+                    id: 'opponents',
+                    label: 'Opponents',
+                    sub: 'League table, clubs, and H2H',
+                    icon: 'Shield',
+                    tab: 'opponents'
+                },
+                {
+                    id: 'venues',
+                    label: 'Venues',
+                    sub: 'Grounds, maps, venue records',
+                    icon: 'MapPin',
+                    tab: 'venues'
+                },
+                {
+                    id: 'settings',
+                    label: 'Settings',
+                    sub: 'Backups, imports, repair tools, app controls',
+                    icon: 'Settings',
+                    tab: 'settings'
+                }
+            ];
+            return (
+                <div className="space-y-5 pb-20 animate-fade-in">
+                    <PageHeader title="More" subtitle="Everything else in one place." />
+                    <div className="space-y-3">
+                        {actions.map(action => (
+                            <button
+                                key={action.id}
+                                onClick={() => onNavigate(action.tab)}
+                                className="w-full min-h-[74px] flex items-center justify-between bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft hover:border-brand-200"
+                            >
+                                <div className="flex items-center gap-3 text-left">
+                                    <div className="h-11 w-11 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center">
+                                        <Icon name={action.icon} size={18} />
+                                    </div>
+                                    <div>
+                                        <div className="text-base font-display font-bold text-slate-900">{action.label}</div>
+                                        <div className="text-[12px] text-slate-500">{action.sub}</div>
+                                    </div>
+                                </div>
+                                <Icon name="ChevronRight" size={18} className="text-slate-400" />
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const AppDatabaseHub = ({ onNavigate = () => {}, authStatus = null, buildInfo = null, onAuthAction = () => {} }) => {
+            const authTone = authStatus?.tone || 'text-slate-500';
+            const authActionLabel = authStatus?.actionLabel || 'Toggle database login';
+            return (
+                <div className="space-y-5 pb-20 animate-fade-in">
+                    <PageHeader
+                        title="App & Database"
+                        subtitle="Build details and database access controls."
+                        actions={(
+                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                                Back to More
+                            </button>
+                        )}
+                    />
+                    <div className="bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Status</div>
+                                <div className="text-[12px] text-slate-500 mt-1">Current app build and sign-in state</div>
+                            </div>
+                            <div className="h-10 w-10 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center">
+                                <Icon name="Shield" size={17} />
+                            </div>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                            <div className="text-[11px] font-bold text-slate-700">{buildInfo?.label || 'Build'}</div>
+                            {buildInfo?.version && <div className="text-[11px] text-slate-500">{buildInfo.version}</div>}
+                            {authStatus?.label && <div className={`text-[11px] font-semibold mt-1 ${authTone}`}>{authStatus.label}</div>}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={onAuthAction}
+                            className="w-full min-h-[44px] rounded-xl border border-slate-200 bg-white text-slate-800 text-sm font-bold"
+                        >
+                            {authActionLabel}
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const MotmBoardHub = ({ onNavigate = () => {} }) => {
             const [motmBoard, setMotmBoard] = useState([]);
             const [motmLoading, setMotmLoading] = useState(true);
+
             useEffect(() => {
                 let cancelled = false;
                 const loadMotmBoard = async () => {
@@ -7682,96 +7839,48 @@
                     window.removeEventListener('gaffer-firestore-update', refreshHandler);
                 };
             }, []);
-            const actions = [
-                {
-                    id: 'squad',
-                    label: 'Squad',
-                    sub: 'Players, balances, attendance',
-                    icon: 'Users',
-                    tab: 'players'
-                },
-                {
-                    id: 'kit',
-                    label: 'Kit',
-                    sub: 'Assignments, queue, sizes, numbers',
-                    icon: 'Package',
-                    tab: 'kit'
-                },
-                {
-                    id: 'bank',
-                    label: 'Bank',
-                    sub: 'Ledger, receivables, payables, export',
-                    icon: 'Wallet',
-                    tab: 'finances'
-                },
-                {
-                    id: 'opponents',
-                    label: 'Opponents',
-                    sub: 'League table, clubs, and H2H',
-                    icon: 'Shield',
-                    tab: 'opponents'
-                },
-                {
-                    id: 'venues',
-                    label: 'Venues',
-                    sub: 'Grounds, maps, venue records',
-                    icon: 'MapPin',
-                    tab: 'venues'
-                },
-                {
-                    id: 'settings',
-                    label: 'Settings',
-                    sub: 'Backups, imports, repair tools, app controls',
-                    icon: 'Settings',
-                    tab: 'settings'
-                }
-            ];
-            const authTone = authStatus?.tone || 'text-slate-500';
-            const authActionLabel = authStatus?.actionLabel || 'Toggle database login';
+
+            const openFixture = (item) => {
+                if (!item?.id || !onNavigate) return;
+                localStorage.setItem('gaffer:focusFixtureId', String(item.id));
+                if (item.opponent) localStorage.setItem('gaffer:focusFixtureOpponent', item.opponent);
+                onNavigate('fixtures');
+            };
+
             return (
                 <div className="space-y-5 pb-20 animate-fade-in">
-                    <PageHeader title="More" subtitle="Everything else in one place." />
-                    <div className="bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                            <div>
-                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">App & Database</div>
-                                <div className="text-[12px] text-slate-500 mt-1">Build and login controls</div>
-                            </div>
-                            <div className="h-10 w-10 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center">
-                                <Icon name="Shield" size={17} />
-                            </div>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                            <div className="text-[11px] font-bold text-slate-700">{buildInfo?.label || 'Build'}</div>
-                            {buildInfo?.version && <div className="text-[11px] text-slate-500">{buildInfo.version}</div>}
-                            {authStatus?.label && <div className={`text-[11px] font-semibold mt-1 ${authTone}`}>{authStatus.label}</div>}
-                        </div>
-                        <button
-                            type="button"
-                            onClick={onAuthAction}
-                            className="w-full min-h-[44px] rounded-xl border border-slate-200 bg-white text-slate-800 text-sm font-bold"
-                        >
-                            {authActionLabel}
-                        </button>
-                    </div>
+                    <PageHeader
+                        title="Man of the Match Board"
+                        subtitle="Every recorded MOTM award."
+                        actions={(
+                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                                Back to More
+                            </button>
+                        )}
+                    />
                     <div className="bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft space-y-3">
                         <div className="flex items-center justify-between">
-                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Man of the Match Board</div>
-                            {!motmLoading && <span className="text-[10px] font-semibold text-slate-400">{motmBoard.length} awards logged</span>}
+                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Awards</div>
+                            {!motmLoading && <span className="text-[10px] font-semibold text-slate-400">{motmBoard.length} logged</span>}
                         </div>
                         {motmLoading ? (
                             <div className="text-sm text-slate-400">Loading awards...</div>
                         ) : motmBoard.length ? (
                             <div className="space-y-2">
-                                {motmBoard.slice(0, 8).map(item => {
+                                {motmBoard.map(item => {
                                     const dateLabel = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC';
                                     const hasScore = typeof item.homeScore === 'number' && typeof item.awayScore === 'number';
                                     const scoreLabel = hasScore ? ` · Exiles ${item.homeScore}-${item.awayScore}` : '';
                                     return (
-                                        <div key={`more-motm-board-${item.id}`} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                        <button
+                                            type="button"
+                                            key={`motm-board-${item.id}`}
+                                            onClick={() => openFixture(item)}
+                                            className="w-full p-3 rounded-xl border border-slate-100 bg-slate-50 text-left hover:border-brand-200"
+                                        >
                                             <div className="text-sm font-bold text-slate-900">{item.label}</div>
                                             <div className="text-[11px] text-slate-500">{dateLabel} · vs {item.opponent}{scoreLabel}</div>
-                                        </div>
+                                        </button>
                                     );
                                 })}
                             </div>
@@ -7779,26 +7888,1106 @@
                             <div className="text-sm text-slate-400">No awards recorded yet. Save a score in Games to start tracking.</div>
                         )}
                     </div>
-                    <div className="space-y-3">
-                        {actions.map(action => (
-                            <button
-                                key={action.id}
-                                onClick={() => onNavigate(action.tab)}
-                                className="w-full min-h-[74px] flex items-center justify-between bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft hover:border-brand-200"
-                            >
-                                <div className="flex items-center gap-3 text-left">
-                                    <div className="h-11 w-11 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center">
-                                        <Icon name={action.icon} size={18} />
-                                    </div>
-                                    <div>
-                                        <div className="text-base font-display font-bold text-slate-900">{action.label}</div>
-                                        <div className="text-[12px] text-slate-500">{action.sub}</div>
-                                    </div>
-                                </div>
-                                <Icon name="ChevronRight" size={18} className="text-slate-400" />
+                </div>
+            );
+        };
+
+        const ReportsHub = ({ onNavigate = () => {} }) => {
+            const [isLoading, setIsLoading] = useState(true);
+            const [monthlyRows, setMonthlyRows] = useState([]);
+            const [fixtureRows, setFixtureRows] = useState([]);
+            const [collectionSummary, setCollectionSummary] = useState({ billed: 0, collected: 0, writtenOff: 0, outstanding: 0, rate: 0 });
+            const [cashSummary, setCashSummary] = useState({ income: 0, expense: 0, net: 0, avgNet: 0 });
+
+            const loadReports = useCallback(async () => {
+                setIsLoading(true);
+                try {
+                    await waitForDb();
+                    const [txs, fixtures] = await Promise.all([
+                        db.transactions.toArray(),
+                        db.fixtures.toArray()
+                    ]);
+
+                    const byMonth = {};
+                    const sortedTxs = [...txs].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+                    let running = 0;
+                    sortedTxs.forEach((tx) => {
+                        const amount = Number(tx.amount || 0);
+                        const date = new Date(tx.date || 0);
+                        if (Number.isNaN(date.getTime())) return;
+                        const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                        if (!byMonth[key]) {
+                            byMonth[key] = {
+                                key,
+                                label: date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }),
+                                income: 0,
+                                expense: 0,
+                                net: 0,
+                                closing: 0
+                            };
+                        }
+                        if (amount >= 0) byMonth[key].income += amount;
+                        else byMonth[key].expense += amount;
+                        byMonth[key].net += amount;
+                        running += amount;
+                        byMonth[key].closing = running;
+                    });
+                    const monthly = Object.values(byMonth).sort((a, b) => b.key.localeCompare(a.key));
+
+                    const txByFixture = {};
+                    txs.forEach((tx) => {
+                        if (tx.fixtureId === undefined || tx.fixtureId === null) return;
+                        const key = String(tx.fixtureId);
+                        if (!txByFixture[key]) txByFixture[key] = [];
+                        txByFixture[key].push(tx);
+                    });
+                    const fixturesWithDates = fixtures.map((fixture) => ({
+                        ...fixture,
+                        parsedDate: Number.isNaN(new Date(fixture.date || '').getTime()) ? 0 : new Date(fixture.date || '').getTime()
+                    }));
+                    const fixtureProfitability = fixturesWithDates
+                        .map((fixture) => {
+                            const txList = txByFixture[String(fixture.id)] || [];
+                            const income = txList.filter(tx => Number(tx.amount || 0) > 0).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+                            const expense = txList.filter(tx => Number(tx.amount || 0) < 0).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+                            const net = income + expense;
+                            const outcome = getFixtureOutcome(fixture);
+                            const resultLabel = outcome.played ? outcome.result : 'UPCOMING';
+                            return {
+                                id: fixture.id,
+                                opponent: fixture.opponent || 'Opponent',
+                                date: fixture.date,
+                                parsedDate: fixture.parsedDate,
+                                income,
+                                expense,
+                                net,
+                                resultLabel
+                            };
+                        })
+                        .sort((a, b) => b.parsedDate - a.parsedDate);
+
+                    const billed = txs
+                        .filter(tx => Number(tx.amount || 0) < 0 && isPlayerFeeCategory(tx.category))
+                        .reduce((sum, tx) => sum + Math.abs(Number(tx.amount || 0)), 0);
+                    const collected = txs
+                        .filter(tx => Number(tx.amount || 0) > 0 && isPlayerFeeCategory(tx.category) && !tx.isWriteOff)
+                        .reduce((sum, tx) => sum + Math.abs(Number(tx.amount || 0)), 0);
+                    const writtenOff = txs
+                        .filter(tx => Number(tx.amount || 0) > 0 && isPlayerFeeCategory(tx.category) && !!tx.isWriteOff)
+                        .reduce((sum, tx) => sum + Math.abs(Number(tx.amount || 0)), 0);
+                    const covered = collected + writtenOff;
+                    const outstanding = Math.max(0, billed - covered);
+                    const rate = billed > 0 ? (covered / billed) * 100 : 100;
+
+                    const totalIncome = txs.filter(tx => Number(tx.amount || 0) > 0).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+                    const totalExpense = txs.filter(tx => Number(tx.amount || 0) < 0).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+                    const totalNet = totalIncome + totalExpense;
+                    const avgNet = monthly.length ? (monthly.reduce((sum, row) => sum + Number(row.net || 0), 0) / monthly.length) : 0;
+
+                    setMonthlyRows(monthly);
+                    setFixtureRows(fixtureProfitability);
+                    setCollectionSummary({ billed, collected, writtenOff, outstanding, rate });
+                    setCashSummary({ income: totalIncome, expense: totalExpense, net: totalNet, avgNet });
+                } finally {
+                    setIsLoading(false);
+                }
+            }, []);
+
+            useEffect(() => {
+                loadReports();
+                const handler = (event) => {
+                    if (!event?.detail?.name) return;
+                    if (['transactions', 'fixtures', 'participations', 'players'].includes(event.detail.name)) {
+                        loadReports();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, [loadReports]);
+
+            const escapeCsv = (value) => {
+                if (value === undefined || value === null) return '';
+                const str = String(value).replace(/"/g, '""');
+                return /[",\n]/.test(str) ? `"${str}"` : str;
+            };
+
+            const exportReportsCsv = () => {
+                const lines = [];
+                lines.push(['Monthly P&L'].map(escapeCsv).join(','));
+                lines.push(['Month', 'Income', 'Expense', 'Net', 'Closing balance'].map(escapeCsv).join(','));
+                monthlyRows.forEach((row) => {
+                    lines.push([
+                        row.label,
+                        Number(row.income || 0).toFixed(2),
+                        Number(row.expense || 0).toFixed(2),
+                        Number(row.net || 0).toFixed(2),
+                        Number(row.closing || 0).toFixed(2)
+                    ].map(escapeCsv).join(','));
+                });
+                lines.push('');
+                lines.push(['Fixture Profitability'].map(escapeCsv).join(','));
+                lines.push(['Date', 'Opponent', 'Result', 'Income', 'Expense', 'Net'].map(escapeCsv).join(','));
+                fixtureRows.forEach((row) => {
+                    lines.push([
+                        row.date ? new Date(row.date).toISOString().split('T')[0] : '',
+                        row.opponent,
+                        row.resultLabel,
+                        Number(row.income || 0).toFixed(2),
+                        Number(row.expense || 0).toFixed(2),
+                        Number(row.net || 0).toFixed(2)
+                    ].map(escapeCsv).join(','));
+                });
+                lines.push('');
+                lines.push(['Player Fee Collection'].map(escapeCsv).join(','));
+                lines.push(['Billed', 'Collected', 'Written off', 'Outstanding', 'Collection rate (%)'].map(escapeCsv).join(','));
+                lines.push([
+                    Number(collectionSummary.billed || 0).toFixed(2),
+                    Number(collectionSummary.collected || 0).toFixed(2),
+                    Number(collectionSummary.writtenOff || 0).toFixed(2),
+                    Number(collectionSummary.outstanding || 0).toFixed(2),
+                    Number(collectionSummary.rate || 0).toFixed(2)
+                ].map(escapeCsv).join(','));
+
+                const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `gaffer-reports-${new Date().toISOString().split('T')[0]}.csv`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            };
+
+            const exportReportsPdf = () => {
+                const monthlyHtml = monthlyRows.slice(0, 12).map((row) => (
+                    `<tr><td>${row.label}</td><td>${formatCurrency(row.income)}</td><td>${formatCurrency(row.expense)}</td><td>${formatCurrency(row.net)}</td><td>${formatCurrency(row.closing)}</td></tr>`
+                )).join('');
+                const fixtureHtml = fixtureRows.slice(0, 20).map((row) => (
+                    `<tr><td>${row.date ? new Date(row.date).toLocaleDateString('en-GB') : '—'}</td><td>${row.opponent}</td><td>${row.resultLabel}</td><td>${formatCurrency(row.income)}</td><td>${formatCurrency(row.expense)}</td><td>${formatCurrency(row.net)}</td></tr>`
+                )).join('');
+                const docHtml = `<!DOCTYPE html>
+                <html><head><meta charset="utf-8"/><title>Reports</title>
+                <style>
+                body{font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:24px;color:#0f172a}
+                h1{font-size:20px;margin:0 0 12px}
+                h2{font-size:14px;margin:16px 0 8px}
+                table{width:100%;border-collapse:collapse;font-size:12px}
+                th,td{border:1px solid #e2e8f0;padding:6px 8px;text-align:left}
+                th{background:#f8fafc;text-transform:uppercase;font-size:10px;letter-spacing:.05em}
+                .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+                .card{border:1px solid #e2e8f0;border-radius:10px;padding:10px}
+                </style></head><body>
+                <h1>British Exiles · Reports Snapshot</h1>
+                <div class="grid">
+                  <div class="card"><strong>Total income</strong><div>${formatCurrency(cashSummary.income)}</div></div>
+                  <div class="card"><strong>Total expense</strong><div>${formatCurrency(cashSummary.expense)}</div></div>
+                  <div class="card"><strong>Net cashflow</strong><div>${formatCurrency(cashSummary.net)}</div></div>
+                  <div class="card"><strong>Collection rate</strong><div>${(collectionSummary.rate || 0).toFixed(1)}%</div></div>
+                </div>
+                <h2>Monthly P&amp;L</h2>
+                <table><thead><tr><th>Month</th><th>Income</th><th>Expense</th><th>Net</th><th>Closing</th></tr></thead><tbody>${monthlyHtml}</tbody></table>
+                <h2>Fixture Profitability</h2>
+                <table><thead><tr><th>Date</th><th>Opponent</th><th>Result</th><th>Income</th><th>Expense</th><th>Net</th></tr></thead><tbody>${fixtureHtml}</tbody></table>
+                </body></html>`;
+                const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+                if (!printWindow) return;
+                printWindow.document.write(docHtml);
+                printWindow.document.close();
+                printWindow.focus();
+                setTimeout(() => printWindow.print(), 250);
+            };
+
+            const averageFixtureNet = fixtureRows.length
+                ? fixtureRows.reduce((sum, row) => sum + Number(row.net || 0), 0) / fixtureRows.length
+                : 0;
+
+            return (
+                <div className="space-y-5 pb-20 animate-fade-in">
+                    <PageHeader
+                        title="Reports"
+                        subtitle="Monthly P&L, cashflow, fixture profitability, and fee collection."
+                        actions={(
+                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                                Back to More
                             </button>
-                        ))}
+                        )}
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-white border border-slate-200 rounded-xl p-3">
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Net cashflow</div>
+                            <div className="text-lg font-display font-bold text-slate-900">{formatCurrency(cashSummary.net)}</div>
+                        </div>
+                        <div className="bg-white border border-slate-200 rounded-xl p-3">
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Collection rate</div>
+                            <div className="text-lg font-display font-bold text-slate-900">{Number(collectionSummary.rate || 0).toFixed(1)}%</div>
+                        </div>
+                        <div className="bg-white border border-slate-200 rounded-xl p-3">
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Avg monthly net</div>
+                            <div className="text-lg font-display font-bold text-slate-900">{formatCurrency(cashSummary.avgNet)}</div>
+                        </div>
+                        <div className="bg-white border border-slate-200 rounded-xl p-3">
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Avg fixture P/L</div>
+                            <div className="text-lg font-display font-bold text-slate-900">{formatCurrency(averageFixtureNet)}</div>
+                        </div>
                     </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button onClick={exportReportsCsv} className="min-h-[44px] rounded-xl bg-slate-900 text-white text-sm font-bold">Export CSV</button>
+                        <button onClick={exportReportsPdf} className="min-h-[44px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">Print / PDF View</button>
+                    </div>
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Player Fee Collection</div>
+                        <div className="grid grid-cols-2 gap-2 text-[12px]">
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Billed: <span className="font-bold text-slate-900">{formatCurrency(collectionSummary.billed)}</span></div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Collected: <span className="font-bold text-emerald-700">{formatCurrency(collectionSummary.collected)}</span></div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Written off: <span className="font-bold text-amber-700">{formatCurrency(collectionSummary.writtenOff)}</span></div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Outstanding: <span className="font-bold text-rose-700">{formatCurrency(collectionSummary.outstanding)}</span></div>
+                        </div>
+                    </div>
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Monthly P&L</div>
+                        {isLoading ? (
+                            <div className="text-sm text-slate-400">Loading reports...</div>
+                        ) : monthlyRows.length ? (
+                            <div className="space-y-2">
+                                {monthlyRows.slice(0, 12).map((row) => (
+                                    <div key={`report-month-${row.key}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-sm font-bold text-slate-900">{row.label}</div>
+                                            <div className={`text-sm font-bold ${row.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatCurrency(row.net)}</div>
+                                        </div>
+                                        <div className="mt-1 text-[11px] text-slate-500">
+                                            Income {formatCurrency(row.income)} · Expense {formatCurrency(row.expense)} · Closing {formatCurrency(row.closing)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-sm text-slate-400">No ledger rows yet.</div>
+                        )}
+                    </div>
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Fixture Profitability</div>
+                        {isLoading ? (
+                            <div className="text-sm text-slate-400">Loading fixtures...</div>
+                        ) : fixtureRows.length ? (
+                            <div className="space-y-2">
+                                {fixtureRows.slice(0, 15).map((row) => (
+                                    <div key={`report-fixture-${row.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-sm font-bold text-slate-900">vs {row.opponent}</div>
+                                            <div className={`text-sm font-bold ${row.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatCurrency(row.net)}</div>
+                                        </div>
+                                        <div className="mt-1 text-[11px] text-slate-500">
+                                            {row.date ? new Date(row.date).toLocaleDateString('en-GB') : 'Date TBC'} · {row.resultLabel} · Income {formatCurrency(row.income)} · Expense {formatCurrency(row.expense)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-sm text-slate-400">No fixture data yet.</div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const OpponentIntelHub = ({ onNavigate = () => {} }) => {
+            const [isLoading, setIsLoading] = useState(true);
+            const [fixtures, setFixtures] = useState([]);
+            const [players, setPlayers] = useState([]);
+            const [savedOpponents, setSavedOpponents] = useState([]);
+            const [selectedOpponent, setSelectedOpponent] = useState('');
+
+            const loadIntel = useCallback(async () => {
+                setIsLoading(true);
+                try {
+                    await waitForDb();
+                    const [fixtureRows, playerRows, opponentRows] = await Promise.all([
+                        db.fixtures.toArray(),
+                        db.players.toArray(),
+                        db.opponents.toArray()
+                    ]);
+                    setFixtures(fixtureRows);
+                    setPlayers(playerRows);
+                    setSavedOpponents(opponentRows);
+                } finally {
+                    setIsLoading(false);
+                }
+            }, []);
+
+            useEffect(() => {
+                loadIntel();
+                const handler = (event) => {
+                    if (!event?.detail?.name) return;
+                    if (['fixtures', 'players', 'opponents'].includes(event.detail.name)) {
+                        loadIntel();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, [loadIntel]);
+
+            const playerLookup = useMemo(() => {
+                const map = {};
+                players.forEach((player) => {
+                    map[String(player.id)] = `${player.firstName || ''} ${player.lastName || ''}`.trim();
+                });
+                return map;
+            }, [players]);
+
+            const opponentOptions = useMemo(() => {
+                const set = new Set();
+                fixtures.forEach((fixture) => {
+                    const name = (fixture.opponent || '').trim();
+                    if (name) set.add(name);
+                });
+                savedOpponents.forEach((row) => {
+                    const name = (row.name || '').trim();
+                    if (name) set.add(name);
+                });
+                return Array.from(set).sort((a, b) => a.localeCompare(b));
+            }, [fixtures, savedOpponents]);
+
+            useEffect(() => {
+                if (!opponentOptions.length) {
+                    if (selectedOpponent) setSelectedOpponent('');
+                    return;
+                }
+                if (!selectedOpponent || !opponentOptions.includes(selectedOpponent)) {
+                    setSelectedOpponent(opponentOptions[0]);
+                }
+            }, [opponentOptions, selectedOpponent]);
+
+            const h2hFixtures = useMemo(() => {
+                const target = (selectedOpponent || '').trim().toLowerCase();
+                if (!target) return [];
+                return [...fixtures]
+                    .filter(fixture => (fixture.opponent || '').trim().toLowerCase() === target)
+                    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+            }, [fixtures, selectedOpponent]);
+
+            const playedFixtures = useMemo(() => {
+                return h2hFixtures.filter(fixture => getFixtureOutcome(fixture).played);
+            }, [h2hFixtures]);
+
+            const summary = useMemo(() => {
+                const base = { played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0 };
+                playedFixtures.forEach((fixture) => {
+                    const outcome = getFixtureOutcome(fixture);
+                    base.played += 1;
+                    if (outcome.result === 'W') base.wins += 1;
+                    else if (outcome.result === 'D') base.draws += 1;
+                    else if (outcome.result === 'L') base.losses += 1;
+                    if (typeof fixture.homeScore === 'number' && typeof fixture.awayScore === 'number') {
+                        base.goalsFor += Number(fixture.homeScore || 0);
+                        base.goalsAgainst += Number(fixture.awayScore || 0);
+                    }
+                });
+                return base;
+            }, [playedFixtures]);
+
+            const recentForm = useMemo(() => {
+                return playedFixtures.slice(0, 5).map((fixture) => {
+                    const outcome = getFixtureOutcome(fixture);
+                    return {
+                        id: fixture.id,
+                        result: outcome.result || 'D',
+                        date: fixture.date,
+                        score: outcome.isForfeit
+                            ? (outcome.result === 'W' ? 'Forfeit Win' : 'Forfeit Loss')
+                            : `${fixture.homeScore ?? '-'}-${fixture.awayScore ?? '-'}`
+                    };
+                });
+            }, [playedFixtures]);
+
+            const dangerPlayers = useMemo(() => {
+                const tally = {};
+                playedFixtures.forEach((fixture) => {
+                    (fixture.scorers || []).forEach((scorer) => {
+                        if (!scorer || String(scorer).toUpperCase() === 'OG') return;
+                        const key = String(scorer);
+                        tally[key] = (tally[key] || 0) + 1;
+                    });
+                });
+                return Object.entries(tally)
+                    .map(([id, goals]) => ({ id, goals, label: playerLookup[id] || id }))
+                    .sort((a, b) => b.goals - a.goals || a.label.localeCompare(b.label))
+                    .slice(0, 4);
+            }, [playedFixtures, playerLookup]);
+
+            const nextMeeting = useMemo(() => {
+                const target = (selectedOpponent || '').trim().toLowerCase();
+                if (!target) return null;
+                const upcoming = fixtures
+                    .filter(fixture => (fixture.opponent || '').trim().toLowerCase() === target)
+                    .filter(fixture => !getFixtureOutcome(fixture).played)
+                    .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+                return upcoming[0] || null;
+            }, [fixtures, selectedOpponent]);
+
+            const currentStreak = useMemo(() => {
+                if (!playedFixtures.length) return { label: 'No streak yet', count: 0 };
+                const first = getFixtureOutcome(playedFixtures[0]).result || 'D';
+                let count = 0;
+                for (const fixture of playedFixtures) {
+                    const result = getFixtureOutcome(fixture).result || 'D';
+                    if (result !== first) break;
+                    count += 1;
+                }
+                const label = first === 'W' ? 'Win streak' : first === 'L' ? 'Losing streak' : 'Draw streak';
+                return { label, count };
+            }, [playedFixtures]);
+
+            const winProbability = useMemo(() => {
+                if (!summary.played) return 50;
+                const formPoints = recentForm.reduce((sum, row) => sum + (row.result === 'W' ? 3 : row.result === 'D' ? 1 : 0), 0);
+                const formRatio = recentForm.length ? formPoints / (recentForm.length * 3) : 0.5;
+                const winEdge = (summary.wins - summary.losses) / summary.played;
+                const goalEdge = (summary.goalsFor - summary.goalsAgainst) / Math.max(summary.played, 1);
+                const raw = 50 + (winEdge * 24) + (goalEdge * 4) + ((formRatio - 0.5) * 20);
+                return Math.max(8, Math.min(92, Math.round(raw)));
+            }, [summary, recentForm]);
+
+            const winProbabilityTone = winProbability >= 62 ? 'text-emerald-700' : winProbability <= 38 ? 'text-rose-700' : 'text-slate-700';
+
+            return (
+                <div className="space-y-5 pb-20 animate-fade-in">
+                    <PageHeader
+                        title="Opponent Intel"
+                        subtitle="Head-to-head trends, danger players, and a win snapshot."
+                        actions={(
+                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                                Back to More
+                            </button>
+                        )}
+                    />
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Opponent</label>
+                        <select
+                            className="w-full min-h-[48px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-base"
+                            value={selectedOpponent}
+                            onChange={(e) => setSelectedOpponent(e.target.value)}
+                        >
+                            {opponentOptions.map((name) => (
+                                <option key={`intel-opponent-${name}`} value={name}>{name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    {isLoading ? (
+                        <div className="bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-400">Loading opponent intel...</div>
+                    ) : !selectedOpponent ? (
+                        <div className="bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-400">No opponent data yet.</div>
+                    ) : (
+                        <>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div className="bg-white border border-slate-200 rounded-xl p-3">
+                                    <div className="text-[10px] uppercase font-bold text-slate-500">H2H record</div>
+                                    <div className="text-sm font-bold text-slate-900 mt-1">{summary.wins}W · {summary.draws}D · {summary.losses}L</div>
+                                    <div className="text-[11px] text-slate-500 mt-1">{summary.played} played</div>
+                                </div>
+                                <div className="bg-white border border-slate-200 rounded-xl p-3">
+                                    <div className="text-[10px] uppercase font-bold text-slate-500">Win probability</div>
+                                    <div className={`text-2xl font-display font-bold ${winProbabilityTone}`}>{winProbability}%</div>
+                                    <div className="text-[11px] text-slate-500 mt-1">Snapshot from H2H + recent form</div>
+                                </div>
+                                <div className="bg-white border border-slate-200 rounded-xl p-3">
+                                    <div className="text-[10px] uppercase font-bold text-slate-500">Goals</div>
+                                    <div className="text-sm font-bold text-slate-900 mt-1">{summary.goalsFor} for · {summary.goalsAgainst} against</div>
+                                </div>
+                                <div className="bg-white border border-slate-200 rounded-xl p-3">
+                                    <div className="text-[10px] uppercase font-bold text-slate-500">{currentStreak.label}</div>
+                                    <div className="text-sm font-bold text-slate-900 mt-1">{currentStreak.count} match{currentStreak.count === 1 ? '' : 'es'}</div>
+                                </div>
+                            </div>
+
+                            <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Recent Form (last 5 vs {selectedOpponent})</div>
+                                {recentForm.length ? (
+                                    <div className="flex flex-wrap gap-2">
+                                        {recentForm.map((row) => (
+                                            <div
+                                                key={`intel-form-${row.id}`}
+                                                className={`h-10 min-w-[2.4rem] px-2 rounded-lg flex flex-col items-center justify-center text-xs font-bold ${
+                                                    row.result === 'W'
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : row.result === 'L'
+                                                            ? 'bg-rose-100 text-rose-700'
+                                                            : 'bg-slate-100 text-slate-600'
+                                                }`}
+                                                title={`${row.score} · ${row.date ? new Date(row.date).toLocaleDateString('en-GB') : ''}`}
+                                            >
+                                                <span>{row.result}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-sm text-slate-400">No completed meetings yet.</div>
+                                )}
+                            </div>
+
+                            <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Danger Players (our scorers vs this opponent)</div>
+                                {dangerPlayers.length ? (
+                                    <div className="space-y-2">
+                                        {dangerPlayers.map((row) => (
+                                            <div key={`intel-danger-${row.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex items-center justify-between">
+                                                <div className="text-sm font-bold text-slate-900">{row.label}</div>
+                                                <div className="text-[11px] font-bold text-emerald-700">{row.goals} goal{row.goals === 1 ? '' : 's'}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-sm text-slate-400">No scorer data yet for this matchup.</div>
+                                )}
+                            </div>
+
+                            <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Next Meeting</div>
+                                {nextMeeting ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            localStorage.setItem('gaffer:focusFixtureId', String(nextMeeting.id));
+                                            if (nextMeeting.opponent) localStorage.setItem('gaffer:focusFixtureOpponent', nextMeeting.opponent);
+                                            onNavigate('fixtures');
+                                        }}
+                                        className="w-full text-left rounded-xl border border-slate-200 bg-slate-50 p-3 hover:border-brand-200"
+                                    >
+                                        <div className="text-sm font-bold text-slate-900">vs {nextMeeting.opponent || 'Opponent'}</div>
+                                        <div className="text-[11px] text-slate-500">
+                                            {nextMeeting.date ? new Date(nextMeeting.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC'} · {renderTimeLabel(nextMeeting.time)} · {nextMeeting.venue || 'Venue TBC'}
+                                        </div>
+                                    </button>
+                                ) : (
+                                    <div className="text-sm text-slate-400">No upcoming game found for this opponent.</div>
+                                )}
+                            </div>
+                        </>
+                    )}
+                </div>
+            );
+        };
+
+        const SponsorsRevenueHub = ({ onNavigate = () => {} }) => {
+            const [isLoading, setIsLoading] = useState(true);
+            const [sponsors, setSponsors] = useState([]);
+            const [form, setForm] = useState({
+                name: '',
+                dealValue: '',
+                amountReceived: '',
+                nextInvoiceDate: '',
+                frequency: 'MONTHLY',
+                activationCost: '',
+                status: 'ACTIVE',
+                notes: ''
+            });
+            const [paymentDrafts, setPaymentDrafts] = useState({});
+            const [deleteTarget, setDeleteTarget] = useState(null);
+
+            const loadSponsors = useCallback(async () => {
+                setIsLoading(true);
+                try {
+                    await waitForDb();
+                    const list = db.sponsors ? await db.sponsors.toArray() : [];
+                    const sorted = [...list].sort((a, b) => {
+                        const aDate = new Date(a.nextInvoiceDate || 0).getTime() || 0;
+                        const bDate = new Date(b.nextInvoiceDate || 0).getTime() || 0;
+                        return aDate - bDate;
+                    });
+                    setSponsors(sorted);
+                } finally {
+                    setIsLoading(false);
+                }
+            }, []);
+
+            useEffect(() => {
+                loadSponsors();
+                const handler = (event) => {
+                    if (!event?.detail?.name) return;
+                    if (['sponsors', 'transactions'].includes(event.detail.name)) {
+                        loadSponsors();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, [loadSponsors]);
+
+            const addSponsor = async () => {
+                const name = (form.name || '').trim();
+                if (!name || !db.sponsors) return;
+                const payload = {
+                    name,
+                    dealValue: Math.max(0, Number(form.dealValue || 0)),
+                    amountReceived: Math.max(0, Number(form.amountReceived || 0)),
+                    nextInvoiceDate: form.nextInvoiceDate || '',
+                    frequency: form.frequency || 'MONTHLY',
+                    activationCost: Math.max(0, Number(form.activationCost || 0)),
+                    status: form.status || 'ACTIVE',
+                    notes: (form.notes || '').trim(),
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
+                await db.sponsors.add(payload);
+                setForm({
+                    name: '',
+                    dealValue: '',
+                    amountReceived: '',
+                    nextInvoiceDate: '',
+                    frequency: 'MONTHLY',
+                    activationCost: '',
+                    status: 'ACTIVE',
+                    notes: ''
+                });
+                loadSponsors();
+            };
+
+            const deleteSponsor = async () => {
+                if (!deleteTarget || !db.sponsors) return;
+                await db.sponsors.delete(deleteTarget.id);
+                setDeleteTarget(null);
+                loadSponsors();
+            };
+
+            const recordPayment = async (sponsor) => {
+                const amount = Math.max(0, Number(paymentDrafts[String(sponsor.id)] || 0));
+                if (!amount) return;
+                await waitForDb();
+                if (db.sponsors) {
+                    await db.sponsors.update(sponsor.id, {
+                        amountReceived: Math.max(0, Number(sponsor.amountReceived || 0)) + amount,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+                await db.transactions.add({
+                    date: new Date().toISOString(),
+                    category: 'Sponsor Revenue',
+                    type: 'INCOME',
+                    flow: 'receivable',
+                    description: `Sponsor payment - ${sponsor.name}`,
+                    amount: Math.abs(amount),
+                    payee: sponsor.name,
+                    isReconciled: true
+                });
+                setPaymentDrafts((prev) => ({ ...prev, [String(sponsor.id)]: '' }));
+                loadSponsors();
+            };
+
+            const totals = useMemo(() => {
+                return sponsors.reduce((acc, sponsor) => {
+                    const dealValue = Math.max(0, Number(sponsor.dealValue || 0));
+                    const received = Math.max(0, Number(sponsor.amountReceived || 0));
+                    const outstanding = Math.max(0, dealValue - received);
+                    acc.deal += dealValue;
+                    acc.received += received;
+                    acc.outstanding += outstanding;
+                    return acc;
+                }, { deal: 0, received: 0, outstanding: 0 });
+            }, [sponsors]);
+
+            const overdueCount = useMemo(() => {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                return sponsors.filter((sponsor) => {
+                    const outstanding = Math.max(0, Number(sponsor.dealValue || 0) - Number(sponsor.amountReceived || 0));
+                    if (!outstanding || !sponsor.nextInvoiceDate) return false;
+                    const due = new Date(sponsor.nextInvoiceDate);
+                    if (Number.isNaN(due.getTime())) return false;
+                    due.setHours(0, 0, 0, 0);
+                    return due < today;
+                }).length;
+            }, [sponsors]);
+
+            return (
+                <div className="space-y-5 pb-20 animate-fade-in">
+                    <PageHeader
+                        title="Sponsors & Revenue"
+                        subtitle="Deals, schedules, outstanding invoices, and ROI."
+                        actions={(
+                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                                Back to More
+                            </button>
+                        )}
+                    />
+                    {!db.sponsors && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
+                            Sponsor storage is unavailable on this build. Refresh the app to pull the latest database schema.
+                        </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-white border border-slate-200 rounded-xl p-3">
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Deal value</div>
+                            <div className="text-lg font-display font-bold text-slate-900">{formatCurrency(totals.deal)}</div>
+                        </div>
+                        <div className="bg-white border border-slate-200 rounded-xl p-3">
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Received</div>
+                            <div className="text-lg font-display font-bold text-emerald-700">{formatCurrency(totals.received)}</div>
+                        </div>
+                        <div className="bg-white border border-slate-200 rounded-xl p-3">
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Outstanding</div>
+                            <div className="text-lg font-display font-bold text-rose-700">{formatCurrency(totals.outstanding)}</div>
+                        </div>
+                        <div className="bg-white border border-slate-200 rounded-xl p-3">
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Overdue invoices</div>
+                            <div className="text-lg font-display font-bold text-slate-900">{overdueCount}</div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Add Sponsor Deal</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input className="min-h-[48px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-base" placeholder="Sponsor name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+                            <input className="min-h-[48px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-base" type="number" min="0" step="0.01" placeholder="Deal value" value={form.dealValue} onChange={e => setForm({ ...form, dealValue: e.target.value })} />
+                            <input className="min-h-[48px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-base" type="number" min="0" step="0.01" placeholder="Received so far" value={form.amountReceived} onChange={e => setForm({ ...form, amountReceived: e.target.value })} />
+                            <input className="min-h-[48px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-base" type="date" value={form.nextInvoiceDate} onChange={e => setForm({ ...form, nextInvoiceDate: e.target.value })} />
+                            <select className="min-h-[48px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-base" value={form.frequency} onChange={e => setForm({ ...form, frequency: e.target.value })}>
+                                <option value="MONTHLY">Monthly</option>
+                                <option value="QUARTERLY">Quarterly</option>
+                                <option value="HALF_YEARLY">Half-yearly</option>
+                                <option value="ANNUAL">Annual</option>
+                                <option value="ONE_OFF">One-off</option>
+                            </select>
+                            <input className="min-h-[48px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-base" type="number" min="0" step="0.01" placeholder="Activation cost" value={form.activationCost} onChange={e => setForm({ ...form, activationCost: e.target.value })} />
+                            <select className="min-h-[48px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-base" value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+                                <option value="ACTIVE">Active</option>
+                                <option value="PAUSED">Paused</option>
+                                <option value="COMPLETED">Completed</option>
+                            </select>
+                            <input className="min-h-[48px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-base" placeholder="Notes" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
+                        </div>
+                        <button onClick={addSponsor} disabled={!db.sponsors} className={`w-full min-h-[48px] rounded-xl text-base font-bold ${db.sponsors ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}>
+                            Save Sponsor
+                        </button>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Sponsor Deals</div>
+                        {isLoading ? (
+                            <div className="text-sm text-slate-400">Loading sponsors...</div>
+                        ) : sponsors.length ? (
+                            <div className="space-y-3">
+                                {sponsors.map((sponsor) => {
+                                    const dealValue = Math.max(0, Number(sponsor.dealValue || 0));
+                                    const received = Math.max(0, Number(sponsor.amountReceived || 0));
+                                    const outstanding = Math.max(0, dealValue - received);
+                                    const activationCost = Math.max(0, Number(sponsor.activationCost || 0));
+                                    const roi = activationCost > 0 ? ((received - activationCost) / activationCost) * 100 : null;
+                                    return (
+                                        <div key={`sponsor-${sponsor.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div className="text-sm font-bold text-slate-900">{sponsor.name}</div>
+                                                    <div className="text-[11px] text-slate-500">
+                                                        {sponsor.frequency || 'Schedule n/a'} · Next invoice {sponsor.nextInvoiceDate ? new Date(sponsor.nextInvoiceDate).toLocaleDateString('en-GB') : 'TBC'} · {sponsor.status || 'ACTIVE'}
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => setDeleteTarget(sponsor)} className="text-[11px] font-bold text-rose-700 px-2 py-1 rounded-lg border border-rose-200 bg-rose-50">
+                                                    Delete
+                                                </button>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                                <div className="rounded-lg border border-slate-200 bg-white px-2 py-1">Deal: <span className="font-bold text-slate-900">{formatCurrency(dealValue)}</span></div>
+                                                <div className="rounded-lg border border-slate-200 bg-white px-2 py-1">Received: <span className="font-bold text-emerald-700">{formatCurrency(received)}</span></div>
+                                                <div className="rounded-lg border border-slate-200 bg-white px-2 py-1">Outstanding: <span className="font-bold text-rose-700">{formatCurrency(outstanding)}</span></div>
+                                                <div className="rounded-lg border border-slate-200 bg-white px-2 py-1">ROI: <span className="font-bold text-slate-900">{roi === null ? 'N/A' : `${roi.toFixed(1)}%`}</span></div>
+                                            </div>
+                                            <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    className="min-h-[44px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                                                    placeholder="Payment amount received"
+                                                    value={paymentDrafts[String(sponsor.id)] ?? ''}
+                                                    onChange={e => setPaymentDrafts(prev => ({ ...prev, [String(sponsor.id)]: e.target.value }))}
+                                                />
+                                                <button onClick={() => recordPayment(sponsor)} className="min-h-[44px] rounded-lg bg-emerald-600 text-white text-sm font-bold px-4">
+                                                    Record Payment
+                                                </button>
+                                            </div>
+                                            {sponsor.notes ? <div className="text-[11px] text-slate-500">{sponsor.notes}</div> : null}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="text-sm text-slate-400">No sponsor deals yet.</div>
+                        )}
+                    </div>
+
+                    <Modal isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete sponsor" placement="center">
+                        {deleteTarget && (
+                            <div className="space-y-4">
+                                <div className="text-sm text-slate-600">Delete sponsor deal for <span className="font-bold text-slate-900">{deleteTarget.name}</span>?</div>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setDeleteTarget(null)} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
+                                    <button onClick={deleteSponsor} className="flex-1 bg-rose-600 text-white font-bold py-2 rounded-lg">Delete</button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
+                </div>
+            );
+        };
+
+        const AuditControlsHub = ({ onNavigate = () => {} }) => {
+            const [isLoading, setIsLoading] = useState(true);
+            const [snapshot, setSnapshot] = useState({
+                score: 100,
+                issues: [],
+                checks: [],
+                activity: [],
+                scannedAt: ''
+            });
+
+            const loadAudit = useCallback(async () => {
+                setIsLoading(true);
+                try {
+                    await waitForDb();
+                    const [
+                        players,
+                        fixtures,
+                        transactions,
+                        participations,
+                        opponents,
+                        venues,
+                        referees,
+                        kitDetails,
+                        kitQueue,
+                        settings,
+                        sponsors
+                    ] = await Promise.all([
+                        db.players.toArray(),
+                        db.fixtures.toArray(),
+                        db.transactions.toArray(),
+                        db.participations.toArray(),
+                        db.opponents.toArray(),
+                        db.venues.toArray(),
+                        db.referees.toArray(),
+                        db.kitDetails.toArray(),
+                        db.kitQueue.toArray(),
+                        db.settings.toArray(),
+                        db.sponsors ? db.sponsors.toArray() : []
+                    ]);
+
+                    const playerIds = new Set(players.map(player => String(player.id)));
+                    const fixtureIds = new Set(fixtures.map(fixture => String(fixture.id)));
+
+                    const missingFlow = transactions.filter(tx => !tx.flow).length;
+                    const flowMismatch = transactions.filter((tx) => {
+                        if (!tx.flow) return false;
+                        return inferFlowFromAmount(Number(tx.amount || 0), tx.type || '') !== tx.flow;
+                    }).length;
+                    const orphanParticipations = participations.filter(part => !playerIds.has(String(part.playerId)) || !fixtureIds.has(String(part.fixtureId))).length;
+                    const orphanTransactions = transactions.filter((tx) => {
+                        const badPlayerRef = tx.playerId !== undefined && tx.playerId !== null && !playerIds.has(String(tx.playerId));
+                        const badFixtureRef = tx.fixtureId !== undefined && tx.fixtureId !== null && !fixtureIds.has(String(tx.fixtureId));
+                        return badPlayerRef || badFixtureRef;
+                    }).length;
+                    const unreconciledClubReceivables = transactions.filter(tx => (tx.playerId === undefined || tx.playerId === null) && Number(tx.amount || 0) > 0 && !tx.isReconciled).length;
+                    const unresolvedPlayerFees = transactions.filter(tx => Number(tx.amount || 0) < 0 && isPlayerFeeCategory(tx.category) && !transactionHasCoveringPayment(tx, transactions)).length;
+
+                    const issues = [
+                        { key: 'missingFlow', label: 'Missing flow fields', value: missingFlow },
+                        { key: 'flowMismatch', label: 'Flow/amount mismatches', value: flowMismatch },
+                        { key: 'orphanParticipations', label: 'Orphan participations', value: orphanParticipations },
+                        { key: 'orphanTransactions', label: 'Orphan transactions', value: orphanTransactions },
+                        { key: 'unreconciledClubReceivables', label: 'Unreconciled club receivables', value: unreconciledClubReceivables },
+                        { key: 'unresolvedPlayerFees', label: 'Outstanding player fee charges', value: unresolvedPlayerFees }
+                    ];
+
+                    const penalty = (
+                        (missingFlow * 2) +
+                        (flowMismatch * 3) +
+                        (orphanParticipations * 5) +
+                        (orphanTransactions * 3) +
+                        (unreconciledClubReceivables * 1) +
+                        (unresolvedPlayerFees * 1)
+                    );
+                    const score = Math.max(0, Math.min(100, 100 - penalty));
+
+                    const requiredTables = ['players', 'fixtures', 'transactions', 'participations', 'opponents', 'venues', 'referees', 'kitDetails', 'kitQueue', 'settings', 'sponsors'];
+                    const missingTables = requiredTables.filter(name => !db[name]);
+
+                    let estimatedSize = 0;
+                    let canSerialize = true;
+                    try {
+                        const payload = {
+                            players, fixtures, transactions, participations, opponents, venues, referees, kitDetails, kitQueue, settings, sponsors
+                        };
+                        estimatedSize = new Blob([JSON.stringify(payload)]).size;
+                    } catch (err) {
+                        canSerialize = false;
+                    }
+
+                    let lastBackupAt = '';
+                    try {
+                        lastBackupAt = localStorage.getItem(LAST_BACKUP_AT_KEY) || '';
+                    } catch (err) {
+                        lastBackupAt = '';
+                    }
+                    const backupAgeDays = lastBackupAt
+                        ? Math.floor((Date.now() - new Date(lastBackupAt).getTime()) / (1000 * 60 * 60 * 24))
+                        : null;
+
+                    const checks = [
+                        {
+                            label: 'Required collections available',
+                            status: missingTables.length ? 'warn' : 'pass',
+                            detail: missingTables.length ? `Missing: ${missingTables.join(', ')}` : 'All collections present'
+                        },
+                        {
+                            label: 'Backup payload integrity',
+                            status: canSerialize ? 'pass' : 'warn',
+                            detail: canSerialize ? `Estimated backup size: ${(estimatedSize / 1024).toFixed(1)} KB` : 'Failed to serialize payload'
+                        },
+                        {
+                            label: 'Recent backup',
+                            status: lastBackupAt && backupAgeDays !== null && backupAgeDays <= 14 ? 'pass' : 'warn',
+                            detail: lastBackupAt
+                                ? `Last backup ${new Date(lastBackupAt).toLocaleString()} (${backupAgeDays} day${backupAgeDays === 1 ? '' : 's'} ago)`
+                                : 'No recorded backup timestamp found yet'
+                        },
+                        {
+                            label: 'Reconciliation scan',
+                            status: score >= 85 ? 'pass' : score >= 65 ? 'warn' : 'fail',
+                            detail: `Health score ${score}/100`
+                        }
+                    ];
+
+                    const activity = [
+                        ...transactions
+                            .map(tx => ({
+                                at: tx.date,
+                                actor: 'You',
+                                what: `Ledger: ${tx.description || tx.category || 'Transaction'}`,
+                                type: 'ledger'
+                            })),
+                        ...fixtures
+                            .map(fixture => ({
+                                at: fixture.date,
+                                actor: 'You',
+                                what: `Fixture: vs ${fixture.opponent || 'Opponent'}`,
+                                type: 'fixture'
+                            })),
+                        ...sponsors
+                            .map(sponsor => ({
+                                at: sponsor.updatedAt || sponsor.createdAt || '',
+                                actor: 'You',
+                                what: `Sponsor: ${sponsor.name || 'Sponsor record'}`,
+                                type: 'sponsor'
+                            }))
+                    ]
+                        .filter(row => row.at && !Number.isNaN(new Date(row.at).getTime()))
+                        .sort((a, b) => new Date(b.at) - new Date(a.at))
+                        .slice(0, 20);
+
+                    setSnapshot({
+                        score,
+                        issues,
+                        checks,
+                        activity,
+                        scannedAt: new Date().toISOString()
+                    });
+                } finally {
+                    setIsLoading(false);
+                }
+            }, []);
+
+            useEffect(() => {
+                loadAudit();
+                const handler = (event) => {
+                    if (!event?.detail?.name) return;
+                    if (['players', 'fixtures', 'transactions', 'participations', 'opponents', 'venues', 'referees', 'kitDetails', 'kitQueue', 'settings', 'sponsors'].includes(event.detail.name)) {
+                        loadAudit();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, [loadAudit]);
+
+            const scoreTone = snapshot.score >= 85 ? 'text-emerald-700' : snapshot.score >= 65 ? 'text-amber-700' : 'text-rose-700';
+
+            return (
+                <div className="space-y-5 pb-20 animate-fade-in">
+                    <PageHeader
+                        title="Audit & Controls"
+                        subtitle="Change log, reconciliation health, and backup integrity."
+                        actions={(
+                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                                Back to More
+                            </button>
+                        )}
+                    />
+                    {isLoading ? (
+                        <div className="bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-400">Running audit scan...</div>
+                    ) : (
+                        <>
+                            <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Reconciliation Health Score</div>
+                                <div className={`text-4xl font-display font-bold ${scoreTone}`}>{snapshot.score}</div>
+                                <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                                    <div className={`h-full ${snapshot.score >= 85 ? 'bg-emerald-500' : snapshot.score >= 65 ? 'bg-amber-500' : 'bg-rose-500'}`} style={{ width: `${snapshot.score}%` }} />
+                                </div>
+                                <div className="text-[11px] text-slate-500">Scanned {snapshot.scannedAt ? new Date(snapshot.scannedAt).toLocaleString() : 'just now'}</div>
+                                <button onClick={() => onNavigate('settings')} className="mt-1 min-h-[40px] px-3 rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-700">
+                                    Open Settings Repair Tools
+                                </button>
+                            </div>
+
+                            <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Issue Counts</div>
+                                <div className="space-y-2">
+                                    {snapshot.issues.map((issue) => (
+                                        <div key={`audit-issue-${issue.key}`} className="rounded-lg border border-slate-200 bg-slate-50 p-2 flex items-center justify-between">
+                                            <div className="text-[12px] text-slate-700">{issue.label}</div>
+                                            <div className={`text-[12px] font-bold ${issue.value ? 'text-rose-700' : 'text-emerald-700'}`}>{issue.value}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Backup Integrity Checks</div>
+                                <div className="space-y-2">
+                                    {snapshot.checks.map((check, index) => (
+                                        <div key={`audit-check-${index}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="text-[12px] font-bold text-slate-900">{check.label}</div>
+                                                <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
+                                                    check.status === 'pass'
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                        : check.status === 'fail'
+                                                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                                                }`}>
+                                                    {check.status === 'pass' ? 'PASS' : check.status === 'fail' ? 'FAIL' : 'WARN'}
+                                                </span>
+                                            </div>
+                                            <div className="text-[11px] text-slate-500 mt-1">{check.detail}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Change Log (Who / What / When)</div>
+                                {snapshot.activity.length ? (
+                                    <div className="space-y-2">
+                                        {snapshot.activity.map((entry, idx) => (
+                                            <div key={`audit-activity-${idx}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                                <div className="text-[11px] text-slate-500">Who: <span className="font-semibold text-slate-700">{entry.actor}</span></div>
+                                                <div className="text-[12px] font-bold text-slate-900">What: {entry.what}</div>
+                                                <div className="text-[11px] text-slate-500">When: {new Date(entry.at).toLocaleString()}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-sm text-slate-400">No dated activity available yet.</div>
+                                )}
+                            </div>
+                        </>
+                    )}
                 </div>
             );
         };
@@ -10147,6 +11336,7 @@
             { key: 'referees', type: 'collection', label: 'Referees & contacts', description: 'Officials with saved phone numbers.' },
             { key: 'kitDetails', type: 'collection', label: 'Kit holders', description: 'Current kit assignments and status.' },
             { key: 'kitQueue', type: 'collection', label: 'Kit order queue', description: 'Upcoming kit requests and priorities.' },
+            { key: 'sponsors', type: 'collection', label: 'Sponsors & revenue', description: 'Sponsor deals, payment schedules, and tracked receipts.' },
             { key: 'settings', type: 'collection', label: 'Settings records', description: 'Raw settings documents, including advanced app settings.' },
             { key: 'kitSettings', type: 'setting', label: 'Kit settings', description: 'Number limits and available size options.' },
             { key: 'positionDefinitions', type: 'collection', label: 'Position definitions', description: 'Master list that powers player roles.' },
@@ -10170,6 +11360,7 @@
                 referees: countList(data.referees),
                 kitDetails: countList(data.kitDetails),
                 kitQueue: countList(data.kitQueue),
+                sponsors: countList(data.sponsors),
                 settings: countList(data.settings),
                 kitSettings: (hasKitLimit || hasKitSizes) ? 1 : 0,
                 positionDefinitions: countList(data.positionDefinitions),
@@ -10190,6 +11381,7 @@
             { key: 'referees', label: 'Referees' },
             { key: 'kitDetails', label: 'Kit holders' },
             { key: 'kitQueue', label: 'Kit queue' },
+            { key: 'sponsors', label: 'Sponsors' },
             { key: 'settings', label: 'Settings reset' }
         ];
 
@@ -10203,6 +11395,7 @@
             { key: 'referees', label: 'Referees' },
             { key: 'kitDetails', label: 'Kit holders' },
             { key: 'kitQueue', label: 'Kit queue' },
+            { key: 'sponsors', label: 'Sponsors' },
             { key: 'settings', label: 'Settings & tags' }
         ];
 
@@ -11351,7 +12544,7 @@
             };
 
             const clearAll = async () => {
-                const warning = 'This removes fixtures, players, transactions, participations, opponents, venues, referees, kit holders/queue, and resets categories, positions, kit settings, and referee defaults.';
+                const warning = 'This removes fixtures, players, transactions, participations, opponents, venues, referees, kit holders/queue, sponsor records, and resets categories, positions, kit settings, and referee defaults.';
                 const approved = await requestTypedConfirmation({
                     title: 'Nuke all data & settings',
                     description: `${warning} Type "NUKE ALL" to continue.`,
@@ -11395,6 +12588,7 @@
                     await runStep('referees', async () => { await db.referees.clear(); setReferees([]); });
                     await runStep('kitDetails', async () => db.kitDetails.clear());
                     await runStep('kitQueue', async () => db.kitQueue.clear());
+                    await runStep('sponsors', async () => { if (db.sponsors) await db.sponsors.clear(); });
                     await runStep('settings', async () => {
                         setCategories(DEFAULT_CATEGORIES);
                         persistCategories(DEFAULT_CATEGORIES);
@@ -11730,6 +12924,7 @@
                     case 'referees': data = await db.referees.toArray(); break;
                     case 'kitDetails': data = await db.kitDetails.toArray(); break;
                     case 'kitQueue': data = await db.kitQueue.toArray(); break;
+                    case 'sponsors': data = db.sponsors ? await db.sponsors.toArray() : []; break;
                     case 'itemCategories': data = itemCategories; break;
                     case 'categories': data = categories; break;
                     case 'seasonCategories': data = seasonCategories; break;
@@ -11845,6 +13040,20 @@
                     if(Array.isArray(data) && data.length) await db.kitQueue.bulkPut(data);
                     pushSettingsToast('Kit queue imported.', 'success');
                     return;
+                } else if(key === 'sponsors') {
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import sponsors',
+                        description: 'Replace sponsor records with this file?',
+                        confirmLabel: 'Replace sponsors',
+                        danger: true
+                    });
+                    if(!approved) return;
+                    if (db.sponsors) {
+                        await db.sponsors.clear();
+                        if (Array.isArray(data) && data.length) await db.sponsors.bulkPut(data);
+                    }
+                    pushSettingsToast('Sponsor records imported.', 'success');
+                    return;
                 } else if(key === 'itemCategories') {
                     const approved = await requestSettingsConfirmation({
                         title: 'Import player item categories',
@@ -11911,6 +13120,7 @@
                         await db.referees.clear();
                         await db.kitDetails.clear();
                         await db.kitQueue.clear();
+                        if (db.sponsors) await db.sponsors.clear();
                         await db.settings.clear();
                         const playerCount = await runStep('players', async () => runListWithProgress('Restoring squad', data.players, rec => db.players.add(rec))) || 0;
                         const fixtureCount = await runStep('fixtures', async () => runListWithProgress('Restoring fixtures', data.fixtures, rec => db.fixtures.add(rec))) || 0;
@@ -11921,6 +13131,7 @@
                         await runStep('referees', async () => runListWithProgress('Restoring referees', data.referees, rec => db.referees.add(rec)));
                         await runStep('kitDetails', async () => runListWithProgress('Restoring kit holders', data.kitDetails, rec => db.kitDetails.add(rec)));
                         await runStep('kitQueue', async () => runListWithProgress('Restoring kit queue', data.kitQueue, rec => db.kitQueue.add(rec)));
+                        const sponsorCount = await runStep('sponsors', async () => runListWithProgress('Restoring sponsors', data.sponsors, rec => db.sponsors ? db.sponsors.add(rec) : Promise.resolve())) || 0;
                         setImportAllStatus('Applying saved settings…');
                         if (Array.isArray(data.settings) && data.settings.length) {
                             setImportAllStatus(`Restoring settings records (${data.settings.length})…`);
@@ -11949,7 +13160,8 @@
                             playerCount ? `${playerCount} players` : '',
                             fixtureCount ? `${fixtureCount} games` : '',
                             txCount ? `${txCount} ledger rows` : '',
-                            participationCount ? `${participationCount} participations` : ''
+                            participationCount ? `${participationCount} participations` : '',
+                            sponsorCount ? `${sponsorCount} sponsors` : ''
                         ].filter(Boolean);
                         setImportAllStatus(`Import complete.${summaryParts.length ? ` Imported ${summaryParts.join(', ')}.` : ''}`);
                         setIsImportAllDone(true);
@@ -12001,6 +13213,7 @@
                     referees,
                     kitDetails,
                     kitQueueEntries,
+                    sponsors,
                     settingsRecords
                 ] = await Promise.all([
                     db.players.toArray(),
@@ -12012,6 +13225,7 @@
                     db.referees.toArray(),
                     db.kitDetails.toArray(),
                     db.kitQueue.toArray(),
+                    db.sponsors ? db.sponsors.toArray() : [],
                     db.settings.toArray()
                 ]);
                 const generatedAt = new Date();
@@ -12025,6 +13239,7 @@
                     referees,
                     kitDetails,
                     kitQueue: kitQueueEntries,
+                    sponsors,
                     settings: settingsRecords,
                     kitNumberLimit,
                     kitSizeOptions,
@@ -12040,6 +13255,11 @@
                 link.href = URL.createObjectURL(blob);
                 link.download = `gaffer-backup-${generatedAt.toISOString().split('T')[0]}.json`;
                 link.click();
+                try {
+                    localStorage.setItem(LAST_BACKUP_AT_KEY, generatedAt.toISOString());
+                } catch (err) {
+                    // localStorage can be unavailable in some sandboxed contexts.
+                }
                 const counts = {
                     players: players.length,
                     fixtures: fixtures.length,
@@ -12050,6 +13270,7 @@
                     referees: referees.length,
                     kitDetails: kitDetails.length,
                     kitQueue: kitQueueEntries.length,
+                    sponsors: sponsors.length,
                     settings: settingsRecords.length
                 };
                 const summaryParts = [
@@ -12062,6 +13283,7 @@
                     ['referees', 'referees'],
                     ['kitDetails', 'kit holders'],
                     ['kitQueue', 'kit queue entries'],
+                    ['sponsors', 'sponsor records'],
                     ['settings', 'settings records']
                 ].map(([key, label]) => {
                     const value = counts[key];
@@ -12120,6 +13342,7 @@
                     await db.referees.clear();
                     await db.kitDetails.clear();
                     await db.kitQueue.clear();
+                    if (db.sponsors) await db.sponsors.clear();
                     await db.settings.clear();
                     await runStep('players', async () => {
                         if(data.players?.length) {
@@ -12174,6 +13397,12 @@
                         if(data.kitQueue?.length) {
                             addProgressDetail(`Restoring ${data.kitQueue.length} kit queue entries…`);
                             await db.kitQueue.bulkPut(data.kitQueue);
+                        }
+                    });
+                    await runStep('sponsors', async () => {
+                        if (db.sponsors && data.sponsors?.length) {
+                            addProgressDetail(`Restoring ${data.sponsors.length} sponsor records…`);
+                            await db.sponsors.bulkPut(data.sponsors);
                         }
                     });
                     await runStep('settings', async () => {
@@ -12623,6 +13852,7 @@
                             <button onClick={() => exportEntity('referees')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Referees</button>
                             <button onClick={() => exportEntity('kitDetails')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Kit Details</button>
                             <button onClick={() => exportEntity('kitQueue')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Kit Queue</button>
+                            <button onClick={() => exportEntity('sponsors')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Sponsors</button>
                             <button onClick={() => exportEntity('itemCategories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Player Items</button>
                             <button onClick={() => exportEntity('categories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Cost Categories</button>
                             <button onClick={() => exportEntity('seasonCategories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Seasons</button>
@@ -12638,6 +13868,7 @@
                             <button onClick={() => { setImportTarget('players'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Players</button>
                             <button onClick={() => { setImportTarget('fixtures'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Games</button>
                             <button onClick={() => { setImportTarget('referees'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Referees</button>
+                            <button onClick={() => { setImportTarget('sponsors'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Sponsors</button>
                             <button onClick={() => { setImportTarget('itemCategories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Player Items</button>
                             <button onClick={() => { setImportTarget('categories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Cost Categories</button>
                             <button onClick={() => { setImportTarget('seasonCategories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Seasons</button>
@@ -13784,7 +15015,37 @@
                             )}
                             {activeTab === 'more' && (
                                 <div data-tab-container="more">
-                                    <MoreHub onNavigate={navigate} authStatus={authStatus} buildInfo={appBuildInfo} onAuthAction={handleAuthLogoClick} />
+                                    <MoreHub onNavigate={navigate} />
+                                </div>
+                            )}
+                            {activeTab === 'appdb' && (
+                                <div data-tab-container="appdb">
+                                    <AppDatabaseHub onNavigate={navigate} authStatus={authStatus} buildInfo={appBuildInfo} onAuthAction={handleAuthLogoClick} />
+                                </div>
+                            )}
+                            {activeTab === 'motmboard' && (
+                                <div data-tab-container="motmboard">
+                                    <MotmBoardHub onNavigate={navigate} />
+                                </div>
+                            )}
+                            {activeTab === 'reports' && (
+                                <div data-tab-container="reports">
+                                    <ReportsHub onNavigate={navigate} />
+                                </div>
+                            )}
+                            {activeTab === 'opponentintel' && (
+                                <div data-tab-container="opponentintel">
+                                    <OpponentIntelHub onNavigate={navigate} />
+                                </div>
+                            )}
+                            {activeTab === 'sponsors' && (
+                                <div data-tab-container="sponsors">
+                                    <SponsorsRevenueHub onNavigate={navigate} />
+                                </div>
+                            )}
+                            {activeTab === 'auditcontrols' && (
+                                <div data-tab-container="auditcontrols">
+                                    <AuditControlsHub onNavigate={navigate} />
                                 </div>
                             )}
                             {activeTab === 'settings' && (
