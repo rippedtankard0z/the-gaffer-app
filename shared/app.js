@@ -31,6 +31,7 @@
 
         const PLAYER_FEE_CATEGORY = 'Player Fee';
         const PITCH_FEE_CATEGORY = 'Pitch Fee';
+        const LEDGER_REPAIR_FLAG_KEY = 'gaffer:ledgerRepairV1Done';
 
         const normalizeFeeCategory = (value = '') => {
             if (!value) return '';
@@ -54,6 +55,13 @@
         };
 
         const isPlayerFeeCategory = (value = '') => normalizeFeeCategory(value) === PLAYER_FEE_CATEGORY;
+
+        const inferFlowFromAmount = (amount = 0, fallbackType = '') => {
+            const numeric = Number(amount || 0);
+            if (numeric > 0) return 'receivable';
+            if (numeric < 0) return 'payable';
+            return deriveFlow(fallbackType);
+        };
 
         const formatCurrency = (value, options = {}) => {
             const amount = Number(value || 0);
@@ -2198,6 +2206,13 @@
                     setNewCost(c => ({ ...c, flow: 'payable' }));
                 }
             }, [payee]);
+            const isOpponentPitchFee = useMemo(() => {
+                return payee.type === 'opponent' && normalizeFeeCategory(newCost.category) === PITCH_FEE_CATEGORY;
+            }, [payee.type, newCost.category]);
+            useEffect(() => {
+                if (!isOpponentPitchFee) return;
+                setNewCost(prev => prev.flow === 'receivable' ? prev : { ...prev, flow: 'receivable' });
+            }, [isOpponentPitchFee]);
             useEffect(() => {
                 if (!selectedFixture) return;
                 setNewCost(prev => {
@@ -2678,6 +2693,7 @@
                 const amt = Number(newCost.amount || (newCost.category === 'Referee Fee' ? refDefaults.total : 0));
                 if(isNaN(amt) || !amt) return;
                 const categoryToUse = newCost.category || (categories[0] || 'Other');
+                const normalizedCategory = normalizeFeeCategory(categoryToUse);
                 let payeeName = '';
                 if(payee.type === 'referee') {
                     const ref = referees.find(r => r.id === Number(payee.value));
@@ -2692,12 +2708,13 @@
                 }
                 const fallbackTarget = payeeName || selectedFixture?.opponent || 'game';
                 const description = (newCost.description && newCost.description.trim()) ? newCost.description.trim() : `${categoryToUse} for ${fallbackTarget}`;
-                const flow = newCost.flow === 'receivable' ? 'receivable' : 'payable';
+                const forceReceivable = payee.type === 'opponent' && normalizedCategory === PITCH_FEE_CATEGORY;
+                const flow = forceReceivable ? 'receivable' : (newCost.flow === 'receivable' ? 'receivable' : 'payable');
                 const txType = flow === 'receivable' ? 'INCOME' : 'EXPENSE';
                 const signedAmt = flow === 'receivable' ? Math.abs(amt) : -Math.abs(amt);
                 await db.transactions.add({
                     date: new Date().toISOString(),
-                    category: categoryToUse,
+                    category: normalizedCategory || categoryToUse,
                     type: txType,
                     flow,
                     amount: signedAmt,
@@ -3830,7 +3847,13 @@
                                             <option value="Other">Other</option>
                                         </select>
                                         <input className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" type="number" placeholder={isSiaVenue ? 'Amount (SIA: 187 / 85 / 374)' : `Amount (ref default ${formatCurrency(refDefaults.total)})`} value={newCost.amount} onChange={e => setNewCost({ ...newCost, amount: e.target.value })} />
-                                        <select className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" value={newCost.flow} onChange={e => setNewCost({ ...newCost, flow: e.target.value })}>
+                                        <select
+                                            className={`bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm ${isOpponentPitchFee ? 'text-slate-400 cursor-not-allowed' : ''}`}
+                                            value={newCost.flow}
+                                            onChange={e => setNewCost({ ...newCost, flow: e.target.value })}
+                                            disabled={isOpponentPitchFee}
+                                            title={isOpponentPitchFee ? 'Opponent pitch fees are always treated as receivable.' : ''}
+                                        >
                                             <option value="payable">We pay</option>
                                             <option value="receivable">Opposition owes us</option>
                                         </select>
@@ -3848,6 +3871,11 @@
                                         <button onClick={addCost} className="bg-slate-900 text-white font-bold rounded-lg text-sm px-3 py-3 col-span-2 md:col-span-1 w-full flex items-center justify-center gap-2 shadow-sm">
                                             <Icon name="PlusCircle" size={16} /> Add cost
                                         </button>
+                                        {isOpponentPitchFee && (
+                                            <div className="col-span-2 md:col-span-5 text-[11px] text-emerald-700 font-semibold">
+                                                Opponent pitch fees are saved as receivable credit.
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="space-y-2">
                                         {fixtureTx.filter(tx => tx.fixtureId === selectedFixture?.id && !isPlayerFeeCategory(tx.category)).map(tx => {
@@ -8026,6 +8054,16 @@
             const [importSteps, setImportSteps] = useState([]);
             const [isImportStepsDone, setIsImportStepsDone] = useState(false);
             const [playerImportRows, setPlayerImportRows] = useState(null);
+            const [isRefreshingApp, setIsRefreshingApp] = useState(false);
+            const [isRepairingLedger, setIsRepairingLedger] = useState(false);
+            const [ledgerRepairSummary, setLedgerRepairSummary] = useState(null);
+            const [ledgerRepairHasRun, setLedgerRepairHasRun] = useState(() => {
+                try {
+                    return localStorage.getItem(LEDGER_REPAIR_FLAG_KEY) === '1';
+                } catch (err) {
+                    return false;
+                }
+            });
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
 
             useEffect(() => {
@@ -8343,6 +8381,174 @@
                 if(!confirm('Delete all transactions (accounts)?')) return;
                 await db.transactions.clear();
                 alert('All accounts cleared.');
+            };
+
+            const runLedgerRepair = async () => {
+                if (isRepairingLedger) return;
+                setIsRepairingLedger(true);
+                setLedgerRepairSummary(null);
+                startImportProgress('Reviewing receivable/payable ledger entries…');
+                try {
+                    await waitForDb();
+                    const [transactionsList, fixtureList] = await Promise.all([
+                        db.transactions.toArray(),
+                        db.fixtures.toArray()
+                    ]);
+                    const fixtureLookup = {};
+                    fixtureList.forEach(fx => {
+                        fixtureLookup[String(fx.id)] = fx;
+                    });
+
+                    const updates = [];
+                    let fixedFlowAmountMismatches = 0;
+                    let fixedOpponentPitchFees = 0;
+                    let fixedMissingFlow = 0;
+
+                    transactionsList.forEach(tx => {
+                        const txId = tx?.id;
+                        const amountRaw = Number(tx?.amount || 0);
+                        if (txId === undefined || txId === null) return;
+                        if (!Number.isFinite(amountRaw) || amountRaw === 0) return;
+
+                        const currentFlow = (tx.flow || '').toString().trim().toLowerCase();
+                        const currentType = (tx.type || '').toString().trim().toUpperCase();
+                        const patch = {};
+                        let touched = false;
+                        let touchedMismatch = false;
+                        let touchedOpponentPitch = false;
+                        let touchedMissingFlow = false;
+
+                        if (currentFlow !== 'receivable' && currentFlow !== 'payable') {
+                            patch.flow = inferFlowFromAmount(amountRaw, currentType);
+                            touched = true;
+                            touchedMissingFlow = true;
+                        }
+
+                        let effectiveFlow = patch.flow || currentFlow;
+                        if (effectiveFlow !== 'receivable' && effectiveFlow !== 'payable') {
+                            effectiveFlow = inferFlowFromAmount(amountRaw, currentType);
+                        }
+
+                        const fixture = (tx.fixtureId !== undefined && tx.fixtureId !== null) ? fixtureLookup[String(tx.fixtureId)] : null;
+                        const payeeName = (tx.payee || '').toString().trim().toLowerCase();
+                        const fixtureOpponent = (fixture?.opponent || '').toString().trim().toLowerCase();
+                        const isOpponentPayee = !!payeeName && !!fixtureOpponent && payeeName === fixtureOpponent;
+                        const normalizedCategory = normalizeFeeCategory(tx.category);
+                        const isPitchFee = normalizedCategory === PITCH_FEE_CATEGORY || /pitch fee/i.test((tx.description || '').toString());
+                        const isClubLedgerRow = tx.playerId === undefined || tx.playerId === null;
+
+                        if (isClubLedgerRow && isPitchFee && isOpponentPayee) {
+                            if (effectiveFlow !== 'receivable') {
+                                patch.flow = 'receivable';
+                                effectiveFlow = 'receivable';
+                                touched = true;
+                                touchedOpponentPitch = true;
+                            }
+                            if (amountRaw < 0) {
+                                patch.amount = Math.abs(amountRaw);
+                                touched = true;
+                                touchedOpponentPitch = true;
+                            }
+                        } else {
+                            if (effectiveFlow === 'receivable' && amountRaw < 0) {
+                                patch.amount = Math.abs(amountRaw);
+                                touched = true;
+                                touchedMismatch = true;
+                            }
+                            if (effectiveFlow === 'payable' && amountRaw > 0) {
+                                patch.amount = -Math.abs(amountRaw);
+                                touched = true;
+                                touchedMismatch = true;
+                            }
+                        }
+
+                        const amountForType = patch.amount !== undefined ? Number(patch.amount) : amountRaw;
+                        if (amountForType !== 0) {
+                            const targetType = amountForType > 0 ? 'INCOME' : 'EXPENSE';
+                            if (currentType !== targetType) {
+                                patch.type = targetType;
+                                touched = true;
+                                if (isClubLedgerRow && isPitchFee && isOpponentPayee) {
+                                    touchedOpponentPitch = true;
+                                } else {
+                                    touchedMismatch = true;
+                                }
+                            }
+                        }
+
+                        if (!touched) return;
+                        if (touchedMissingFlow) fixedMissingFlow += 1;
+                        if (touchedOpponentPitch) fixedOpponentPitchFees += 1;
+                        if (touchedMismatch) fixedFlowAmountMismatches += 1;
+                        updates.push({ id: txId, patch });
+                    });
+
+                    addProgressDetail(`Scanned ${transactionsList.length} transaction(s).`);
+                    if (!updates.length) {
+                        try {
+                            localStorage.setItem(LEDGER_REPAIR_FLAG_KEY, '1');
+                            setLedgerRepairHasRun(true);
+                        } catch (err) {
+                            // localStorage may be unavailable in some sandboxed contexts.
+                        }
+                        setLedgerRepairSummary({
+                            scanned: transactionsList.length,
+                            fixed: 0,
+                            fixedFlowAmountMismatches,
+                            fixedOpponentPitchFees,
+                            fixedMissingFlow,
+                            timestamp: new Date().toISOString()
+                        });
+                        alert('Review complete: no ledger issues found.');
+                        return;
+                    }
+
+                    const apply = confirm(`Found ${updates.length} ledger entr${updates.length === 1 ? 'y' : 'ies'} to fix. Apply fixes now?`);
+                    if (!apply) {
+                        setLedgerRepairSummary({
+                            scanned: transactionsList.length,
+                            fixed: 0,
+                            fixedFlowAmountMismatches: 0,
+                            fixedOpponentPitchFees: 0,
+                            fixedMissingFlow: 0,
+                            pending: updates.length,
+                            cancelled: true,
+                            timestamp: new Date().toISOString()
+                        });
+                        return;
+                    }
+
+                    addProgressDetail(`Applying ${updates.length} fix(es)…`);
+                    await db.transaction('rw', db.transactions, async () => {
+                        for (const row of updates) {
+                            await db.transactions.update(row.id, row.patch);
+                        }
+                    });
+
+                    try {
+                        localStorage.setItem(LEDGER_REPAIR_FLAG_KEY, '1');
+                        setLedgerRepairHasRun(true);
+                    } catch (err) {
+                        // localStorage may be unavailable in some sandboxed contexts.
+                    }
+
+                    setLedgerRepairSummary({
+                        scanned: transactionsList.length,
+                        fixed: updates.length,
+                        fixedFlowAmountMismatches,
+                        fixedOpponentPitchFees,
+                        fixedMissingFlow,
+                        timestamp: new Date().toISOString()
+                    });
+                    window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'transactions' } }));
+                    alert(`Ledger repair complete. Updated ${updates.length} entr${updates.length === 1 ? 'y' : 'ies'}.`);
+                } catch (err) {
+                    console.error('Ledger repair failed', err);
+                    alert('Unable to repair ledger: ' + (err?.message || 'Unexpected error'));
+                } finally {
+                    finishImportProgress();
+                    setIsRepairingLedger(false);
+                }
             };
 
             const resetNukeSteps = () => setNukeSteps(NUKE_ITEMS.map(item => ({ ...item, status: 'pending', note: '' })));
@@ -9178,12 +9384,54 @@
                 }
             };
 
+            const fullRefreshPwa = async () => {
+                if (isRefreshingApp) return;
+                const proceed = confirm('Run a full app refresh now? This clears cached app files and reloads.');
+                if (!proceed) return;
+                setIsRefreshingApp(true);
+                try {
+                    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+                        const registrations = await navigator.serviceWorker.getRegistrations();
+                        await Promise.all(registrations.map(reg => reg.unregister().catch(() => false)));
+                    }
+                    if (typeof caches !== 'undefined' && caches.keys) {
+                        const cacheNames = await caches.keys();
+                        await Promise.all(cacheNames.map(name => caches.delete(name).catch(() => false)));
+                    }
+                    try {
+                        localStorage.removeItem(VERSION_STORAGE_KEY);
+                    } catch (err) {
+                        // localStorage may be unavailable in some contexts.
+                    }
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('refresh', String(Date.now()));
+                    window.location.replace(url.toString());
+                } catch (err) {
+                    console.error('Full refresh failed', err);
+                    setIsRefreshingApp(false);
+                    alert('Unable to refresh the app: ' + (err?.message || 'Unexpected error'));
+                }
+            };
+
             return (
                 <div className="space-y-6 pb-28 animate-fade-in">
                     <header className="px-1">
                         <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Settings</h1>
                         <p className="text-slate-500 text-sm font-medium">Configure categories for costs</p>
                     </header>
+
+                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">App Refresh</div>
+                        <div className="text-sm text-slate-600">Forces a full reload of the PWA without closing the app.</div>
+                        <button
+                            onClick={fullRefreshPwa}
+                            disabled={isRefreshingApp}
+                            className={`w-full font-bold rounded-lg px-4 py-3 ${isRefreshingApp ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                        >
+                            {isRefreshingApp ? 'Refreshing…' : 'Full Refresh PWA'}
+                        </button>
+                        <div className="text-[11px] text-slate-500">Clears service worker + cache storage, then reloads this page.</div>
+                    </div>
 
                     <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cost Categories</div>
@@ -9391,6 +9639,33 @@
                         </div>
                         <input type="file" accept="application/json" ref={importSingleRef} className="hidden" onChange={handleSingleImportFile} />
                         <div className="text-[11px] text-slate-500">Imports replace current data for that list. “ALL” replaces everything.</div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ledger Repair (one-time)</div>
+                        <div className="text-sm text-slate-600">
+                            Reviews club receivables/payables, then fixes wrong signs (credit/debit), missing flow, and opponent pitch-fee direction.
+                        </div>
+                        <button
+                            onClick={runLedgerRepair}
+                            disabled={isRepairingLedger}
+                            className={`w-full font-bold rounded-lg px-4 py-3 ${isRepairingLedger ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                        >
+                            {isRepairingLedger ? 'Reviewing…' : (ledgerRepairHasRun ? 'Run review & fix again' : 'Run one-time review & fix')}
+                        </button>
+                        <div className="text-[11px] text-slate-500">
+                            Recommended before closing this season. Safe to rerun if new old data is imported later.
+                        </div>
+                        {ledgerRepairSummary && (
+                            <div className={`text-[11px] rounded-lg border px-3 py-2 ${ledgerRepairSummary.cancelled ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+                                {ledgerRepairSummary.cancelled
+                                    ? `Review found ${ledgerRepairSummary.pending || 0} issue(s), but no fixes were applied.`
+                                    : `Scanned ${ledgerRepairSummary.scanned || 0}. Fixed ${ledgerRepairSummary.fixed || 0} transaction(s).`}
+                                {!ledgerRepairSummary.cancelled && (
+                                    <span>{` Flow/sign fixes: ${ledgerRepairSummary.fixedFlowAmountMismatches || 0} · Opponent pitch fee fixes: ${ledgerRepairSummary.fixedOpponentPitchFees || 0} · Missing flow fixes: ${ledgerRepairSummary.fixedMissingFlow || 0}.`}</span>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
