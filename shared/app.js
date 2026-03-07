@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-06';
+        const MASTER_BUILD_VERSION = '2026.03.07-08';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -37,6 +37,7 @@
         const PLAYER_FEE_CATEGORY = 'Player Fee';
         const PITCH_FEE_CATEGORY = 'Pitch Fee';
         const LEDGER_REPAIR_FLAG_KEY = 'gaffer:ledgerRepairV1Done';
+        const PLAYER_RECON_REPAIR_FLAG_KEY = 'gaffer:playerReconciliationV1Done';
 
         const normalizeFeeCategory = (value = '') => {
             if (!value) return '';
@@ -8425,6 +8426,19 @@
                     return false;
                 }
             });
+            const [isScanningPlayerRecon, setIsScanningPlayerRecon] = useState(false);
+            const [isApplyingPlayerRecon, setIsApplyingPlayerRecon] = useState(false);
+            const [isPlayerReconPreviewOpen, setIsPlayerReconPreviewOpen] = useState(false);
+            const [playerReconCandidates, setPlayerReconCandidates] = useState([]);
+            const [playerReconSelection, setPlayerReconSelection] = useState({});
+            const [playerReconSummary, setPlayerReconSummary] = useState(null);
+            const [playerReconHasRun, setPlayerReconHasRun] = useState(() => {
+                try {
+                    return localStorage.getItem(PLAYER_RECON_REPAIR_FLAG_KEY) === '1';
+                } catch (err) {
+                    return false;
+                }
+            });
             const [settingsToasts, setSettingsToasts] = useState([]);
             const pushSettingsToast = useCallback((message, tone = 'info') => {
                 const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -8827,6 +8841,8 @@
                     let fixedFlowAmountMismatches = 0;
                     let fixedOpponentPitchFees = 0;
                     let fixedMissingFlow = 0;
+                    let scannedOpponentPitchCandidates = 0;
+                    let alreadyCorrectOpponentPitch = 0;
 
                     transactionsList.forEach(tx => {
                         const txId = tx?.id;
@@ -8866,6 +8882,7 @@
                         const categoryText = (tx.category || '').toString().toLowerCase();
                         const descriptionRaw = (tx.description || '').toString();
                         const descriptionText = descriptionRaw.toLowerCase();
+                        const categoryUpper = (tx.category || '').toString().trim().toUpperCase();
                         const descriptionEntity = normalizeEntityText(descriptionRaw);
                         const isOpponentMentionedInDescription = !!descriptionEntity
                             && !!fixtureOpponent
@@ -8883,12 +8900,26 @@
                                 && (descriptionSignalsReceivable || !descriptionSignalsPayable)
                             )
                         );
+                        const isClubLedgerRow = tx.playerId === undefined || tx.playerId === null;
+                        const isLegacyClubMatchFee = isClubLedgerRow && (
+                            categoryUpper === 'MATCH FEE'
+                            || categoryUpper === 'MATCH_FEE'
+                            || /match\s*fee/i.test(descriptionRaw)
+                        );
                         const isPitchFee = normalizedCategory === PITCH_FEE_CATEGORY
                             || categoryText.includes('pitch')
-                            || /pitch\s*fee|pitch\s*hire|ground\s*hire/i.test(descriptionText);
-                        const isClubLedgerRow = tx.playerId === undefined || tx.playerId === null;
+                            || /pitch\s*fee|pitch\s*hire|ground\s*hire/i.test(descriptionText)
+                            || isLegacyClubMatchFee;
 
-                        if (isClubLedgerRow && isPitchFee && hasOpponentReceivableContext) {
+                        const isOpponentPitchCandidate = isClubLedgerRow && isPitchFee && hasOpponentReceivableContext;
+                        if (isOpponentPitchCandidate) scannedOpponentPitchCandidates += 1;
+
+                        if (isOpponentPitchCandidate) {
+                            if (isLegacyClubMatchFee && normalizedCategory !== PITCH_FEE_CATEGORY) {
+                                patch.category = PITCH_FEE_CATEGORY;
+                                touched = true;
+                                touchedOpponentPitch = true;
+                            }
                             if (effectiveFlow !== 'receivable') {
                                 patch.flow = 'receivable';
                                 effectiveFlow = 'receivable';
@@ -8927,6 +8958,9 @@
                             }
                         }
 
+                        if (isOpponentPitchCandidate && !touched) {
+                            alreadyCorrectOpponentPitch += 1;
+                        }
                         if (!touched) return;
                         if (touchedMissingFlow) fixedMissingFlow += 1;
                         if (touchedOpponentPitch) fixedOpponentPitchFees += 1;
@@ -8972,6 +9006,8 @@
                             fixedFlowAmountMismatches,
                             fixedOpponentPitchFees,
                             fixedMissingFlow,
+                            scannedOpponentPitchCandidates,
+                            alreadyCorrectOpponentPitch,
                             timestamp: new Date().toISOString()
                         });
                         pushSettingsToast('Review complete: no ledger issues found.', 'success');
@@ -8985,6 +9021,8 @@
                         fixedFlowAmountMismatches: 0,
                         fixedOpponentPitchFees: 0,
                         fixedMissingFlow: 0,
+                        scannedOpponentPitchCandidates,
+                        alreadyCorrectOpponentPitch,
                         timestamp: new Date().toISOString()
                     });
                     const nextSelection = {};
@@ -9051,6 +9089,8 @@
                         fixedFlowAmountMismatches: reasonTotals.mismatch,
                         fixedOpponentPitchFees: reasonTotals.opponentPitch,
                         fixedMissingFlow: reasonTotals.missingFlow,
+                        scannedOpponentPitchCandidates: ledgerRepairSummary?.scannedOpponentPitchCandidates || 0,
+                        alreadyCorrectOpponentPitch: ledgerRepairSummary?.alreadyCorrectOpponentPitch || 0,
                         pending: Math.max(0, ledgerRepairCandidates.length - selectedRows.length),
                         timestamp: new Date().toISOString()
                     });
@@ -9068,9 +9108,233 @@
                 }
             };
 
+            const runPlayerReconciliationScan = async () => {
+                if (isScanningPlayerRecon) return;
+                setIsScanningPlayerRecon(true);
+                setPlayerReconSummary(null);
+                setPlayerReconCandidates([]);
+                setPlayerReconSelection({});
+                startImportProgress('Reviewing player fee payment reconciliation…');
+                try {
+                    await waitForDb();
+                    const [transactionsList, players] = await Promise.all([
+                        db.transactions.toArray(),
+                        db.players.toArray()
+                    ]);
+                    const playerLookup = {};
+                    players.forEach((p) => {
+                        playerLookup[String(p.id)] = `${p.firstName || ''} ${p.lastName || ''}`.trim() || `Player #${p.id}`;
+                    });
+
+                    const playerFeeRows = transactionsList.filter(tx => (tx.playerId !== undefined && tx.playerId !== null) && isPlayerFeeCategory(tx.category));
+                    const coverage = buildChargeCoverage(playerFeeRows);
+                    const chargeById = new Map();
+                    playerFeeRows.forEach(tx => {
+                        const txId = getTxId(tx.id);
+                        if (!txId) return;
+                        if ((Number(tx.amount) || 0) < 0) chargeById.set(txId, tx);
+                    });
+
+                    const paymentToChargeId = new Map();
+                    coverage.forEach((match, chargeId) => {
+                        const paymentId = getTxId(match?.payment?.id);
+                        if (paymentId) paymentToChargeId.set(paymentId, chargeId);
+                    });
+
+                    const updatesById = new Map();
+                    const pushUpdate = (tx, patchDelta, reasonKey, reasonLabel, recommended = true) => {
+                        const txId = tx?.id;
+                        if (txId === undefined || txId === null) return;
+                        let row = updatesById.get(String(txId));
+                        if (!row) {
+                            const amount = Number(tx.amount || 0);
+                            const currentFlow = getTxFlowDirection(tx);
+                            const currentType = (tx.type || '').toString().trim().toUpperCase() || (amount >= 0 ? 'INCOME' : 'EXPENSE');
+                            row = {
+                                id: txId,
+                                patch: {},
+                                reasonFlags: {},
+                                reasonLabels: [],
+                                recommended: true,
+                                date: tx.date || '',
+                                description: tx.description || '',
+                                category: normalizeFeeCategory(tx.category) || tx.category || PLAYER_FEE_CATEGORY,
+                                playerName: playerLookup[String(tx.playerId)] || `Player #${tx.playerId}`,
+                                currentAmount: amount,
+                                currentFlow,
+                                currentType,
+                                currentReconciled: !!tx.isReconciled
+                            };
+                            updatesById.set(String(txId), row);
+                        }
+                        row.patch = { ...row.patch, ...patchDelta };
+                        row.reasonFlags[reasonKey] = true;
+                        if (reasonLabel && !row.reasonLabels.includes(reasonLabel)) row.reasonLabels.push(reasonLabel);
+                        if (!recommended) row.recommended = false;
+                    };
+
+                    let totalCharges = 0;
+                    let settledByPayments = 0;
+                    let settledByWriteOffs = 0;
+                    let unpaidCharges = 0;
+                    let orphanPayments = 0;
+
+                    playerFeeRows.forEach(tx => {
+                        const txId = getTxId(tx.id);
+                        const amountRaw = Number(tx.amount || 0);
+                        if (!txId || !Number.isFinite(amountRaw) || amountRaw === 0) return;
+                        const currentFlow = (tx.flow || '').toString().trim().toLowerCase();
+                        const currentType = (tx.type || '').toString().trim().toUpperCase();
+
+                        if (amountRaw < 0) {
+                            totalCharges += 1;
+                            const match = coverage.get(txId);
+                            const isCovered = !!(match?.payment || match?.writeOff);
+                            if (match?.payment) settledByPayments += 1;
+                            else if (match?.writeOff) settledByWriteOffs += 1;
+                            else unpaidCharges += 1;
+
+                            if (currentType !== 'EXPENSE') pushUpdate(tx, { type: 'EXPENSE' }, 'typeFlow', 'Set charge type to EXPENSE');
+                            if (currentFlow !== 'payable') pushUpdate(tx, { flow: 'payable' }, 'typeFlow', 'Set charge flow to payable');
+                            if (isCovered && !tx.isReconciled) pushUpdate(tx, { isReconciled: true }, 'coveredCharge', 'Mark covered charge as reconciled');
+                            if (!isCovered && tx.isReconciled) pushUpdate(tx, { isReconciled: false }, 'orphanChargeReconciled', 'Mark uncovered charge as unreconciled', false);
+                            return;
+                        }
+
+                        const isWriteOff = isWriteOffTx(tx);
+                        if (currentType !== 'INCOME') pushUpdate(tx, { type: 'INCOME' }, 'typeFlow', 'Set credit type to INCOME');
+                        if (currentFlow !== 'receivable') pushUpdate(tx, { flow: 'receivable' }, 'typeFlow', 'Set credit flow to receivable');
+                        if (!tx.isReconciled) pushUpdate(tx, { isReconciled: true }, 'paymentReconciled', isWriteOff ? 'Mark write-off as reconciled' : 'Mark payment as reconciled');
+
+                        if (isWriteOff) return;
+                        const existingPaymentOf = getTxId(tx.paymentOf);
+                        const matchedChargeId = paymentToChargeId.get(txId);
+                        if (!existingPaymentOf && matchedChargeId && chargeById.has(matchedChargeId)) {
+                            pushUpdate(tx, { paymentOf: chargeById.get(matchedChargeId).id }, 'paymentLink', 'Link payment to charge');
+                        } else if (!existingPaymentOf && !matchedChargeId) {
+                            orphanPayments += 1;
+                        }
+                    });
+
+                    const updates = Array.from(updatesById.values()).map(row => {
+                        const nextAmount = row.patch.amount !== undefined ? Number(row.patch.amount) : row.currentAmount;
+                        const nextType = row.patch.type || (nextAmount >= 0 ? 'INCOME' : 'EXPENSE');
+                        const nextFlow = row.patch.flow || inferFlowFromAmount(nextAmount, nextType);
+                        const nextReconciled = row.patch.isReconciled !== undefined ? !!row.patch.isReconciled : row.currentReconciled;
+                        return {
+                            ...row,
+                            nextAmount,
+                            nextType,
+                            nextFlow,
+                            nextReconciled
+                        };
+                    });
+
+                    addProgressDetail(`Scanned ${playerFeeRows.length} player fee row(s).`);
+                    const baseSummary = {
+                        scanned: playerFeeRows.length,
+                        totalCharges,
+                        settledByPayments,
+                        settledByWriteOffs,
+                        unpaidCharges,
+                        orphanPayments,
+                        fixed: 0,
+                        proposed: updates.length,
+                        timestamp: new Date().toISOString()
+                    };
+
+                    if (!updates.length) {
+                        setIsPlayerReconPreviewOpen(false);
+                        try {
+                            localStorage.setItem(PLAYER_RECON_REPAIR_FLAG_KEY, '1');
+                            setPlayerReconHasRun(true);
+                        } catch (err) {
+                            // localStorage may be unavailable in some sandboxed contexts.
+                        }
+                        setPlayerReconSummary(baseSummary);
+                        pushSettingsToast('Review complete: no player reconciliation fixes suggested.', 'success');
+                        return;
+                    }
+
+                    const nextSelection = {};
+                    updates.forEach(row => {
+                        nextSelection[String(row.id)] = row.recommended !== false;
+                    });
+                    setPlayerReconCandidates(updates);
+                    setPlayerReconSelection(nextSelection);
+                    setPlayerReconSummary(baseSummary);
+                    setIsPlayerReconPreviewOpen(true);
+                } catch (err) {
+                    console.error('Player reconciliation scan failed', err);
+                    pushSettingsToast('Unable to scan player reconciliation: ' + (err?.message || 'Unexpected error'), 'error');
+                } finally {
+                    finishImportProgress();
+                    setIsScanningPlayerRecon(false);
+                }
+            };
+
+            const togglePlayerReconSelection = (rowId) => {
+                const key = String(rowId);
+                setPlayerReconSelection(prev => ({ ...prev, [key]: !prev[key] }));
+            };
+
+            const setAllPlayerReconSelections = (isSelected) => {
+                const next = {};
+                playerReconCandidates.forEach(row => {
+                    next[String(row.id)] = !!isSelected;
+                });
+                setPlayerReconSelection(next);
+            };
+
+            const applyPlayerReconSelection = async () => {
+                if (isApplyingPlayerRecon) return;
+                const selectedRows = playerReconCandidates.filter(row => playerReconSelection[String(row.id)]);
+                if (!selectedRows.length) {
+                    pushSettingsToast('Select at least one player reconciliation row to apply.', 'warning');
+                    return;
+                }
+                setIsApplyingPlayerRecon(true);
+                startImportProgress('Applying selected player reconciliation fixes…');
+                try {
+                    addProgressDetail(`Applying ${selectedRows.length} selected fix(es)…`);
+                    for (const row of selectedRows) {
+                        await db.transactions.update(row.id, row.patch);
+                    }
+                    try {
+                        localStorage.setItem(PLAYER_RECON_REPAIR_FLAG_KEY, '1');
+                        setPlayerReconHasRun(true);
+                    } catch (err) {
+                        // localStorage may be unavailable in some sandboxed contexts.
+                    }
+
+                    setPlayerReconSummary(prev => ({
+                        ...(prev || {}),
+                        fixed: selectedRows.length,
+                        pending: Math.max(0, playerReconCandidates.length - selectedRows.length),
+                        proposed: playerReconCandidates.length,
+                        timestamp: new Date().toISOString()
+                    }));
+                    setIsPlayerReconPreviewOpen(false);
+                    setPlayerReconCandidates([]);
+                    setPlayerReconSelection({});
+                    window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'transactions' } }));
+                    pushSettingsToast(`Player reconciliation updated ${selectedRows.length} entr${selectedRows.length === 1 ? 'y' : 'ies'}.`, 'success');
+                } catch (err) {
+                    console.error('Player reconciliation apply failed', err);
+                    pushSettingsToast('Unable to apply player reconciliation fixes: ' + (err?.message || 'Unexpected error'), 'error');
+                } finally {
+                    finishImportProgress();
+                    setIsApplyingPlayerRecon(false);
+                }
+            };
+
             const selectedLedgerRepairCount = useMemo(() => {
                 return ledgerRepairCandidates.filter(row => ledgerRepairSelection[String(row.id)]).length;
             }, [ledgerRepairCandidates, ledgerRepairSelection]);
+
+            const selectedPlayerReconCount = useMemo(() => {
+                return playerReconCandidates.filter(row => playerReconSelection[String(row.id)]).length;
+            }, [playerReconCandidates, playerReconSelection]);
 
             const resetNukeSteps = () => setNukeSteps(NUKE_ITEMS.map(item => ({ ...item, status: 'pending', note: '' })));
 
@@ -10190,6 +10454,30 @@
                                 {!ledgerRepairSummary.cancelled && !ledgerRepairSummary.proposed && (
                                     <span>{` Flow/sign fixes: ${ledgerRepairSummary.fixedFlowAmountMismatches || 0} · Opponent pitch fee fixes: ${ledgerRepairSummary.fixedOpponentPitchFees || 0} · Missing flow fixes: ${ledgerRepairSummary.fixedMissingFlow || 0}.`}</span>
                                 )}
+                                <span>{` Opponent/match-fee rows checked: ${ledgerRepairSummary.scannedOpponentPitchCandidates || 0} · Already correct: ${ledgerRepairSummary.alreadyCorrectOpponentPitch || 0}.`}</span>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Player Payment Reconciliation</div>
+                        <div className="text-sm text-slate-600">
+                            Audit all historical player fees/payments, review reconciliation status, then apply only approved fixes.
+                        </div>
+                        <button
+                            onClick={runPlayerReconciliationScan}
+                            disabled={isScanningPlayerRecon}
+                            className={`w-full font-bold rounded-lg px-4 py-3 ${isScanningPlayerRecon ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                        >
+                            {isScanningPlayerRecon ? 'Scanning…' : (playerReconHasRun ? 'Scan again & review' : 'Scan player payments')}
+                        </button>
+                        {playerReconSummary && (
+                            <div className="text-[11px] rounded-lg border px-3 py-2 bg-emerald-50 border-emerald-200 text-emerald-700">
+                                {playerReconSummary.proposed
+                                    ? `Scanned ${playerReconSummary.scanned || 0} player-fee row(s). ${playerReconSummary.proposed} suggested change(s) ready for review.`
+                                    : `Scanned ${playerReconSummary.scanned || 0} player-fee row(s). No fixes suggested.`}
+                                <span>{` Charges: ${playerReconSummary.totalCharges || 0} · Paid: ${playerReconSummary.settledByPayments || 0} · Write-offs: ${playerReconSummary.settledByWriteOffs || 0} · Unpaid: ${playerReconSummary.unpaidCharges || 0} · Unlinked payments: ${playerReconSummary.orphanPayments || 0}.`}</span>
+                                {(playerReconSummary.fixed || 0) > 0 && <span>{` Applied: ${playerReconSummary.fixed || 0}.`}</span>}
                             </div>
                         )}
                     </div>
@@ -10278,6 +10566,73 @@
                             </button>
                             <button onClick={applyLedgerRepairSelection} disabled={isApplyingLedgerRepair || !selectedLedgerRepairCount} className={`flex-1 rounded-lg px-4 py-2 font-bold text-white ${(isApplyingLedgerRepair || !selectedLedgerRepairCount) ? 'bg-slate-400 cursor-not-allowed' : 'bg-emerald-600'}`}>
                                 {isApplyingLedgerRepair ? 'Applying…' : `Apply selected (${selectedLedgerRepairCount})`}
+                            </button>
+                        </div>
+                    </Modal>
+
+                    <Modal isOpen={isPlayerReconPreviewOpen} onClose={() => { if(!isApplyingPlayerRecon) setIsPlayerReconPreviewOpen(false); }} title="Review Player Reconciliation">
+                        <div className="text-xs text-slate-500 mb-3">
+                            Review each suggested fix for past player fee charges and payments.
+                        </div>
+                        <div className="flex gap-2 mb-3">
+                            <button onClick={() => setAllPlayerReconSelections(true)} disabled={isApplyingPlayerRecon || !playerReconCandidates.length} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${isApplyingPlayerRecon || !playerReconCandidates.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                                Select all
+                            </button>
+                            <button onClick={() => setAllPlayerReconSelections(false)} disabled={isApplyingPlayerRecon || !playerReconCandidates.length} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${isApplyingPlayerRecon || !playerReconCandidates.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                                Clear all
+                            </button>
+                        </div>
+                        <div className="space-y-2 max-h-[52vh] overflow-y-auto pr-1">
+                            {playerReconCandidates.map(row => {
+                                const key = String(row.id);
+                                const checked = !!playerReconSelection[key];
+                                const dateLabel = row.date ? new Date(row.date).toLocaleDateString() : 'No date';
+                                const riskTone = row.recommended === false ? 'border-amber-200 bg-amber-50/40' : '';
+                                return (
+                                    <label key={`player-recon-${row.id}`} className={`block p-3 rounded-xl border cursor-pointer ${checked ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-200 bg-white'} ${riskTone}`}>
+                                        <div className="flex gap-3">
+                                            <input type="checkbox" checked={checked} onChange={() => togglePlayerReconSelection(row.id)} className="mt-1" />
+                                            <div className="flex-1 space-y-1">
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div className="text-sm font-bold text-slate-900">{row.description || 'No description'}</div>
+                                                    <div className={`text-xs font-bold ${row.nextAmount >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                        {formatCurrency(row.currentAmount)} → {formatCurrency(row.nextAmount)}
+                                                    </div>
+                                                </div>
+                                                <div className="text-[11px] text-slate-500">
+                                                    {row.playerName || 'Unknown player'} · {row.category || PLAYER_FEE_CATEGORY} · {dateLabel}
+                                                </div>
+                                                <div className="text-[11px] text-slate-500">
+                                                    Flow: {row.currentFlow || 'unset'} → {row.nextFlow || 'unset'} · Type: {row.currentType || 'unset'} → {row.nextType || 'unset'} · Reconciled: {row.currentReconciled ? 'Yes' : 'No'} → {row.nextReconciled ? 'Yes' : 'No'}
+                                                </div>
+                                                <div className="flex flex-wrap gap-1 pt-1">
+                                                    {row.reasonFlags?.paymentLink && <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold">Link payment</span>}
+                                                    {row.reasonFlags?.coveredCharge && <span className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 text-[10px] font-bold">Covered charge</span>}
+                                                    {row.reasonFlags?.paymentReconciled && <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold">Mark reconciled</span>}
+                                                    {row.reasonFlags?.typeFlow && <span className="px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[10px] font-bold">Type/flow</span>}
+                                                    {row.reasonFlags?.orphanChargeReconciled && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">Needs review</span>}
+                                                </div>
+                                                {row.reasonLabels?.length > 0 && (
+                                                    <div className="text-[11px] text-slate-500">{row.reasonLabels.join(' · ')}</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </label>
+                                );
+                            })}
+                            {!playerReconCandidates.length && (
+                                <div className="text-sm text-slate-400 text-center py-6">No suggestions available. Run a scan first.</div>
+                            )}
+                        </div>
+                        <div className="mt-3 text-[11px] text-slate-500">
+                            Selected: <span className="font-bold text-slate-700">{selectedPlayerReconCount}</span> of <span className="font-bold text-slate-700">{playerReconCandidates.length}</span>
+                        </div>
+                        <div className="mt-4 flex gap-2">
+                            <button onClick={() => setIsPlayerReconPreviewOpen(false)} disabled={isApplyingPlayerRecon} className={`flex-1 rounded-lg border border-slate-200 px-4 py-2 font-bold ${isApplyingPlayerRecon ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-50 text-slate-700'}`}>
+                                Cancel
+                            </button>
+                            <button onClick={applyPlayerReconSelection} disabled={isApplyingPlayerRecon || !selectedPlayerReconCount} className={`flex-1 rounded-lg px-4 py-2 font-bold text-white ${(isApplyingPlayerRecon || !selectedPlayerReconCount) ? 'bg-slate-400 cursor-not-allowed' : 'bg-emerald-600'}`}>
+                                {isApplyingPlayerRecon ? 'Applying…' : `Apply selected (${selectedPlayerReconCount})`}
                             </button>
                         </div>
                     </Modal>
