@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-26';
+        const MASTER_BUILD_VERSION = '2026.03.07-27';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -4847,7 +4847,7 @@
                             <div className="max-w-4xl mx-auto px-4 py-6 space-y-5">
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                     <div>
-                                        <div className="text-xs uppercase font-bold text-slate-400">Match Day</div>
+                                        <div className="text-xs uppercase font-bold text-slate-400">{isMatchdayWorkspace ? 'Match Day' : 'Game'}</div>
                                         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                                             <div className="text-xl font-display font-bold text-slate-900">vs {selectedFixture.opponent}</div>
                                             {!isMatchdayWorkspace && (
@@ -4933,6 +4933,7 @@
                                     </div>
                                 )}
 
+                                {isMatchdayWorkspace && (
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
                                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                         <div>
@@ -5418,6 +5419,7 @@
                                         </div>
                                     </div>
                                 </div>
+                                )}
 
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
                                     <div className="flex justify-between items-start gap-3">
