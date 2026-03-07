@@ -1393,7 +1393,7 @@
 
             const handlePay = async (tx) => {
                 if (hasExistingPayment(tx)) { alert('Already settled.'); return; }
-                if (!confirm("Mark this specific item as paid?")) return;
+                if (!confirm("Mark this specific item as received?")) return;
                 startImportProgress('Recording payment…');
                 try {
                     const chargeLabel = buildChargeLabel(tx);
@@ -9244,6 +9244,7 @@
                     });
 
                     addProgressDetail(`Scanned ${transactionsList.length} transaction(s).`);
+                    addProgressDetail(`Club pitch/match-fee rows: ${scannedClubPitchRows}; candidate opponent receivables: ${scannedOpponentPitchCandidates}.`);
                     if (!updates.length) {
                         try {
                             localStorage.setItem(LEDGER_REPAIR_FLAG_KEY, '1');
@@ -10520,6 +10521,162 @@
                 }
             };
 
+            const renameSeasonCategory = async (cat) => {
+                const nextName = await requestSettingsPrompt({
+                    title: 'Rename season',
+                    description: 'Use a clear season label (for example: 2026/2027 Season).',
+                    placeholder: 'Season name',
+                    initialValue: cat,
+                    confirmLabel: 'Save season'
+                });
+                if (nextName === null) return;
+                const clean = nextName.trim();
+                if (!clean) {
+                    pushSettingsToast('Season name cannot be empty.', 'warning');
+                    return;
+                }
+                if (seasonCategories.some(name => name !== cat && name === clean)) {
+                    pushSettingsToast('Season already exists.', 'warning');
+                    return;
+                }
+                const updated = seasonCategories.map(name => name === cat ? clean : name);
+                setSeasonCategories(updated);
+                persistSeasonCategories(updated);
+                pushSettingsToast('Season updated.', 'success');
+            };
+
+            const addItemCategory = () => {
+                const name = newItemCat.trim();
+                if (!name) return;
+                if (itemCategories.includes(name)) {
+                    pushSettingsToast('Player item category already exists.', 'warning');
+                    return;
+                }
+                const updated = [...itemCategories, name];
+                setItemCategories(updated);
+                persistItemCategories(updated);
+                setNewItemCat('');
+            };
+
+            const editRefereeRecord = async (referee) => {
+                const nextName = await requestSettingsPrompt({
+                    title: 'Edit referee',
+                    description: 'Update referee name.',
+                    placeholder: 'Referee name',
+                    initialValue: referee.name || '',
+                    confirmLabel: 'Next'
+                });
+                if (nextName === null) return;
+                const cleanName = nextName.trim();
+                if (!cleanName) {
+                    pushSettingsToast('Referee name is required.', 'warning');
+                    return;
+                }
+                const nextPhone = await requestSettingsPrompt({
+                    title: 'Edit referee',
+                    description: 'Update phone number (optional).',
+                    placeholder: 'Phone number',
+                    initialValue: referee.phone || '',
+                    confirmLabel: 'Save referee'
+                });
+                if (nextPhone === null) return;
+                const cleanPhone = nextPhone.trim();
+                await db.referees.update(referee.id, { name: cleanName, phone: cleanPhone });
+                setReferees(prev => prev.map(row => row.id === referee.id ? { ...row, name: cleanName, phone: cleanPhone } : row));
+                pushSettingsToast('Referee updated.', 'success');
+            };
+
+            const deleteRefereeRecord = async (referee) => {
+                const approved = await requestSettingsConfirmation({
+                    title: 'Delete referee',
+                    description: `Delete ${referee.name || 'this referee'}?`,
+                    confirmLabel: 'Delete referee',
+                    danger: true
+                });
+                if (!approved) return;
+                await db.referees.delete(referee.id);
+                setReferees(prev => prev.filter(row => row.id !== referee.id));
+                pushSettingsToast('Referee deleted.', 'success');
+            };
+
+            const clearOpponentsList = async () => {
+                const approved = await requestSettingsConfirmation({
+                    title: 'Clear opponents',
+                    description: 'Delete the full opponents list?',
+                    confirmLabel: 'Clear opponents',
+                    danger: true
+                });
+                if (!approved) return;
+                await db.opponents.clear();
+                setOpponents([]);
+                pushSettingsToast('Opponents list cleared.', 'success');
+            };
+
+            const clearVenuesList = async () => {
+                const approved = await requestSettingsConfirmation({
+                    title: 'Clear venues',
+                    description: 'Delete the full venues list?',
+                    confirmLabel: 'Clear venues',
+                    danger: true
+                });
+                if (!approved) return;
+                await db.venues.clear();
+                setVenues([]);
+                pushSettingsToast('Venues list cleared.', 'success');
+            };
+
+            const clearRefereesList = async () => {
+                const approved = await requestSettingsConfirmation({
+                    title: 'Clear referees',
+                    description: 'Delete the full referees list?',
+                    confirmLabel: 'Clear referees',
+                    danger: true
+                });
+                if (!approved) return;
+                await db.referees.clear();
+                setReferees([]);
+                pushSettingsToast('Referees list cleared.', 'success');
+            };
+
+            const clearItemCategoriesList = async () => {
+                const approved = await requestSettingsConfirmation({
+                    title: 'Clear player items',
+                    description: 'Delete all player item categories?',
+                    confirmLabel: 'Clear player items',
+                    danger: true
+                });
+                if (!approved) return;
+                setItemCategories([]);
+                persistItemCategories([]);
+                pushSettingsToast('Player item categories cleared.', 'success');
+            };
+
+            const clearCostCategoriesList = async () => {
+                const approved = await requestSettingsConfirmation({
+                    title: 'Clear cost categories',
+                    description: 'Delete all cost categories?',
+                    confirmLabel: 'Clear cost categories',
+                    danger: true
+                });
+                if (!approved) return;
+                setCategories([]);
+                persistCategories([]);
+                pushSettingsToast('Cost categories cleared.', 'success');
+            };
+
+            const clearSeasonCategoriesList = async () => {
+                const approved = await requestSettingsConfirmation({
+                    title: 'Clear seasons',
+                    description: 'Delete all season categories?',
+                    confirmLabel: 'Clear seasons',
+                    danger: true
+                });
+                if (!approved) return;
+                setSeasonCategories([]);
+                persistSeasonCategories([]);
+                pushSettingsToast('Season categories cleared.', 'success');
+            };
+
             return (
                 <div className="space-y-6 pb-20 animate-fade-in">
                     <header className="px-1">
@@ -10564,7 +10721,7 @@
                             {seasonCategories.map(cat => (
                                 <div key={cat} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
                                     <span>{cat}</span>
-                                    <button onClick={() => { const name = prompt('Rename season', cat) || cat; const clean = name.trim(); if(!clean) return; const updated = seasonCategories.map(c => c === cat ? clean : c); setSeasonCategories(updated); persistSeasonCategories(updated); }} className="text-brand-600 underline">Edit</button>
+                                    <button onClick={() => renameSeasonCategory(cat)} className="text-brand-600 underline">Edit</button>
                                     <button onClick={() => { const updated = seasonCategories.filter(c => c !== cat); setSeasonCategories(updated); persistSeasonCategories(updated); }} className="text-rose-600">✕</button>
                                 </div>
                             ))}
@@ -10643,7 +10800,7 @@
                         </div>
                         <div className="flex gap-2">
                             <input className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Add item (e.g. Socks)" value={newItemCat} onChange={e => setNewItemCat(e.target.value)} />
-                            <button onClick={() => { const name = newItemCat.trim(); if(!name) return; if(itemCategories.includes(name)) { alert('Exists'); return; } const updated = [...itemCategories, name]; setItemCategories(updated); persistItemCategories(updated); setNewItemCat(''); }} className="bg-slate-900 text-white font-bold rounded-lg px-4">Add</button>
+                            <button onClick={addItemCategory} className="bg-slate-900 text-white font-bold rounded-lg px-4">Add</button>
                         </div>
                         <div className="text-[11px] text-slate-500">These items show on player cards for adding personal charges.</div>
                     </div>
@@ -10654,8 +10811,8 @@
                             {referees.map(r => (
                                 <div key={r.id} className="px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2">
                                     <span>{r.name}{r.phone ? ` (${r.phone})` : ''}</span>
-                                    <button onClick={async () => { const name = prompt('Edit referee name', r.name) || r.name; const phone = prompt('Edit phone', r.phone || '') ?? r.phone; await db.referees.update(r.id, { name, phone }); setReferees(referees.map(x => x.id === r.id ? { ...x, name, phone } : x)); }} className="underline text-brand-600">Edit</button>
-                                    <button onClick={async () => { if(confirm('Delete referee?')) { await db.referees.delete(r.id); setReferees(referees.filter(x => x.id !== r.id)); } }} className="text-rose-600">✕</button>
+                                    <button onClick={() => editRefereeRecord(r)} className="underline text-brand-600">Edit</button>
+                                    <button onClick={() => deleteRefereeRecord(r)} className="text-rose-600">✕</button>
                                 </div>
                             ))}
                         </div>
@@ -10817,12 +10974,12 @@
                             <button onClick={clearFixtures} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Fixtures</button>
                             <button onClick={clearPlayers} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Players</button>
                             <button onClick={clearAccounts} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Accounts</button>
-                            <button onClick={() => { if(confirm('Delete opponents list?')) { db.opponents.clear(); setOpponents([]); }}} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Opponents</button>
-                            <button onClick={() => { if(confirm('Delete venues list?')) { db.venues.clear(); setVenues([]); }}} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Venues</button>
-                            <button onClick={() => { if(confirm('Delete referees list?')) { db.referees.clear(); setReferees([]); }}} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Referees</button>
-                            <button onClick={() => { if(confirm('Delete player item categories?')) { setItemCategories([]); persistItemCategories([]); }}} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Player Items</button>
-                            <button onClick={() => { if(confirm('Delete cost categories?')) { setCategories([]); persistCategories([]); }}} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Cost Categories</button>
-                            <button onClick={() => { if(confirm('Delete season categories?')) { setSeasonCategories([]); persistSeasonCategories([]); }}} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Seasons</button>
+                            <button onClick={clearOpponentsList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Opponents</button>
+                            <button onClick={clearVenuesList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Venues</button>
+                            <button onClick={clearRefereesList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Referees</button>
+                            <button onClick={clearItemCategoriesList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Player Items</button>
+                            <button onClick={clearCostCategoriesList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Cost Categories</button>
+                            <button onClick={clearSeasonCategoriesList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Seasons</button>
                             <button onClick={clearAll} className="bg-rose-600 text-white font-bold rounded-lg px-3 py-2 text-sm md:col-span-3">Nuke all data & settings</button>
                         </div>
                         <div className="text-[11px] text-slate-500">These actions are destructive; backups include kit, queue, and settings—export one before wiping.</div>
@@ -11295,6 +11452,37 @@
                             </div>
                         </div>
                     )}
+
+                    <Modal isOpen={confirmDialog.open} onClose={() => closeSettingsConfirmation(false)} title={confirmDialog.title}>
+                        <div className="space-y-4">
+                            <div className="text-sm text-slate-600">{confirmDialog.description}</div>
+                            <div className="flex gap-2">
+                                <button onClick={() => closeSettingsConfirmation(false)} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
+                                <button onClick={() => closeSettingsConfirmation(true)} className={`flex-1 font-bold py-2 rounded-lg text-white ${confirmDialog.danger ? 'bg-rose-600' : 'bg-slate-900'}`}>
+                                    {confirmDialog.confirmLabel}
+                                </button>
+                            </div>
+                        </div>
+                    </Modal>
+
+                    <Modal isOpen={textPrompt.open} onClose={() => closeSettingsPrompt(false)} title={textPrompt.title}>
+                        <div className="space-y-4">
+                            <div className="text-sm text-slate-600">{textPrompt.description}</div>
+                            <input
+                                className="w-full bg-white border border-slate-200 rounded-lg p-3 text-sm"
+                                value={textPromptValue}
+                                onChange={e => setTextPromptValue(e.target.value)}
+                                placeholder={textPrompt.placeholder}
+                                autoFocus
+                            />
+                            <div className="flex gap-2">
+                                <button onClick={() => closeSettingsPrompt(false)} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
+                                <button onClick={() => closeSettingsPrompt(true)} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg">
+                                    {textPrompt.confirmLabel}
+                                </button>
+                            </div>
+                        </div>
+                    </Modal>
 
                     <Modal isOpen={typedConfirm.open} onClose={() => closeTypedConfirmation(false)} title={typedConfirm.title}>
                         <div className="space-y-4">
