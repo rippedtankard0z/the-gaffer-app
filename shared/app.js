@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-10';
+        const MASTER_BUILD_VERSION = '2026.03.07-12';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -2286,6 +2286,278 @@
             { value: FORFEIT_RESULT.OPPOSITION, label: 'Opposition forfeited (win, 3 pts)' },
             { value: FORFEIT_RESULT.OURS, label: 'We forfeited (loss, 0 pts)' }
         ];
+        const MATCHDAY_FORMATION_PRESETS = {
+            '4-3-3': [
+                { id: 'gk', label: 'GK', line: 'goalkeeper' },
+                { id: 'lb', label: 'LB', line: 'defence' },
+                { id: 'lcb', label: 'LCB', line: 'defence' },
+                { id: 'rcb', label: 'RCB', line: 'defence' },
+                { id: 'rb', label: 'RB', line: 'defence' },
+                { id: 'lcm', label: 'LCM', line: 'midfield' },
+                { id: 'cm', label: 'CM', line: 'midfield' },
+                { id: 'rcm', label: 'RCM', line: 'midfield' },
+                { id: 'lw', label: 'LW', line: 'forward' },
+                { id: 'st', label: 'ST', line: 'forward' },
+                { id: 'rw', label: 'RW', line: 'forward' }
+            ],
+            '4-4-2': [
+                { id: 'gk', label: 'GK', line: 'goalkeeper' },
+                { id: 'lb', label: 'LB', line: 'defence' },
+                { id: 'lcb', label: 'LCB', line: 'defence' },
+                { id: 'rcb', label: 'RCB', line: 'defence' },
+                { id: 'rb', label: 'RB', line: 'defence' },
+                { id: 'lm', label: 'LM', line: 'midfield' },
+                { id: 'lcm', label: 'LCM', line: 'midfield' },
+                { id: 'rcm', label: 'RCM', line: 'midfield' },
+                { id: 'rm', label: 'RM', line: 'midfield' },
+                { id: 'ls', label: 'LS', line: 'forward' },
+                { id: 'rs', label: 'RS', line: 'forward' }
+            ],
+            '4-2-3-1': [
+                { id: 'gk', label: 'GK', line: 'goalkeeper' },
+                { id: 'lb', label: 'LB', line: 'defence' },
+                { id: 'lcb', label: 'LCB', line: 'defence' },
+                { id: 'rcb', label: 'RCB', line: 'defence' },
+                { id: 'rb', label: 'RB', line: 'defence' },
+                { id: 'cdm1', label: 'CDM 1', line: 'midfield' },
+                { id: 'cdm2', label: 'CDM 2', line: 'midfield' },
+                { id: 'lam', label: 'LAM', line: 'midfield' },
+                { id: 'cam', label: 'CAM', line: 'midfield' },
+                { id: 'ram', label: 'RAM', line: 'midfield' },
+                { id: 'st', label: 'ST', line: 'forward' }
+            ],
+            '3-5-2': [
+                { id: 'gk', label: 'GK', line: 'goalkeeper' },
+                { id: 'lcb', label: 'LCB', line: 'defence' },
+                { id: 'cb', label: 'CB', line: 'defence' },
+                { id: 'rcb', label: 'RCB', line: 'defence' },
+                { id: 'lwb', label: 'LWB', line: 'midfield' },
+                { id: 'lcm', label: 'LCM', line: 'midfield' },
+                { id: 'cm', label: 'CM', line: 'midfield' },
+                { id: 'rcm', label: 'RCM', line: 'midfield' },
+                { id: 'rwb', label: 'RWB', line: 'midfield' },
+                { id: 'ls', label: 'LS', line: 'forward' },
+                { id: 'rs', label: 'RS', line: 'forward' }
+            ],
+            '3-4-3': [
+                { id: 'gk', label: 'GK', line: 'goalkeeper' },
+                { id: 'lcb', label: 'LCB', line: 'defence' },
+                { id: 'cb', label: 'CB', line: 'defence' },
+                { id: 'rcb', label: 'RCB', line: 'defence' },
+                { id: 'lm', label: 'LM', line: 'midfield' },
+                { id: 'lcm', label: 'LCM', line: 'midfield' },
+                { id: 'rcm', label: 'RCM', line: 'midfield' },
+                { id: 'rm', label: 'RM', line: 'midfield' },
+                { id: 'lw', label: 'LW', line: 'forward' },
+                { id: 'st', label: 'ST', line: 'forward' },
+                { id: 'rw', label: 'RW', line: 'forward' }
+            ],
+            '5-3-2': [
+                { id: 'gk', label: 'GK', line: 'goalkeeper' },
+                { id: 'lwb', label: 'LWB', line: 'defence' },
+                { id: 'lcb', label: 'LCB', line: 'defence' },
+                { id: 'cb', label: 'CB', line: 'defence' },
+                { id: 'rcb', label: 'RCB', line: 'defence' },
+                { id: 'rwb', label: 'RWB', line: 'defence' },
+                { id: 'lcm', label: 'LCM', line: 'midfield' },
+                { id: 'cm', label: 'CM', line: 'midfield' },
+                { id: 'rcm', label: 'RCM', line: 'midfield' },
+                { id: 'ls', label: 'LS', line: 'forward' },
+                { id: 'rs', label: 'RS', line: 'forward' }
+            ]
+        };
+        const MATCHDAY_FORMATIONS = Object.keys(MATCHDAY_FORMATION_PRESETS);
+        const MATCHDAY_BENCH_GROUPS = ['defence', 'midfield', 'forward'];
+        const matchdayDefaultPlanner = () => ({
+            version: 1,
+            formation: '4-3-3',
+            pasteText: '',
+            matchedEntries: [],
+            starters: {},
+            bench: { defence: [], midfield: [], forward: [] },
+            live: { active: false, onPitch: {}, events: [] },
+            updatedAt: new Date().toISOString()
+        });
+        const normalizePlayerIdValue = (value) => {
+            if (value === undefined || value === null || value === '') return '';
+            return String(value);
+        };
+        const uniquePlayerIds = (list = []) => {
+            const seen = new Set();
+            return list.map(normalizePlayerIdValue).filter((id) => {
+                if (!id || seen.has(id)) return false;
+                seen.add(id);
+                return true;
+            });
+        };
+        const normalizeBenchState = (bench = {}) => ({
+            defence: uniquePlayerIds(Array.isArray(bench.defence) ? bench.defence : []),
+            midfield: uniquePlayerIds(Array.isArray(bench.midfield) ? bench.midfield : []),
+            forward: uniquePlayerIds(Array.isArray(bench.forward) ? bench.forward : [])
+        });
+        const normalizeMatchdayPlanner = (raw = {}) => {
+            const base = matchdayDefaultPlanner();
+            const formation = MATCHDAY_FORMATION_PRESETS[raw?.formation] ? raw.formation : base.formation;
+            const slots = MATCHDAY_FORMATION_PRESETS[formation] || [];
+            const slotIds = new Set(slots.map(slot => slot.id));
+            const starters = {};
+            Object.entries(raw?.starters || {}).forEach(([slotId, playerId]) => {
+                if (!slotIds.has(slotId)) return;
+                const normalized = normalizePlayerIdValue(playerId);
+                if (normalized) starters[slotId] = normalized;
+            });
+            const matchedEntries = Array.isArray(raw?.matchedEntries)
+                ? raw.matchedEntries.map((entry) => ({
+                    rawName: (entry?.rawName || '').toString().trim(),
+                    playerId: normalizePlayerIdValue(entry?.playerId),
+                    suggestionIds: uniquePlayerIds(Array.isArray(entry?.suggestionIds) ? entry.suggestionIds : [])
+                })).filter(entry => entry.rawName)
+                : [];
+            const bench = normalizeBenchState(raw?.bench || {});
+            const liveRaw = raw?.live || {};
+            const onPitch = {};
+            Object.entries(liveRaw.onPitch || {}).forEach(([slotId, playerId]) => {
+                if (!slotIds.has(slotId)) return;
+                const normalized = normalizePlayerIdValue(playerId);
+                if (normalized) onPitch[slotId] = normalized;
+            });
+            const events = Array.isArray(liveRaw.events)
+                ? liveRaw.events.map((event) => ({
+                    id: event?.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                    type: event?.type || 'event',
+                    note: (event?.note || '').toString(),
+                    at: event?.at || new Date().toISOString()
+                }))
+                : [];
+            return {
+                ...base,
+                ...raw,
+                formation,
+                pasteText: (raw?.pasteText || '').toString(),
+                matchedEntries,
+                starters,
+                bench,
+                live: {
+                    active: !!liveRaw.active,
+                    onPitch,
+                    events
+                },
+                updatedAt: raw?.updatedAt || new Date().toISOString()
+            };
+        };
+        const getBenchGroupFromLine = (line = '') => {
+            const clean = (line || '').toString().toLowerCase();
+            if (clean === 'midfield') return 'midfield';
+            if (clean === 'forward') return 'forward';
+            return 'defence';
+        };
+        const getBenchGroupLabel = (group = '') => {
+            const clean = (group || '').toString().toLowerCase();
+            if (clean === 'midfield') return 'Midfield';
+            if (clean === 'forward') return 'Forward';
+            return 'Defence';
+        };
+        const parsePlannerPasteNames = (text = '') => {
+            const cleaned = (text || '').replace(/\r/g, '\n').trim();
+            if (!cleaned) return [];
+            const trailingPositionTokens = [
+                'goalkeeper', 'gk', 'right back', 'left back', 'centre back', 'center back', 'cb',
+                'rb', 'lb', 'rwb', 'lwb', 'def', 'defence', 'defender',
+                'mid', 'midfield', 'midfielder', 'dm', 'cm', 'am', 'rm', 'lm',
+                'wing', 'winger', 'fwd', 'forward', 'striker', 'st', 'cf'
+            ];
+            const numberedInline = !cleaned.includes('\n') && /1[\.\)\s-]*[A-Za-z]/.test(cleaned)
+                ? (cleaned.match(/(\d+)[\.\)\s-]*([^\d]+?)(?=(\d+[\.\)\s-]*[A-Za-z]|$))/g) || [])
+                : [];
+            const sourceRows = numberedInline.length ? numberedInline : cleaned.split(/\n|,/);
+            const seen = new Set();
+            const rows = [];
+            sourceRows.forEach((row) => {
+                let value = (row || '').replace(/^[\s\-\u2022•]+/, '').trim();
+                value = value.replace(/^\d+[\.\)\s-]*/, '').trim();
+                value = value.replace(/\bpaid\b$/i, '').trim();
+                const sortedTokens = [...trailingPositionTokens].sort((a, b) => b.length - a.length);
+                sortedTokens.forEach((token) => {
+                    const regex = new RegExp(`([\\/\\s-]+)${token}$`, 'i');
+                    if (regex.test(value)) {
+                        value = value.replace(regex, '').trim();
+                    }
+                });
+                value = value.replace(/[.,/;:-]+$/, '').trim();
+                if (!value) return;
+                const key = value.toLowerCase();
+                if (seen.has(key)) return;
+                seen.add(key);
+                rows.push(value);
+            });
+            return rows;
+        };
+        const buildPlannerMatchedEntries = (names = [], players = []) => {
+            return names.map((rawName) => {
+                const exact = players.find((player) => `${player.firstName} ${player.lastName}`.trim().toLowerCase() === rawName.toLowerCase())
+                    || players.find((player) => (player.firstName || '').toLowerCase() === rawName.toLowerCase());
+                const suggestions = suggestPlayers(rawName, players, 4);
+                const best = suggestions[0];
+                const picked = exact || ((best && best.score >= 0.72) ? best.player : null);
+                const playerId = picked ? String(picked.id) : '';
+                const suggestionIds = uniquePlayerIds(suggestions.map(item => String(item.player.id)));
+                if (playerId && !suggestionIds.includes(playerId)) suggestionIds.unshift(playerId);
+                return {
+                    rawName,
+                    playerId,
+                    suggestionIds
+                };
+            });
+        };
+        const sanitizePlannerAssignments = (raw = {}) => {
+            const planner = normalizeMatchdayPlanner(raw);
+            const slots = MATCHDAY_FORMATION_PRESETS[planner.formation] || MATCHDAY_FORMATION_PRESETS['4-3-3'];
+            const slotIds = slots.map(slot => slot.id);
+            const rosterSet = new Set(
+                planner.matchedEntries
+                    .map(entry => normalizePlayerIdValue(entry.playerId))
+                    .filter(Boolean)
+            );
+            const starters = {};
+            const usedStarterIds = new Set();
+            slotIds.forEach((slotId) => {
+                const playerId = normalizePlayerIdValue(planner.starters?.[slotId]);
+                if (!playerId || !rosterSet.has(playerId) || usedStarterIds.has(playerId)) return;
+                starters[slotId] = playerId;
+                usedStarterIds.add(playerId);
+            });
+            const benchRaw = normalizeBenchState(planner.bench || {});
+            const bench = { defence: [], midfield: [], forward: [] };
+            const usedBenchIds = new Set([...usedStarterIds]);
+            MATCHDAY_BENCH_GROUPS.forEach((group) => {
+                (benchRaw[group] || []).forEach((value) => {
+                    const playerId = normalizePlayerIdValue(value);
+                    if (!playerId || !rosterSet.has(playerId) || usedBenchIds.has(playerId)) return;
+                    bench[group].push(playerId);
+                    usedBenchIds.add(playerId);
+                });
+            });
+            const liveRaw = planner.live || {};
+            const onPitchSource = liveRaw.onPitch || {};
+            const onPitch = {};
+            const usedOnPitchIds = new Set();
+            slotIds.forEach((slotId) => {
+                const candidate = normalizePlayerIdValue(onPitchSource[slotId] || starters[slotId]);
+                if (!candidate || !rosterSet.has(candidate) || usedOnPitchIds.has(candidate)) return;
+                onPitch[slotId] = candidate;
+                usedOnPitchIds.add(candidate);
+            });
+            return {
+                ...planner,
+                starters,
+                bench,
+                live: {
+                    active: !!liveRaw.active,
+                    onPitch,
+                    events: Array.isArray(liveRaw.events) ? liveRaw.events : []
+                }
+            };
+        };
 
         const Fixtures = ({ categories, opponents, venues, referees, refDefaults, seasonCategories, setOpponents, setVenues, onNavigate }) => {
             const [fixtures, setFixtures] = useState([]);
@@ -2438,6 +2710,33 @@
                 setShowAvailablePlayers(false);
                 setIsPaymentsOpen(false);
             }, [selectedFixture?.id]);
+            useEffect(() => {
+                plannerRef.current = matchdayPlanner;
+            }, [matchdayPlanner]);
+            useEffect(() => {
+                if (!selectedFixture?.id) {
+                    const empty = matchdayDefaultPlanner();
+                    plannerRef.current = empty;
+                    setMatchdayPlanner(empty);
+                    setPlannerSubSlotId('');
+                    setPlannerSubIncomingId('');
+                    setPlannerSwapSlotA('');
+                    setPlannerSwapSlotB('');
+                    return;
+                }
+                const normalized = normalizeMatchdayPlanner(selectedFixture.matchdayPlan || {});
+                plannerRef.current = normalized;
+                setMatchdayPlanner(normalized);
+                setPlannerSubSlotId('');
+                setPlannerSubIncomingId('');
+                setPlannerSwapSlotA('');
+                setPlannerSwapSlotB('');
+            }, [selectedFixture?.id]);
+            useEffect(() => {
+                if (!selectedFixture) return;
+                lockBodyScrollForModal();
+                return () => unlockBodyScrollForModal();
+            }, [selectedFixture]);
             
             // Magic Paste State
             const [isMagicOpen, setIsMagicOpen] = useState(false);
@@ -2454,6 +2753,12 @@
             const [selectedSeason, setSelectedSeason] = useState(seasonCategories?.[0] || '2025/2026 Season');
             const [magicFixtureTarget, setMagicFixtureTarget] = useState('new');
             const [showScheduledMagic, setShowScheduledMagic] = useState(true);
+            const [matchdayPlanner, setMatchdayPlanner] = useState(matchdayDefaultPlanner());
+            const plannerRef = useRef(matchdayDefaultPlanner());
+            const [plannerSubSlotId, setPlannerSubSlotId] = useState('');
+            const [plannerSubIncomingId, setPlannerSubIncomingId] = useState('');
+            const [plannerSwapSlotA, setPlannerSwapSlotA] = useState('');
+            const [plannerSwapSlotB, setPlannerSwapSlotB] = useState('');
             const magicFixtureOptions = useMemo(() => {
                 const allowed = showScheduledMagic ? ['PLAYED', 'SCHEDULED'] : ['PLAYED'];
                 return fixtures.filter(f => allowed.includes(f.status));
@@ -2465,6 +2770,104 @@
             const isSiaVenue = useMemo(() => {
                 return (selectedFixture?.venue || '').toLowerCase().includes('sia sports club');
             }, [selectedFixture]);
+            const plannerSlots = useMemo(() => {
+                const formation = matchdayPlanner?.formation || '4-3-3';
+                return MATCHDAY_FORMATION_PRESETS[formation] || MATCHDAY_FORMATION_PRESETS['4-3-3'];
+            }, [matchdayPlanner?.formation]);
+            const plannerSlotLookup = useMemo(() => {
+                const lookup = {};
+                plannerSlots.forEach(slot => {
+                    lookup[slot.id] = slot;
+                });
+                return lookup;
+            }, [plannerSlots]);
+            const plannerRosterIds = useMemo(() => {
+                const ids = matchdayPlanner.matchedEntries
+                    .map(entry => normalizePlayerIdValue(entry.playerId))
+                    .filter(Boolean);
+                return uniquePlayerIds(ids);
+            }, [matchdayPlanner.matchedEntries]);
+            const plannerPlayerLookup = useMemo(() => {
+                const lookup = {};
+                players.forEach(player => {
+                    lookup[String(player.id)] = player;
+                });
+                return lookup;
+            }, [players]);
+            const plannerAvailablePool = useMemo(() => {
+                return plannerRosterIds.map((id) => plannerPlayerLookup[id]).filter(Boolean);
+            }, [plannerRosterIds, plannerPlayerLookup]);
+            const plannerBenchAllIds = useMemo(() => {
+                const bench = matchdayPlanner?.bench || {};
+                return uniquePlayerIds([
+                    ...(bench.defence || []),
+                    ...(bench.midfield || []),
+                    ...(bench.forward || [])
+                ]);
+            }, [matchdayPlanner?.bench]);
+            const plannerBenchLookup = useMemo(() => {
+                const lookup = {};
+                const bench = matchdayPlanner?.bench || {};
+                MATCHDAY_BENCH_GROUPS.forEach((group) => {
+                    (bench[group] || []).forEach((id) => {
+                        const normalized = normalizePlayerIdValue(id);
+                        if (!normalized) return;
+                        lookup[normalized] = group;
+                    });
+                });
+                return lookup;
+            }, [matchdayPlanner?.bench]);
+            const plannerStarterIds = useMemo(() => {
+                return uniquePlayerIds(Object.values(matchdayPlanner?.starters || {}));
+            }, [matchdayPlanner?.starters]);
+            const plannerCurrentOnPitch = useMemo(() => {
+                if (matchdayPlanner?.live?.active) return matchdayPlanner.live.onPitch || {};
+                const snapshot = {};
+                plannerSlots.forEach((slot) => {
+                    const playerId = normalizePlayerIdValue(matchdayPlanner?.starters?.[slot.id]);
+                    if (playerId) snapshot[slot.id] = playerId;
+                });
+                return snapshot;
+            }, [matchdayPlanner?.live?.active, matchdayPlanner?.live?.onPitch, matchdayPlanner?.starters, plannerSlots]);
+            const plannerOnPitchIds = useMemo(() => {
+                return uniquePlayerIds(Object.values(plannerCurrentOnPitch || {}));
+            }, [plannerCurrentOnPitch]);
+            const plannerReserveIds = useMemo(() => {
+                return plannerRosterIds.filter(id => !plannerOnPitchIds.includes(id) && !plannerBenchAllIds.includes(id));
+            }, [plannerRosterIds, plannerOnPitchIds, plannerBenchAllIds]);
+            const plannerSubIncomingIds = useMemo(() => {
+                return uniquePlayerIds([...plannerBenchAllIds, ...plannerReserveIds]).filter(id => !plannerOnPitchIds.includes(id));
+            }, [plannerBenchAllIds, plannerReserveIds, plannerOnPitchIds]);
+            const plannerOnPitchSlots = useMemo(() => {
+                return plannerSlots.filter(slot => normalizePlayerIdValue(plannerCurrentOnPitch[slot.id]));
+            }, [plannerSlots, plannerCurrentOnPitch]);
+            const plannerVsHistory = useMemo(() => {
+                const opponent = (selectedFixture?.opponent || '').trim().toLowerCase();
+                if (!opponent) return { played: 0, wins: 0, draws: 0, losses: 0, lastFive: [] };
+                const played = fixtures
+                    .filter(f => String(f.id) !== String(selectedFixture?.id))
+                    .filter(f => (f.opponent || '').trim().toLowerCase() === opponent)
+                    .filter(f => getFixtureOutcome(f).played)
+                    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+                const summary = { played: played.length, wins: 0, draws: 0, losses: 0 };
+                played.forEach(f => {
+                    const outcome = getFixtureOutcome(f);
+                    if (outcome.result === 'W') summary.wins += 1;
+                    else if (outcome.result === 'D') summary.draws += 1;
+                    else if (outcome.result === 'L') summary.losses += 1;
+                });
+                return {
+                    ...summary,
+                    lastFive: played.slice(0, 5)
+                };
+            }, [fixtures, selectedFixture?.id, selectedFixture?.opponent]);
+            const plannerPlayerOptions = useMemo(() => {
+                return [...players].sort((a, b) => {
+                    const aName = `${a.firstName || ''} ${a.lastName || ''}`.trim().toLowerCase();
+                    const bName = `${b.firstName || ''} ${b.lastName || ''}`.trim().toLowerCase();
+                    return aName.localeCompare(bName);
+                });
+            }, [players]);
             const playerLookup = useMemo(() => players.reduce((acc, p) => { acc[p.id] = p; return acc; }, {}), [players]);
             const getPlayerByMotmValue = useCallback((value) => {
                 if (value === undefined || value === null) return null;
