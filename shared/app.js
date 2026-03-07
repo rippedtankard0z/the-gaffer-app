@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-21';
+        const MASTER_BUILD_VERSION = '2026.03.07-26';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -1199,7 +1199,6 @@
             const [isEditOpen, setIsEditOpen] = useState(false);
             const [editPlayer, setEditPlayer] = useState(null);
             const [editPlayerKit, setEditPlayerKit] = useState({ shirtSize: '', shortSize: '' });
-            const [isWallOpen, setIsWallOpen] = useState(false);
             const [isDebtOpen, setIsDebtOpen] = useState(false);
             const [newPlayer, setNewPlayer] = useState({
                 firstName: '',
@@ -1596,12 +1595,6 @@
                 await persistPlayerPositions(current);
             };
 
-            const topDebtors = useMemo(() => {
-                return [...players]
-                    .map(p => ({ ...p, balance: balances[p.id] || 0 }))
-                    .filter(p => p.balance < 0)
-                    .sort((a,b) => a.balance - b.balance);
-            }, [players, balances]);
             const selectedPlayerPositions = selectedPlayer ? collectPlayerPositions(selectedPlayer) : [];
             const sortedPlayers = useMemo(() => {
                 const arr = [...players];
@@ -1622,6 +1615,13 @@
                         if (paidA !== paidB) return paidB - paidA;
                         return balB - balA;
                     });
+                } else if (sortPlayersBy === 'games') {
+                    sorted = arr.sort((a, b) => {
+                        const gamesA = Number(playerStats[a.id]?.games || 0);
+                        const gamesB = Number(playerStats[b.id]?.games || 0);
+                        if (gamesA !== gamesB) return gamesA - gamesB;
+                        return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+                    });
                 } else if (sortPlayersBy === 'active') {
                     sorted = arr.sort((a, b) => {
                         const actA = a.isActive === false ? 0 : 1;
@@ -1640,7 +1640,7 @@
                     return sorted;
                 }
                 return sortDirection === 'desc' ? [...sorted].reverse() : sorted;
-            }, [players, sortPlayersBy, balances, sortDirection]);
+            }, [players, sortPlayersBy, balances, playerStats, sortDirection]);
 
             const filteredPlayers = useMemo(() => {
                 const term = playerSearch.trim().toLowerCase();
@@ -1751,76 +1751,6 @@
                 }
             };
 
-            const generateWallImage = () => {
-                const canvas = document.createElement('canvas');
-                const listStart = 250;
-                const rowHeight = 170;
-                const footerHeight = 200;
-                const rowCount = Math.max(topDebtors.length, 1);
-                canvas.width = 900;
-                canvas.height = Math.max(1200, listStart + (rowCount * rowHeight) + footerHeight);
-                const ctx = canvas.getContext('2d');
-
-                // Background
-                const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-                grad.addColorStop(0, '#0f172a');
-                grad.addColorStop(1, '#1e293b');
-                ctx.fillStyle = grad;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                ctx.fillStyle = '#ffffff';
-                ctx.font = 'bold 48px "Space Grotesk", sans-serif';
-                ctx.fillText('Wall of Shame', 60, 90);
-                ctx.font = '24px "Inter", sans-serif';
-                ctx.fillStyle = '#cbd5e1';
-                ctx.fillText('Pay up, lads. 💸', 60, 140);
-
-                ctx.fillStyle = '#475569';
-                ctx.fillRect(60, 180, canvas.width - 120, 2);
-
-                topDebtors.forEach((p, idx) => {
-                    const y = listStart + idx * rowHeight;
-                    ctx.fillStyle = '#94a3b8';
-                    ctx.font = '18px "Inter", sans-serif';
-                    ctx.fillText(`#${idx + 1}`, 60, y);
-
-                    ctx.fillStyle = '#e2e8f0';
-                    ctx.font = 'bold 36px "Space Grotesk", sans-serif';
-                    ctx.fillText(`${p.firstName} ${p.lastName}`, 120, y + 10);
-
-                    ctx.fillStyle = '#fca5a5';
-                    ctx.font = '28px "Inter", sans-serif';
-                    ctx.fillText(formatCurrency(p.balance), 120, y + 60);
-
-                    ctx.fillStyle = '#334155';
-                    ctx.fillRect(60, y + 80, canvas.width - 120, 2);
-                });
-
-                const stampY = canvas.height - 140;
-                ctx.fillStyle = '#10b981';
-                ctx.beginPath();
-                const x = canvas.width - 260, y = stampY, w = 180, h = 60, r = 14;
-                ctx.moveTo(x + r, y);
-                ctx.lineTo(x + w - r, y);
-                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-                ctx.lineTo(x + w, y + h - r);
-                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-                ctx.lineTo(x + r, y + h);
-                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-                ctx.lineTo(x, y + r);
-                ctx.quadraticCurveTo(x, y, x + r, y);
-                ctx.closePath();
-                ctx.fill();
-                ctx.fillStyle = '#0f172a';
-                ctx.font = 'bold 22px "Inter", sans-serif';
-                ctx.fillText('BRITISH EXILES', canvas.width - 248, stampY + 38);
-
-                const link = document.createElement('a');
-                link.download = `wall-of-shame-${Date.now()}.png`;
-                link.href = canvas.toDataURL('image/png');
-                link.click();
-            };
-
             return (
                 <div className="space-y-6 pb-20 animate-fade-in">
                     <PageHeader
@@ -1834,10 +1764,7 @@
                         }
                     />
                     <div className="px-1 space-y-3">
-                        <div className="grid grid-cols-2 gap-2">
-                            <button onClick={() => setIsWallOpen(true)} className="w-full min-h-[44px] text-xs font-bold bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg border border-rose-100 flex items-center justify-center gap-1">
-                                <Icon name="AlertTriangle" size={14} /> Wall of Shame
-                            </button>
+                        <div className="grid grid-cols-1 gap-2">
                             <button onClick={() => setIsDebtOpen(true)} className="w-full min-h-[44px] text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center justify-center gap-1">
                                 <Icon name="MessageSquare" size={14} /> Debt Message
                             </button>
@@ -1847,6 +1774,7 @@
                             <select value={sortPlayersBy} onChange={e => setSortPlayersBy(e.target.value)} className="bg-white border border-slate-200 rounded-lg p-2 text-xs">
                                 <option value="name">Name</option>
                                 <option value="shirt">Shirt #</option>
+                                <option value="games">Games played</option>
                                 <option value="paid">Paid status</option>
                                 <option value="active">Active status</option>
                             </select>
@@ -2218,25 +2146,6 @@
                         )}
                     </Modal>
 
-                    <Modal isOpen={isWallOpen} onClose={() => setIsWallOpen(false)} title="Wall of Shame">
-                        <div className="space-y-3">
-                            <div className="text-xs text-slate-500">All players with outstanding balances. Tap download to drop this image into WhatsApp.</div>
-                            {topDebtors.map((p, i) => (
-                                <div key={p.id} className="flex items-center justify-between p-3 rounded-xl border border-rose-100 bg-rose-50/60">
-                                    <div>
-                                        <div className="text-xs uppercase font-bold text-rose-500">#{i + 1}</div>
-                                        <div className="text-sm font-bold text-rose-800">{p.firstName} {p.lastName}</div>
-                                    </div>
-                                    <div className="text-sm font-bold text-rose-700">{formatCurrency(p.balance)}</div>
-                                </div>
-                            ))}
-                    {topDebtors.length === 0 && <div className="text-center text-sm text-slate-400">Nobody owes a dime. Love to see it.</div>}
-                            <button onClick={generateWallImage} className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-rose-500/20">
-                                Download Share Image
-                            </button>
-                        </div>
-                    </Modal>
-
                     <Modal isOpen={isDebtOpen} onClose={() => setIsDebtOpen(false)} title="WhatsApp Debt Blast">
                         <div className="space-y-3">
                             <p className="text-xs text-slate-500">Copy this and drop it into WhatsApp so everyone sees what they owe.</p>
@@ -2541,7 +2450,7 @@
             opponent: '',
             date: new Date().toISOString().split('T')[0],
             venue: '',
-            time: 'TBC',
+            time: '15:00',
             feeAmount: 20,
             competitionType: 'LEAGUE',
             seasonTag: seasonCategories?.[0] || '2025/2026 Season',
@@ -2562,8 +2471,8 @@
             const [newCost, setNewCost] = useState({ description: '', amount: '', category: 'Referee Fee', flow: 'payable' });
             const [payee, setPayee] = useState({ type: 'referee', value: '' });
             const [showAvailablePlayers, setShowAvailablePlayers] = useState(false);
+            const [isSquadPanelOpen, setIsSquadPanelOpen] = useState(false);
             const [isPaymentsOpen, setIsPaymentsOpen] = useState(false);
-            const [gamesSubview, setGamesSubview] = useState('schedule');
             const [openSeasonTags, setOpenSeasonTags] = useState([]);
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const matchDayRef = useRef(null);
@@ -2699,6 +2608,7 @@
             useEffect(() => {
                 setShowAvailablePlayers(false);
                 setIsPaymentsOpen(false);
+                setIsSquadPanelOpen(launchMode !== 'matchday');
             }, [selectedFixture?.id]);
             useEffect(() => {
                 plannerRef.current = matchdayPlanner;
@@ -2943,27 +2853,6 @@
                     return acc;
                 }, {});
             }, [allTx]);
-            const motmBoard = useMemo(() => {
-                if (!fixtures.length) return [];
-                return fixtures
-                    .filter(f => f.manOfTheMatch)
-                    .map(f => {
-                        const label = resolveMotmLabel(f.manOfTheMatch);
-                        if (!label) return null;
-                        const timestamp = Date.parse(f.date || '');
-                        return {
-                            id: f.id,
-                            opponent: f.opponent || 'Opponent',
-                            label,
-                            date: f.date,
-                            timestamp: Number.isNaN(timestamp) ? 0 : timestamp,
-                            homeScore: f.homeScore,
-                            awayScore: f.awayScore
-                        };
-                    })
-                    .filter(Boolean)
-                    .sort((a, b) => b.timestamp - a.timestamp);
-            }, [fixtures, resolveMotmLabel]);
             const fixturesBySeason = useMemo(() => {
                 const grouped = {};
                 const order = [];
@@ -3006,6 +2895,8 @@
                     .sort((a, b) => a.ts - b.ts)
                     .map(row => row.fixture);
             }, [fixtures]);
+            const matchdayPrimaryFixture = matchdayUpcomingFixtures[0] || null;
+            const matchdayHiddenCount = Math.max(0, matchdayUpcomingFixtures.length - 1);
             useEffect(() => {
                 // Prune any open seasons that no longer exist after data refresh.
                 setOpenSeasonTags(prev => prev.filter(tag => fixturesBySeason.grouped[tag]));
@@ -4738,12 +4629,12 @@
                 <div className="space-y-6 pb-20 animate-fade-in">
                     <PageHeader
                         title={launchMode === 'matchday' ? 'Match Day' : 'Games'}
-                        subtitle={launchMode === 'matchday' ? 'Temporary planning board for upcoming matches.' : 'Season schedule and result history.'}
+                        subtitle={launchMode === 'matchday' ? 'One-match lineup board with live subs and swaps.' : 'Season schedule and result history.'}
                         actions={
                             <>
                                 <button onClick={() => openAddFixtureModal({ openAfterCreate: launchMode === 'matchday' })} className="min-h-[44px] px-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/20 flex items-center gap-1.5 hover:bg-slate-800 transition-colors text-xs font-bold">
                                     <Icon name="Plus" size={16} />
-                                    {launchMode === 'matchday' ? 'Setup Upcoming' : 'New Game'}
+                                    {launchMode === 'matchday' ? 'New Match Day' : 'New Game'}
                                 </button>
                                 {!isMatchdayWorkspace && (
                                     <>
@@ -4783,48 +4674,13 @@
                             </div>
                         ))}
                     </div>
-
-                    <div className="bg-white p-2 rounded-2xl border border-slate-100 flex gap-2 text-[11px] font-bold">
-                        <button onClick={() => setGamesSubview('schedule')} className={`flex-1 py-2 rounded-xl ${gamesSubview === 'motm' ? 'bg-slate-50 text-slate-700' : 'bg-slate-900 text-white'}`}>
-                            Schedule
-                        </button>
-                        <button onClick={() => setGamesSubview('motm')} className={`flex-1 py-2 rounded-xl ${gamesSubview === 'motm' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>
-                            Man of the Match Board
-                        </button>
-                    </div>
-
-                    {gamesSubview === 'motm' && (
-                        <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
-                            <div className="flex items-center justify-between">
-                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Man of the Match Board</div>
-                                <span className="text-[10px] font-semibold text-slate-400">{motmBoard.length} awards logged</span>
-                            </div>
-                            {motmBoard.length ? (
-                                <div className="space-y-2 pr-1">
-                                    {motmBoard.slice(0, 8).map(item => {
-                                        const dateLabel = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC';
-                                        const hasScore = typeof item.homeScore === 'number' && typeof item.awayScore === 'number';
-                                        const scoreLabel = hasScore ? ` · Exiles ${item.homeScore}-${item.awayScore}` : '';
-                                        return (
-                                            <div key={`motm-board-${item.id}`} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
-                                                <div className="text-sm font-bold text-slate-900">{item.label}</div>
-                                                <div className="text-[11px] text-slate-500">{dateLabel} · vs {item.opponent}{scoreLabel}</div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            ) : (
-                                <div className="text-sm text-slate-400">No awards recorded yet. Save a score to start tracking.</div>
-                            )}
-                        </div>
-                    )}
                         </>
                     )}
 
                     <div className="space-y-4">
                         {isMatchdayWorkspace ? (
                             <>
-                                {matchdayUpcomingFixtures.length === 0 ? (
+                                {!matchdayPrimaryFixture ? (
                                     <div className="bg-white border border-slate-100 rounded-2xl p-5 shadow-soft text-center space-y-3">
                                         <div className="text-sm text-slate-500">No upcoming game yet.</div>
                                         <button onClick={() => openAddFixtureModal({ openAfterCreate: true })} className="min-h-[44px] px-4 bg-slate-900 text-white rounded-xl font-bold text-sm inline-flex items-center gap-2">
@@ -4834,32 +4690,31 @@
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
-                                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Upcoming Match Plans</div>
-                                        <div className="space-y-2">
-                                            {matchdayUpcomingFixtures.map((fixture) => {
-                                                const isScheduled = (fixture.status || 'SCHEDULED') === 'SCHEDULED';
-                                                return (
-                                                    <button
-                                                        key={`matchday-upcoming-${fixture.id}`}
-                                                        type="button"
-                                                        onClick={() => openMatchMode(fixture)}
-                                                        className="w-full text-left bg-white border border-slate-100 rounded-2xl p-4 shadow-soft hover:border-brand-200 transition-colors"
-                                                    >
-                                                        <div className="flex items-start justify-between gap-3">
-                                                            <div>
-                                                                <div className="text-sm font-bold text-slate-900">vs {fixture.opponent || 'Opponent TBC'}</div>
-                                                                <div className="text-[11px] text-slate-500 mt-1">{fixture.venue || 'Venue TBC'} · {new Date(fixture.date || Date.now()).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
-                                                            </div>
-                                                            <div className="text-right">
-                                                                <div className="text-sm font-bold text-slate-900">{renderTimeLabel(fixture.time)}</div>
-                                                                <div className={`text-[10px] font-bold mt-1 ${isScheduled ? 'text-emerald-600' : 'text-slate-400'}`}>{isScheduled ? 'UPCOMING' : 'PLAYED'}</div>
-                                                            </div>
-                                                        </div>
-                                                    </button>
-                                                );
-                                            })}
+                                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Current Match Day</div>
+                                        <button
+                                            type="button"
+                                            onClick={() => openMatchMode(matchdayPrimaryFixture)}
+                                            className="w-full text-left bg-white border border-slate-100 rounded-2xl p-4 shadow-soft hover:border-brand-200 transition-colors"
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div className="text-sm font-bold text-slate-900">vs {matchdayPrimaryFixture.opponent || 'Opponent TBC'}</div>
+                                                    <div className="text-[11px] text-slate-500 mt-1">
+                                                        {matchdayPrimaryFixture.venue || 'Venue TBC'} · {new Date(matchdayPrimaryFixture.date || Date.now()).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="text-sm font-bold text-slate-900">{renderTimeLabel(matchdayPrimaryFixture.time)}</div>
+                                                    <div className="text-[10px] font-bold mt-1 text-emerald-600">UPCOMING</div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                        {matchdayHiddenCount > 0 && (
+                                            <div className="text-[11px] text-slate-500">
+                                                {matchdayHiddenCount} later upcoming game{matchdayHiddenCount === 1 ? '' : 's'} hidden. Match Day tracks one game at a time.
+                                            </div>
+                                        )}
                                         </div>
-                                    </div>
                                 )}
                             </>
                         ) : (
@@ -4928,7 +4783,7 @@
 
                     <Modal isOpen={isAddOpen} onClose={() => { setIsAddOpen(false); setMatchdayOpenAfterAdd(false); }} title={isMatchdayWorkspace ? 'Create Match Day Plan' : 'Add Fixture'}>
                         <form onSubmit={handleAdd} className="space-y-4">
-                                <select required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                <select required className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base"
                                     value={newFixture.opponent} onChange={e => setNewFixture({...newFixture, opponent: e.target.value})}>
                                     <option value="">Select opponent</option>
                                     {opponents.map(o => <option key={o.id} value={o.name}>{o.name}</option>)}
@@ -4936,20 +4791,20 @@
                                 </select>
                                 {newFixture.opponent === '__new__' && (
                                     <div className="space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
-                                        <input placeholder="Opponent name" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickOpponent.name} onChange={e => setQuickOpponent({ ...quickOpponent, name: e.target.value })} />
-                                        <input placeholder="Payee / bank" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickOpponent.payee} onChange={e => setQuickOpponent({ ...quickOpponent, payee: e.target.value })} />
-                                        <input placeholder="Contact name/email" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickOpponent.contact} onChange={e => setQuickOpponent({ ...quickOpponent, contact: e.target.value })} />
-                                        <input placeholder="Phone number" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickOpponent.phone} onChange={e => setQuickOpponent({ ...quickOpponent, phone: e.target.value })} />
-                                        <button type="button" onClick={async () => { const opp = await createQuickOpponent(); if(opp) setNewFixture({ ...newFixture, opponent: opp.name }); }} className="w-full bg-slate-900 text-white font-bold rounded-lg py-2 text-sm">Save Opponent</button>
+                                        <input placeholder="Opponent name" className="w-full min-h-[46px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={quickOpponent.name} onChange={e => setQuickOpponent({ ...quickOpponent, name: e.target.value })} />
+                                        <input placeholder="Payee / bank" className="w-full min-h-[46px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={quickOpponent.payee} onChange={e => setQuickOpponent({ ...quickOpponent, payee: e.target.value })} />
+                                        <input placeholder="Contact name/email" className="w-full min-h-[46px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={quickOpponent.contact} onChange={e => setQuickOpponent({ ...quickOpponent, contact: e.target.value })} />
+                                        <input placeholder="Phone number" className="w-full min-h-[46px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={quickOpponent.phone} onChange={e => setQuickOpponent({ ...quickOpponent, phone: e.target.value })} />
+                                        <button type="button" onClick={async () => { const opp = await createQuickOpponent(); if(opp) setNewFixture({ ...newFixture, opponent: opp.name }); }} className="w-full min-h-[46px] bg-slate-900 text-white font-bold rounded-lg py-2 text-base">Save Opponent</button>
                                     </div>
                                 )}
                             <div className="grid grid-cols-2 gap-4">
-                                <input type="date" required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                <input type="date" required className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base"
                                     value={newFixture.date} onChange={e => setNewFixture({...newFixture, date: e.target.value})} />
-                                <input type="text" required placeholder="15:00 or TBC" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                                <input type="text" required placeholder="15:00" className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base"
                                     value={newFixture.time} onChange={e => setNewFixture({...newFixture, time: e.target.value})} />
                             </div>
-                    <select required className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" 
+                    <select required className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base"
                         value={newFixture.venue} onChange={e => setNewFixture({...newFixture, venue: e.target.value})}>
                         <option value="">Select venue</option>
                         {venues.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
@@ -4957,11 +4812,11 @@
                             </select>
                             {newFixture.venue === '__new__' && (
                                 <div className="space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
-                                    <input placeholder="Venue name" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickVenue.name} onChange={e => setQuickVenue({ ...quickVenue, name: e.target.value })} />
-                                    <input placeholder="Address" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickVenue.address} onChange={e => setQuickVenue({ ...quickVenue, address: e.target.value })} />
-                                    <input placeholder="Price" type="number" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickVenue.price} onChange={e => setQuickVenue({ ...quickVenue, price: e.target.value })} />
-                                    <input placeholder="Payee / contact" className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={quickVenue.payee} onChange={e => setQuickVenue({ ...quickVenue, payee: e.target.value })} />
-                                    <button type="button" onClick={async () => { const ven = await createQuickVenue(); if(ven) setNewFixture({ ...newFixture, venue: ven.name }); }} className="w-full bg-slate-900 text-white font-bold rounded-lg py-2 text-sm">Save Venue</button>
+                                    <input placeholder="Venue name" className="w-full min-h-[46px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={quickVenue.name} onChange={e => setQuickVenue({ ...quickVenue, name: e.target.value })} />
+                                    <input placeholder="Address" className="w-full min-h-[46px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={quickVenue.address} onChange={e => setQuickVenue({ ...quickVenue, address: e.target.value })} />
+                                    <input placeholder="Price" type="number" className="w-full min-h-[46px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={quickVenue.price} onChange={e => setQuickVenue({ ...quickVenue, price: e.target.value })} />
+                                    <input placeholder="Payee / contact" className="w-full min-h-[46px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={quickVenue.payee} onChange={e => setQuickVenue({ ...quickVenue, payee: e.target.value })} />
+                                    <button type="button" onClick={async () => { const ven = await createQuickVenue(); if(ven) setNewFixture({ ...newFixture, venue: ven.name }); }} className="w-full min-h-[46px] bg-slate-900 text-white font-bold rounded-lg py-2 text-base">Save Venue</button>
                                 </div>
                             )}
                             {isMatchdayWorkspace ? (
@@ -4970,16 +4825,16 @@
                                 </div>
                             ) : (
                                 <>
-                                    <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" value={newFixture.competitionType} onChange={e => setNewFixture({ ...newFixture, competitionType: e.target.value })}>
+                                    <select className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base" value={newFixture.competitionType} onChange={e => setNewFixture({ ...newFixture, competitionType: e.target.value })}>
                                         {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
                                     </select>
-                                    <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" value={normalizeForfeitResult(newFixture.forfeitResult)} onChange={e => setNewFixture({ ...newFixture, forfeitResult: e.target.value })}>
+                                    <select className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base" value={normalizeForfeitResult(newFixture.forfeitResult)} onChange={e => setNewFixture({ ...newFixture, forfeitResult: e.target.value })}>
                                         {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                                     </select>
-                                    <select className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none" value={newFixture.seasonTag} onChange={e => setNewFixture({ ...newFixture, seasonTag: e.target.value })}>
+                                    <select className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base" value={newFixture.seasonTag} onChange={e => setNewFixture({ ...newFixture, seasonTag: e.target.value })}>
                                         {seasonCategories.map(s => <option key={s} value={s}>{s}</option>)}
                                     </select>
-                                    <input type="number" min="0" step="1" placeholder="Player Fee (default 20)" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                    <input type="number" min="0" step="1" placeholder="Player Fee (default 20)" className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base"
                                         value={newFixture.feeAmount} onChange={e => setNewFixture({...newFixture, feeAmount: Number(e.target.value)})} />
                                 </>
                             )}
@@ -5017,42 +4872,42 @@
 
                                 <div className="bg-slate-50 p-4 rounded-2xl space-y-3">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                        <select className="bg-white border border-slate-200 rounded-lg p-3 text-sm" value={selectedFixture.opponent} onChange={e => setSelectedFixture({ ...selectedFixture, opponent: e.target.value })}>
+                                        <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.opponent} onChange={e => setSelectedFixture({ ...selectedFixture, opponent: e.target.value })}>
                                             <option value="">Select opponent</option>
                                             {opponents.map(o => <option key={o.id} value={o.name}>{o.name}</option>)}
                                             <option value="__new__">Add new opponent…</option>
                                         </select>
                                         {selectedFixture.opponent === '__new__' && (
                                             <div className="col-span-2 md:col-span-3 space-y-2 bg-white border border-slate-200 rounded-lg p-3">
-                                                <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" placeholder="Opponent name" value={quickOpponent.name} onChange={e => setQuickOpponent({ ...quickOpponent, name: e.target.value })} />
-                                                <button onClick={async () => { const opp = await createQuickOpponent(); if(opp) setSelectedFixture({ ...selectedFixture, opponent: opp.name }); }} className="bg-slate-900 text-white text-sm font-bold px-3 py-2 rounded-lg">Save Opponent</button>
+                                                <input className="w-full min-h-[46px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-base" placeholder="Opponent name" value={quickOpponent.name} onChange={e => setQuickOpponent({ ...quickOpponent, name: e.target.value })} />
+                                                <button onClick={async () => { const opp = await createQuickOpponent(); if(opp) setSelectedFixture({ ...selectedFixture, opponent: opp.name }); }} className="min-h-[46px] bg-slate-900 text-white text-base font-bold px-3 py-2 rounded-lg">Save Opponent</button>
                                             </div>
                                         )}
-                                        <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" type="date" value={selectedFixture.date?.split('T')[0] || ''} onChange={e => setSelectedFixture({ ...selectedFixture, date: e.target.value })} />
-                                        <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" type="text" placeholder="15:00 or TBC" value={selectedFixture.time} onChange={e => setSelectedFixture({ ...selectedFixture, time: e.target.value })} />
-                                        <select className="bg-white border border-slate-200 rounded-lg p-3 text-sm" value={selectedFixture.venue} onChange={e => setSelectedFixture({ ...selectedFixture, venue: e.target.value })}>
+                                        <input className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" type="date" value={selectedFixture.date?.split('T')[0] || ''} onChange={e => setSelectedFixture({ ...selectedFixture, date: e.target.value })} />
+                                        <input className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" type="text" placeholder="15:00" value={selectedFixture.time} onChange={e => setSelectedFixture({ ...selectedFixture, time: e.target.value })} />
+                                        <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.venue} onChange={e => setSelectedFixture({ ...selectedFixture, venue: e.target.value })}>
                                             <option value="">Select venue</option>
                                             {venues.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
                                             <option value="__new__">Add new venue…</option>
                                         </select>
                                         {selectedFixture.venue === '__new__' && (
                                             <div className="col-span-2 md:col-span-3 space-y-2 bg-white border border-slate-200 rounded-lg p-3">
-                                                <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" placeholder="Venue name" value={quickVenue.name} onChange={e => setQuickVenue({ ...quickVenue, name: e.target.value })} />
-                                                <button onClick={async () => { const ven = await createQuickVenue(); if(ven) setSelectedFixture({ ...selectedFixture, venue: ven.name }); }} className="bg-slate-900 text-white text-sm font-bold px-3 py-2 rounded-lg">Save Venue</button>
+                                                <input className="w-full min-h-[46px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-base" placeholder="Venue name" value={quickVenue.name} onChange={e => setQuickVenue({ ...quickVenue, name: e.target.value })} />
+                                                <button onClick={async () => { const ven = await createQuickVenue(); if(ven) setSelectedFixture({ ...selectedFixture, venue: ven.name }); }} className="min-h-[46px] bg-slate-900 text-white text-base font-bold px-3 py-2 rounded-lg">Save Venue</button>
                                             </div>
                                         )}
                             {!isMatchdayWorkspace && (
                                 <>
-                                    <select className="bg-white border border-slate-200 rounded-lg p-3 text-sm" value={selectedFixture.competitionType || 'LEAGUE'} onChange={e => setSelectedFixture({ ...selectedFixture, competitionType: e.target.value })}>
+                                    <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.competitionType || 'LEAGUE'} onChange={e => setSelectedFixture({ ...selectedFixture, competitionType: e.target.value })}>
                                         {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
                                     </select>
-                                    <select className="bg-white border border-slate-200 rounded-lg p-3 text-sm" value={normalizeForfeitResult(selectedFixture.forfeitResult)} onChange={e => setSelectedFixture({ ...selectedFixture, forfeitResult: e.target.value })}>
+                                    <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={normalizeForfeitResult(selectedFixture.forfeitResult)} onChange={e => setSelectedFixture({ ...selectedFixture, forfeitResult: e.target.value })}>
                                         {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                                     </select>
-                                    <select className="bg-white border border-slate-200 rounded-lg p-3 text-sm" value={selectedFixture.seasonTag || (seasonCategories?.[0] || '2025/2026 Season')} onChange={e => setSelectedFixture({ ...selectedFixture, seasonTag: e.target.value })}>
+                                    <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.seasonTag || (seasonCategories?.[0] || '2025/2026 Season')} onChange={e => setSelectedFixture({ ...selectedFixture, seasonTag: e.target.value })}>
                                         {seasonCategories.map(s => <option key={s} value={s}>{s}</option>)}
                                     </select>
-                                    <input className="bg-white border border-slate-200 rounded-lg p-3 text-sm" type="number" min="0" step="1" value={selectedFixture.feeAmount || 20} onChange={e => setSelectedFixture({ ...selectedFixture, feeAmount: Number(e.target.value) })} placeholder="Player fee" />
+                                    <input className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" type="number" min="0" step="1" value={selectedFixture.feeAmount || 20} onChange={e => setSelectedFixture({ ...selectedFixture, feeAmount: Number(e.target.value) })} placeholder="Player fee" />
                                 </>
                             )}
                         </div>
@@ -5081,44 +4936,15 @@
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
                                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                         <div>
-                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Matchday Planner (Phase 2)</div>
-                                            <p className="text-[11px] text-slate-500">Paste names, map players, set formation, then use the tap-friendly pitch board for live subs/swaps so you always know who is on the pitch.</p>
-                                        </div>
-                                        <div className={`text-[11px] font-bold px-3 py-1 rounded-full border ${plannerLiveActive ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
-                                            {plannerLiveActive ? 'Live tracking ON' : 'Planning mode'}
+                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Match Day</div>
                                         </div>
                                     </div>
-                                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
-                                        <span className="font-semibold">Vs history:</span>
-                                        <span>Played {plannerVsHistory.played}</span>
-                                        <span>W {plannerVsHistory.wins}</span>
-                                        <span>D {plannerVsHistory.draws}</span>
-                                        <span>L {plannerVsHistory.losses}</span>
-                                    </div>
-                                    {plannerVsHistory.lastFive.length > 0 && (
-                                        <div className="flex flex-wrap gap-1">
-                                            {plannerVsHistory.lastFive.map((fixture) => {
-                                                const outcome = getFixtureOutcome(fixture);
-                                                const result = outcome.result || '-';
-                                                const tone = result === 'W'
-                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                    : result === 'L'
-                                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                                        : 'bg-slate-50 text-slate-700 border-slate-200';
-                                                return (
-                                                    <span key={`planner-last-${fixture.id}`} className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${tone}`}>
-                                                        {result} · {new Date(fixture.date || Date.now()).toLocaleDateString()}
-                                                    </span>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
 
                                     <div className="space-y-2">
                                         <label className="text-[11px] font-bold text-slate-500 uppercase">Paste Player List</label>
                                         <textarea
-                                            className="w-full min-h-[120px] bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm"
-                                            placeholder="Paste one name per line, or numbered list from WhatsApp."
+                                            className="w-full min-h-[130px] bg-slate-50 border border-slate-200 rounded-xl p-3 text-base"
+                                            placeholder="Paste player names from Google Sheets (one name per line)."
                                             value={matchdayPlanner.pasteText || ''}
                                             onChange={(e) => {
                                                 const next = { ...matchdayPlanner, pasteText: e.target.value };
@@ -5126,14 +4952,25 @@
                                                 plannerRef.current = next;
                                             }}
                                         />
-                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                            <button onClick={plannerAutoMatchRoster} className="min-h-[44px] bg-slate-900 text-white font-bold rounded-lg text-sm">Auto-match roster</button>
-                                            <button onClick={plannerLoadSelectedSquad} className="min-h-[44px] bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-sm">Use selected squad</button>
-                                            <button onClick={async () => {
-                                                await updatePlanner(prev => ({ ...prev, pasteText: matchdayPlanner.pasteText || '' }), { silent: true });
-                                                pushFixtureToast('Planner text saved.', 'success');
-                                            }} className="min-h-[44px] bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-sm">
-                                                Save text
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                            <button onClick={plannerAutoMatchRoster} className="min-h-[48px] bg-slate-900 text-white font-bold rounded-lg text-base">Map Names</button>
+                                            <button
+                                                onClick={async () => {
+                                                    const empty = matchdayDefaultPlanner();
+                                                    await updatePlanner(prev => ({
+                                                        ...empty,
+                                                        formation: prev?.formation || empty.formation
+                                                    }), { silent: true });
+                                                    setPlannerSubSlotId('');
+                                                    setPlannerSubIncomingId('');
+                                                    setPlannerSwapSlotA('');
+                                                    setPlannerSwapSlotB('');
+                                                    setPlannerBoardSelectedSlotId('');
+                                                    setPlannerBoardAssignPlayerId('');
+                                                }}
+                                                className="min-h-[48px] bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-base"
+                                            >
+                                                Clear list
                                             </button>
                                         </div>
                                     </div>
@@ -5144,14 +4981,14 @@
                                             <div className="text-[11px] text-slate-500">Matched {plannerMatchedCount} of {(matchdayPlanner?.matchedEntries || []).length}</div>
                                         </div>
                                         {(matchdayPlanner?.matchedEntries || []).length === 0 ? (
-                                            <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No planner players yet. Paste names then tap Auto-match roster.</div>
+                                            <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No players mapped yet. Paste names and tap Map Names.</div>
                                         ) : (
-                                            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                            <div className="space-y-2">
                                                 {(matchdayPlanner?.matchedEntries || []).map((entry, index) => (
                                                     <div key={`planner-entry-${index}-${entry.rawName}`} className={`rounded-xl border p-2 ${entry.playerId ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40'}`}>
                                                         <div className="text-sm font-semibold text-slate-900">{entry.rawName}</div>
                                                         <select
-                                                            className="mt-2 w-full bg-white border border-slate-200 rounded-lg p-2 text-sm"
+                                                            className="mt-2 w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
                                                             value={entry.playerId || ''}
                                                             onChange={e => plannerSetEntryPlayer(index, e.target.value)}
                                                         >
@@ -5179,7 +5016,7 @@
                                     <div className="space-y-2">
                                         <div className="flex flex-wrap items-center gap-2">
                                             <select
-                                                className={`bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm ${plannerLiveActive ? 'text-slate-400 cursor-not-allowed' : ''}`}
+                                                className={`min-h-[48px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-base ${plannerLiveActive ? 'text-slate-400 cursor-not-allowed' : ''}`}
                                                 value={matchdayPlanner.formation || '4-3-3'}
                                                 onChange={e => plannerSetFormation(e.target.value)}
                                                 disabled={plannerLiveActive}
@@ -5191,7 +5028,7 @@
                                             <button
                                                 onClick={plannerAutoFillStarters}
                                                 disabled={plannerLiveActive || !plannerRosterIds.length}
-                                                className={`min-h-[40px] px-3 rounded-lg text-sm font-bold border ${plannerLiveActive || !plannerRosterIds.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white text-slate-700 border-slate-200'}`}
+                                                className={`min-h-[48px] px-4 rounded-lg text-base font-bold border ${plannerLiveActive || !plannerRosterIds.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white text-slate-700 border-slate-200'}`}
                                             >
                                                 Auto-fill starters
                                             </button>
@@ -5204,7 +5041,7 @@
                                                 <div key={`planner-slot-${slot.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
                                                     <div className="text-[11px] font-bold text-slate-600 uppercase">{slot.label} · {getBenchGroupLabel(getBenchGroupFromLine(slot.line))}</div>
                                                     <select
-                                                        className={`mt-1 w-full bg-white border border-slate-200 rounded-lg p-2 text-sm ${plannerLiveActive ? 'text-slate-400 cursor-not-allowed' : ''}`}
+                                                        className={`mt-1 w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base ${plannerLiveActive ? 'text-slate-400 cursor-not-allowed' : ''}`}
                                                         value={matchdayPlanner?.starters?.[slot.id] || ''}
                                                         onChange={e => plannerSetStarter(slot.id, e.target.value)}
                                                         disabled={plannerLiveActive}
@@ -5227,11 +5064,11 @@
 
                                     <div className="space-y-3 rounded-2xl border border-emerald-100 bg-emerald-50/30 p-3">
                                         <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <div className="text-[11px] font-bold text-slate-600 uppercase">Pitch Board (Phase 2)</div>
+                                            <div className="text-[11px] font-bold text-slate-600 uppercase">Pitch Board</div>
                                             <div className="text-[11px] text-slate-500">
                                                 {plannerLiveActive
                                                     ? (plannerBoardMode === 'swap' ? 'Tap mode: swap' : 'Tap mode: substitute')
-                                                    : 'Tap mode: assign starters'}
+                                                    : 'Preview lineup'}
                                             </div>
                                         </div>
                                         {plannerLiveActive ? (
@@ -5242,7 +5079,7 @@
                                                         setPlannerSwapSlotA('');
                                                         setPlannerSwapSlotB('');
                                                     }}
-                                                    className={`min-h-[44px] rounded-lg text-sm font-bold border ${plannerBoardMode === 'sub' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
+                                                    className={`min-h-[48px] rounded-lg text-base font-bold border ${plannerBoardMode === 'sub' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
                                                 >
                                                     Sub mode
                                                 </button>
@@ -5252,13 +5089,13 @@
                                                         setPlannerBoardSelectedSlotId('');
                                                         setPlannerSubSlotId('');
                                                     }}
-                                                    className={`min-h-[44px] rounded-lg text-sm font-bold border ${plannerBoardMode === 'swap' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
+                                                    className={`min-h-[48px] rounded-lg text-base font-bold border ${plannerBoardMode === 'swap' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
                                                 >
                                                     Swap mode
                                                 </button>
                                             </div>
                                         ) : (
-                                            <div className="text-[11px] text-slate-500">Tap any slot on the board, then assign or clear the starter.</div>
+                                            <div className="text-[11px] text-slate-500">Set your starting positions above, then start live tracking.</div>
                                         )}
 
                                         <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-100/60 to-emerald-50/40 p-3">
@@ -5316,55 +5153,7 @@
                                             </div>
                                         </div>
 
-                                        {!plannerLiveActive ? (
-                                            <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Starter assignment</div>
-                                                <div className="text-[11px] text-slate-500">
-                                                    {plannerBoardSelectedSlotId
-                                                        ? `Selected: ${plannerSlotLookup[plannerBoardSelectedSlotId]?.label || plannerBoardSelectedSlotId.toUpperCase()}`
-                                                        : 'Tap a slot first'}
-                                                </div>
-                                                <select
-                                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
-                                                    value={plannerBoardAssignPlayerId}
-                                                    onChange={e => setPlannerBoardAssignPlayerId(e.target.value)}
-                                                    disabled={!plannerBoardSelectedSlotId}
-                                                >
-                                                    <option value="">Unassigned</option>
-                                                    {plannerRosterIds.map((playerId) => {
-                                                        const player = plannerPlayerLookup[playerId];
-                                                        if (!player) return null;
-                                                        return (
-                                                            <option key={`planner-board-assign-${playerId}`} value={playerId}>
-                                                                {player.firstName} {player.lastName}
-                                                            </option>
-                                                        );
-                                                    })}
-                                                </select>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <button
-                                                        onClick={plannerAssignStarterFromBoard}
-                                                        disabled={!plannerBoardSelectedSlotId}
-                                                        className={`min-h-[44px] rounded-lg text-sm font-bold ${!plannerBoardSelectedSlotId ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
-                                                    >
-                                                        Save slot
-                                                    </button>
-                                                    <button
-                                                        onClick={async () => {
-                                                            if (!plannerBoardSelectedSlotId) return;
-                                                            await plannerSetStarter(plannerBoardSelectedSlotId, '');
-                                                            setPlannerBoardAssignPlayerId('');
-                                                            const slotLabel = plannerSlotLookup[plannerBoardSelectedSlotId]?.label || plannerBoardSelectedSlotId.toUpperCase();
-                                                            pushFixtureToast(`${slotLabel} cleared.`, 'info');
-                                                        }}
-                                                        disabled={!plannerBoardSelectedSlotId}
-                                                        className={`min-h-[44px] rounded-lg text-sm font-bold border ${!plannerBoardSelectedSlotId ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white text-slate-700 border-slate-200'}`}
-                                                    >
-                                                        Clear slot
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ) : plannerBoardMode === 'sub' ? (
+                                        {plannerLiveActive ? (plannerBoardMode === 'sub' ? (
                                             <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
                                                 <div className="text-[11px] font-bold text-slate-600 uppercase">Quick substitution</div>
                                                 <div className="text-[11px] text-slate-500">
@@ -5373,7 +5162,7 @@
                                                         : 'Tap the outgoing slot on the pitch'}
                                                 </div>
                                                 <select
-                                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
+                                                    className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-base"
                                                     value={plannerSubIncomingId}
                                                     onChange={e => setPlannerSubIncomingId(e.target.value)}
                                                 >
@@ -5392,7 +5181,7 @@
                                                 <button
                                                     onClick={plannerCommitBoardSub}
                                                     disabled={!plannerSubSlotId || !plannerSubIncomingId}
-                                                    className={`w-full min-h-[46px] rounded-lg text-sm font-bold ${!plannerSubSlotId || !plannerSubIncomingId ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                                                    className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerSubSlotId || !plannerSubIncomingId ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
                                                 >
                                                     Sub in selected player
                                                 </button>
@@ -5414,7 +5203,7 @@
                                                     <button
                                                         onClick={plannerCommitBoardSwap}
                                                         disabled={!plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB}
-                                                        className={`min-h-[46px] rounded-lg text-sm font-bold ${!plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                                                        className={`min-h-[48px] rounded-lg text-base font-bold ${!plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
                                                     >
                                                         Swap now
                                                     </button>
@@ -5423,18 +5212,40 @@
                                                             setPlannerSwapSlotA('');
                                                             setPlannerSwapSlotB('');
                                                         }}
-                                                        className="min-h-[46px] rounded-lg text-sm font-bold border border-slate-200 bg-white text-slate-700"
+                                                        className="min-h-[48px] rounded-lg text-base font-bold border border-slate-200 bg-white text-slate-700"
                                                     >
                                                         Clear taps
                                                     </button>
                                                 </div>
+                                            </div>
+                                        )) : (
+                                            <div className="rounded-xl border border-slate-200 bg-white p-3 text-[11px] text-slate-500">
+                                                Live controls appear here after you start live tracking.
                                             </div>
                                         )}
                                     </div>
 
                                     <div className="space-y-2">
                                         <div className="text-[11px] font-bold text-slate-600 uppercase">Bench Groups</div>
-                                        <div className="text-[11px] text-slate-500">Assign substitutes by line for fast in-game changes.</div>
+                                        <div className="text-[11px] text-slate-500">Pick each player's sub line. This is where you set defence/midfield/forward substitutes.</div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                            {MATCHDAY_BENCH_GROUPS.map((group) => (
+                                                <div key={`planner-bench-summary-${group}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
+                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">{getBenchGroupLabel(group)}</div>
+                                                    {(matchdayPlanner?.bench?.[group] || []).length ? (
+                                                        <div className="mt-1 flex flex-wrap gap-1">
+                                                            {(matchdayPlanner?.bench?.[group] || []).map((playerId) => (
+                                                                <span key={`planner-bench-summary-chip-${group}-${playerId}`} className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-[11px] text-slate-700">
+                                                                    {plannerPlayerShortName(playerId)}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="mt-1 text-[11px] text-slate-400">No subs assigned</div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
                                         {plannerBenchAssignableIds.length === 0 ? (
                                             <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No bench candidates yet. Add more roster players or leave some starter slots unassigned.</div>
                                         ) : (
@@ -5450,7 +5261,7 @@
                                                                 <div className="text-[11px] text-slate-500">{player.position || 'Player'}</div>
                                                             </div>
                                                             <select
-                                                                className="w-36 bg-white border border-slate-200 rounded-lg p-2 text-sm"
+                                                                className="w-40 min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
                                                                 value={benchGroup}
                                                                 onChange={e => plannerSetBenchGroup(playerId, e.target.value)}
                                                             >
@@ -5478,15 +5289,15 @@
                                     <div className="space-y-3">
                                         <div className="flex flex-wrap items-center gap-2">
                                             {!plannerLiveActive ? (
-                                                <button onClick={plannerStartLive} className="min-h-[44px] px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-sm">
+                                                <button onClick={plannerStartLive} className="min-h-[48px] px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-base">
                                                     Start live tracking
                                                 </button>
                                             ) : (
                                                 <>
-                                                    <button onClick={plannerResetLiveToStarters} className="min-h-[44px] px-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-sm">
+                                                    <button onClick={plannerResetLiveToStarters} className="min-h-[48px] px-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-base">
                                                         Reset to starters
                                                     </button>
-                                                    <button onClick={plannerStopLive} className="min-h-[44px] px-4 bg-amber-50 border border-amber-200 text-amber-700 font-bold rounded-lg text-sm">
+                                                    <button onClick={plannerStopLive} className="min-h-[48px] px-4 bg-amber-50 border border-amber-200 text-amber-700 font-bold rounded-lg text-base">
                                                         Stop live
                                                     </button>
                                                 </>
@@ -5498,7 +5309,7 @@
                                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
                                                 <div className="text-[11px] font-bold text-slate-600 uppercase">Substitute</div>
                                                 <select
-                                                    className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm"
+                                                    className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
                                                     value={plannerSubSlotId}
                                                     onChange={e => {
                                                         setPlannerSubSlotId(e.target.value);
@@ -5513,7 +5324,7 @@
                                                     ))}
                                                 </select>
                                                 <select
-                                                    className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm"
+                                                    className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
                                                     value={plannerSubIncomingId}
                                                     onChange={e => setPlannerSubIncomingId(e.target.value)}
                                                 >
@@ -5532,7 +5343,7 @@
                                                 <button
                                                     onClick={plannerApplySub}
                                                     disabled={!plannerLiveActive || !plannerSubSlotId || !plannerSubIncomingId}
-                                                    className={`w-full min-h-[44px] rounded-lg text-sm font-bold ${!plannerLiveActive || !plannerSubSlotId || !plannerSubIncomingId ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                                                    className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerLiveActive || !plannerSubSlotId || !plannerSubIncomingId ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
                                                 >
                                                     Commit substitution
                                                 </button>
@@ -5540,7 +5351,7 @@
 
                                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
                                                 <div className="text-[11px] font-bold text-slate-600 uppercase">Swap Positions</div>
-                                                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={plannerSwapSlotA} onChange={e => {
+                                                <select className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={plannerSwapSlotA} onChange={e => {
                                                     setPlannerBoardMode('swap');
                                                     setPlannerSwapSlotA(e.target.value);
                                                 }}>
@@ -5551,7 +5362,7 @@
                                                         </option>
                                                     ))}
                                                 </select>
-                                                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={plannerSwapSlotB} onChange={e => {
+                                                <select className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={plannerSwapSlotB} onChange={e => {
                                                     setPlannerBoardMode('swap');
                                                     setPlannerSwapSlotB(e.target.value);
                                                 }}>
@@ -5565,7 +5376,7 @@
                                                 <button
                                                     onClick={plannerApplySwap}
                                                     disabled={!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB}
-                                                    className={`w-full min-h-[44px] rounded-lg text-sm font-bold ${!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-white border border-slate-200 text-slate-700'}`}
+                                                    className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-white border border-slate-200 text-slate-700'}`}
                                                 >
                                                     Commit swap
                                                 </button>
@@ -5612,60 +5423,75 @@
                                     <div className="flex justify-between items-start gap-3">
                                         <div>
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Squad Selection</div>
-                                            <p className="text-xs text-slate-500">Tap to add/remove</p>
+                                            <p className="text-xs text-slate-500">{isMatchdayWorkspace ? 'Optional panel' : 'Tap to add/remove'}</p>
                                             <p className="text-[11px] text-slate-500 mt-1">Selected {selectedPlayersList.length} · Available {availablePlayersList.length}</p>
                                         </div>
-                                        {!isMatchdayWorkspace && (
-                                            <button onClick={generateFees} className="text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-100 flex items-center gap-1">
-                                                <Icon name="Banknote" size={14} /> Generate Fees
-                                            </button>
-                                        )}
+                                        <div className="flex items-center gap-2">
+                                            {isMatchdayWorkspace ? (
+                                                <button
+                                                    onClick={() => setIsSquadPanelOpen(v => !v)}
+                                                    className="min-h-[44px] text-xs font-bold bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 flex items-center gap-1"
+                                                >
+                                                    <Icon name={isSquadPanelOpen ? 'ChevronUp' : 'ChevronDown'} size={14} /> {isSquadPanelOpen ? 'Hide' : 'Show'}
+                                                </button>
+                                            ) : (
+                                                <button onClick={generateFees} className="text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-100 flex items-center gap-1">
+                                                    <Icon name="Banknote" size={14} /> Generate Fees
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                     {!isMatchdayWorkspace && (
                                         <div className="text-[11px] text-slate-500">
                                             Competition: {selectedFixture.competitionType || 'LEAGUE'} · {getFixtureForfeitLabel(selectedFixture) || 'No forfeit'}
                                         </div>
                                     )}
-                                    <div className="space-y-3">
-                                        <div className="space-y-2">
-                                            <div className="text-[11px] font-bold text-slate-600 uppercase">Selected Players</div>
-                                            <div className="grid md:grid-cols-2 gap-2">
-                                                {selectedPlayersList.map(p => (
-                                                    <div key={`selected-${p.id}`} onClick={() => togglePlayer(p.id)} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${squad[p.id] ? 'bg-brand-50 border-brand-200' : 'bg-slate-50 border-slate-100'}`}>
-                                                        <div className="flex items-center gap-3">
-                                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${squad[p.id] ? 'bg-brand-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>
-                                                                {squad[p.id] && <Icon name="Check" size={14} />}
-                                                            </div>
-                                                            <span className={`text-sm font-medium ${squad[p.id] ? 'text-brand-900' : 'text-slate-600'}`}>{p.firstName} {p.lastName}</span>
-                                                        </div>
-                                                        <span className="text-xs text-slate-400 font-medium">{p.position}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                            {selectedPlayersList.length === 0 && <div className="text-sm text-slate-400">No players selected yet.</div>}
-                                        </div>
-                                        <div className="space-y-2">
-                                            <button onClick={() => setShowAvailablePlayers(v => !v)} className="w-full flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-semibold text-slate-700">
-                                                <span>Available players ({availablePlayersList.length})</span>
-                                                <Icon name={shouldShowAvailablePlayers ? 'ChevronUp' : 'ChevronDown'} size={14} />
-                                            </button>
-                                            {shouldShowAvailablePlayers && (
+                                    {(!isMatchdayWorkspace || isSquadPanelOpen) ? (
+                                        <div className="space-y-3">
+                                            <div className="space-y-2">
+                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Selected Players</div>
                                                 <div className="grid md:grid-cols-2 gap-2">
-                                                    {availablePlayersList.map(p => (
-                                                        <div key={`available-${p.id}`} onClick={() => togglePlayer(p.id)} className="flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all bg-slate-50 border-slate-100 hover:border-brand-200 hover:bg-brand-50/60">
+                                                    {selectedPlayersList.map(p => (
+                                                        <div key={`selected-${p.id}`} onClick={() => togglePlayer(p.id)} className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${squad[p.id] ? 'bg-brand-50 border-brand-200' : 'bg-slate-50 border-slate-100'}`}>
                                                             <div className="flex items-center gap-3">
-                                                                <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-white text-slate-400 border border-slate-200">
+                                                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${squad[p.id] ? 'bg-brand-600 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>
                                                                     {squad[p.id] && <Icon name="Check" size={14} />}
                                                                 </div>
-                                                                <span className="text-sm font-medium text-slate-600">{p.firstName} {p.lastName}</span>
+                                                                <span className={`text-sm font-medium ${squad[p.id] ? 'text-brand-900' : 'text-slate-600'}`}>{p.firstName} {p.lastName}</span>
                                                             </div>
                                                             <span className="text-xs text-slate-400 font-medium">{p.position}</span>
                                                         </div>
                                                     ))}
                                                 </div>
-                                            )}
+                                                {selectedPlayersList.length === 0 && <div className="text-sm text-slate-400">No players selected yet.</div>}
+                                            </div>
+                                            <div className="space-y-2">
+                                                <button onClick={() => setShowAvailablePlayers(v => !v)} className="w-full min-h-[44px] flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-semibold text-slate-700">
+                                                    <span>Available players ({availablePlayersList.length})</span>
+                                                    <Icon name={shouldShowAvailablePlayers ? 'ChevronUp' : 'ChevronDown'} size={14} />
+                                                </button>
+                                                {shouldShowAvailablePlayers && (
+                                                    <div className="grid md:grid-cols-2 gap-2">
+                                                        {availablePlayersList.map(p => (
+                                                            <div key={`available-${p.id}`} onClick={() => togglePlayer(p.id)} className="flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all bg-slate-50 border-slate-100 hover:border-brand-200 hover:bg-brand-50/60">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-white text-slate-400 border border-slate-200">
+                                                                        {squad[p.id] && <Icon name="Check" size={14} />}
+                                                                    </div>
+                                                                    <span className="text-sm font-medium text-slate-600">{p.firstName} {p.lastName}</span>
+                                                                </div>
+                                                                <span className="text-xs text-slate-400 font-medium">{p.position}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
+                                    ) : (
+                                        <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                                            Hidden to keep Match Day simple. Open only if you want to adjust selected/available squad players.
+                                        </div>
+                                    )}
                                 </div>
 
                                 {!isMatchdayWorkspace && (
@@ -6057,7 +5883,7 @@
                                         <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide">Date</label>
                                         <input type="date" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" value={parsedData.date} onChange={e => updateFixtureField('date', e.target.value)} />
                                         <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide block">Time</label>
-                                        <input type="text" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" placeholder="15:00 or TBC" value={parsedData.time} onChange={e => updateFixtureField('time', e.target.value)} />
+                                        <input type="text" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" placeholder="15:00" value={parsedData.time} onChange={e => updateFixtureField('time', e.target.value)} />
                                         <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide block">Player Fee (default 20)</label>
                                         <input type="number" min="0" step="1" className="w-full bg-white border border-indigo-100 rounded-lg p-2 text-sm font-medium" value={parsedData.feeAmount ?? 20} onChange={e => updateFixtureField('feeAmount', Number(e.target.value))} />
                                         <label className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide block">Competition</label>
@@ -6846,7 +6672,14 @@
         };
         // --- DASHBOARD MODULE ---
         const Dashboard = ({ onNavigate, kitDetails = [], kitQueue = [], kitNumberLimit = DEFAULT_KIT_NUMBER_LIMIT }) => {
-            const [stats, setStats] = useState({ balance: 0, playerCt: 0, fixtureCt: 0, history: [], outstanding: { receivable: 0, payable: 0 } });
+            const [stats, setStats] = useState({
+                balance: 0,
+                playerCt: 0,
+                fixtureCt: 0,
+                history: [],
+                outstanding: { receivable: 0, payable: 0 },
+                record: { played: 0, wins: 0, draws: 0, losses: 0, points: 0 }
+            });
             const [nextFixture, setNextFixture] = useState(null);
             const [lastResult, setLastResult] = useState(null);
             const [insights, setInsights] = useState({
@@ -6966,9 +6799,28 @@
                             : `${lastPlayed.homeScore ?? '-'}:${lastPlayed.awayScore ?? '-'}`)
                         : '';
 
-                    setStats({ balance: running, playerCt: playerList.length, fixtureCt: fixtures.length, history: chartData, outstanding: { receivable, payable } });
+                    const seasonRecord = playedFixtures.reduce((acc, fixture) => {
+                        const outcome = getFixtureOutcome(fixture);
+                        if (!outcome.played) return acc;
+                        acc.played += 1;
+                        acc.points += Number(outcome.points || 0);
+                        if (outcome.result === 'W') acc.wins += 1;
+                        else if (outcome.result === 'D') acc.draws += 1;
+                        else if (outcome.result === 'L') acc.losses += 1;
+                        return acc;
+                    }, { played: 0, wins: 0, draws: 0, losses: 0, points: 0 });
+
+                    setStats({
+                        balance: running,
+                        playerCt: playerList.length,
+                        fixtureCt: fixtures.length,
+                        history: chartData,
+                        outstanding: { receivable, payable },
+                        record: seasonRecord
+                    });
                     setNextFixture(upcoming || null);
                     setLastResult(lastPlayed ? {
+                        fixtureId: lastPlayed.id,
                         opponent: lastPlayed.opponent,
                         score: lastPlayedScore,
                         date: lastPlayed.date,
@@ -7253,6 +7105,12 @@
                 localStorage.setItem('gaffer:focusFixtureOpponent', group.clubName);
                 onNavigate('fixtures');
             };
+            const openLastResultFixture = () => {
+                if (!lastResult?.fixtureId || !onNavigate) return;
+                localStorage.setItem('gaffer:focusFixtureId', String(lastResult.fixtureId));
+                if (lastResult.opponent) localStorage.setItem('gaffer:focusFixtureOpponent', lastResult.opponent);
+                onNavigate('fixtures');
+            };
 
             const handleKeyActivate = (event, action) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -7260,89 +7118,322 @@
                     action();
                 }
             };
+            const todayLabel = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+            const netOpenExposure = Number(stats.outstanding.receivable || 0) - Math.abs(Number(stats.outstanding.payable || 0));
+            const nextFixtureCountdown = (() => {
+                if (!nextFixture?.date) return '';
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const kickoff = new Date(nextFixture.date);
+                if (Number.isNaN(kickoff.getTime())) return '';
+                kickoff.setHours(0, 0, 0, 0);
+                const diffDays = Math.round((kickoff - today) / (1000 * 60 * 60 * 24));
+                if (diffDays <= 0) return 'Today';
+                if (diffDays === 1) return 'Tomorrow';
+                return `In ${diffDays} days`;
+            })();
+
             return (
-                <div className="space-y-5 pb-24 animate-slide-up">
-                    <header className="flex justify-between items-center pt-2 px-1">
-                        <div className="flex items-center gap-3">
-                            <div className="h-12 w-12 rounded-2xl border border-white shadow-glass overflow-hidden bg-white/70">
-                                <img src={TEAM_LOGO_SRC} alt="The British Exiles crest" className="h-full w-full object-cover" />
-                            </div>
-                            <div>
-                                <div className="text-brand-600 font-display font-bold text-lg tracking-tight">THE BRITISH EXILES</div>
-                                <div className="text-slate-400 text-xs font-sans font-medium uppercase tracking-widest">Manager Dashboard</div>
+                <div className="space-y-4 pb-24 animate-slide-up">
+                    <header className="px-1 pt-1">
+                        <div className="relative overflow-hidden rounded-[1.75rem] border border-slate-200/70 bg-gradient-to-br from-slate-900 via-blue-900 to-cyan-700 p-4 shadow-soft text-white">
+                            <div className="absolute -top-12 -right-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+                            <div className="absolute -bottom-14 left-1/3 h-28 w-28 rounded-full bg-cyan-300/20 blur-2xl" />
+                            <div className="relative z-10 space-y-4">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <div className="h-12 w-12 rounded-2xl border border-white/30 shadow-glass overflow-hidden bg-white/20">
+                                            <img src={TEAM_LOGO_SRC} alt="The British Exiles crest" className="h-full w-full object-cover" />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <div className="font-display font-bold text-[1.05rem] tracking-tight truncate">THE BRITISH EXILES</div>
+                                            <div className="text-[11px] text-blue-100 uppercase tracking-[0.14em] font-semibold">Club Command</div>
+                                        </div>
+                                    </div>
+                                    <div className="rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-right shrink-0">
+                                        <div className="text-[10px] uppercase tracking-wider text-blue-100 font-semibold">Today</div>
+                                        <div className="text-[11px] font-bold leading-tight">{todayLabel}</div>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                    <div className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-2">
+                                        <div className="text-[10px] uppercase tracking-wider text-blue-100">Played</div>
+                                        <div className="text-lg font-display font-bold leading-tight">{stats.record.played}</div>
+                                    </div>
+                                    <div className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-2">
+                                        <div className="text-[10px] uppercase tracking-wider text-blue-100">Points</div>
+                                        <div className="text-lg font-display font-bold leading-tight">{stats.record.points}</div>
+                                    </div>
+                                    <div className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-2">
+                                        <div className="text-[10px] uppercase tracking-wider text-blue-100">Record</div>
+                                        <div className="text-sm font-bold leading-tight">{stats.record.wins}-{stats.record.draws}-{stats.record.losses}</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                        <div />
                     </header>
 
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
-                        <div className="flex items-center justify-between">
-                            <div>
+                    <div className="rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft space-y-3 backdrop-blur-sm">
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
                                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Money Snapshot</div>
-                                <div className="text-3xl font-display font-bold text-slate-900">{formatCurrency(stats.balance, { minimumFractionDigits: 0 })}</div>
+                                <div className="text-3xl font-display font-bold text-slate-900 leading-none mt-1">{formatCurrency(stats.balance, { minimumFractionDigits: 0 })}</div>
+                                <div className={`mt-2 text-[11px] font-semibold ${netOpenExposure >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                    Net open exposure {netOpenExposure >= 0 ? '+' : ''}{formatCurrency(netOpenExposure, { maximumFractionDigits: 0 })}
+                                </div>
                             </div>
-                            <div className="h-14 w-28">
-                                <Sparkline data={stats.history} color="#1d4ed8" />
+                            <div className="h-16 w-32 rounded-xl border border-slate-200 bg-slate-50/80 p-2">
+                                <Sparkline data={stats.history} color="#2563eb" />
                             </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600">
-                            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2.5">
-                                <div>Open receivable</div>
-                                <div className="text-emerald-700 font-bold">{formatCurrency(stats.outstanding.receivable)}</div>
+                        <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-2.5 text-emerald-800">
+                                <div className="text-[10px] uppercase tracking-wider font-bold">Receivable</div>
+                                <div className="text-sm font-bold mt-0.5">{formatCurrency(stats.outstanding.receivable, { maximumFractionDigits: 0 })}</div>
                             </div>
-                            <div className="bg-amber-50 border border-amber-100 rounded-xl p-2.5">
-                                <div>Open payable</div>
-                                <div className="text-amber-700 font-bold">{formatCurrency(Math.abs(stats.outstanding.payable))}</div>
+                            <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-2.5 text-amber-800">
+                                <div className="text-[10px] uppercase tracking-wider font-bold">Payable</div>
+                                <div className="text-sm font-bold mt-0.5">{formatCurrency(Math.abs(stats.outstanding.payable), { maximumFractionDigits: 0 })}</div>
                             </div>
                         </div>
                     </div>
 
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                    <div className="rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft space-y-3 backdrop-blur-sm">
                         <div className="flex items-center justify-between gap-2">
                             <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Today</div>
-                            <button onClick={() => onNavigate('matchday')} className="text-[11px] font-bold text-brand-600 underline">Open Match Day</button>
+                            {nextFixtureCountdown ? (
+                                <span className="rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700">
+                                    {nextFixtureCountdown}
+                                </span>
+                            ) : null}
                         </div>
                         {nextFixture ? (
-                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 flex items-center justify-between">
-                                <div>
-                                    <div className="text-sm font-bold text-slate-900">Next: vs {nextFixture.opponent}</div>
-                                    <div className="text-[11px] text-slate-500">{new Date(nextFixture.date).toLocaleDateString()} · {renderTimeLabel(nextFixture.time)} · {nextFixture.venue || 'TBC'}</div>
+                            <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-cyan-50/80 p-3.5 flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                    <div className="text-[10px] uppercase tracking-wider font-bold text-blue-500">Upcoming Fixture</div>
+                                    <div className="text-base font-display font-bold text-slate-900 truncate">vs {nextFixture.opponent}</div>
+                                    <div className="text-[11px] text-slate-600 truncate">{new Date(nextFixture.date).toLocaleDateString()} · {renderTimeLabel(nextFixture.time)} · {nextFixture.venue || 'TBC'}</div>
                                 </div>
-                                <button onClick={() => onNavigate('fixtures')} className="min-h-[44px] px-3 rounded-lg bg-white border border-slate-200 text-[11px] font-bold text-slate-700">Open</button>
+                                <button onClick={() => onNavigate('fixtures')} className="min-h-[44px] px-4 rounded-xl bg-white border border-blue-200 text-[11px] font-bold text-blue-800 shrink-0">Open Game</button>
                             </div>
-                        ) : <div className="text-sm text-slate-500">No upcoming game scheduled.</div>}
+                        ) : (
+                            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-3 text-sm text-slate-500">
+                                No upcoming game scheduled.
+                            </div>
+                        )}
                         {lastResult && (
-                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
-                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Last Result</div>
-                                <div className="text-sm font-bold text-slate-900">
-                                    {lastResult.isForfeit
-                                        ? `Exiles ${lastResult.score} vs ${lastResult.opponent}`
-                                        : `Exiles ${lastResult.score} ${lastResult.opponent}`}
+                            <div
+                                className={`rounded-2xl border border-slate-200 bg-slate-50/90 p-3.5 ${lastResult.fixtureId ? 'cursor-pointer hover:border-blue-300' : ''}`}
+                                onClick={() => lastResult.fixtureId && openLastResultFixture()}
+                                role={lastResult.fixtureId ? 'button' : undefined}
+                                tabIndex={lastResult.fixtureId ? 0 : undefined}
+                                onKeyDown={lastResult.fixtureId ? (event) => handleKeyActivate(event, openLastResultFixture) : undefined}
+                            >
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Last Result</div>
+                                        <div className="text-base font-display font-bold text-slate-900 leading-tight">
+                                            {lastResult.isForfeit
+                                                ? `Exiles ${lastResult.score} vs ${lastResult.opponent}`
+                                                : `Exiles ${lastResult.score} ${lastResult.opponent}`}
+                                        </div>
+                                        <div className="text-[11px] text-slate-500">{new Date(lastResult.date).toLocaleDateString()}</div>
+                                    </div>
+                                    {lastResult.fixtureId ? (
+                                        <span className="mt-1 inline-flex h-7 w-7 items-center justify-center rounded-full border border-blue-200 bg-white text-blue-700">
+                                            <Icon name="ArrowRight" size={14} />
+                                        </span>
+                                    ) : null}
                                 </div>
-                                <div className="text-[11px] text-slate-500">{new Date(lastResult.date).toLocaleDateString()}</div>
                             </div>
                         )}
                     </div>
 
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
-                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Quick Actions</div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                            <button onClick={() => onNavigate('matchday')} className="min-h-[48px] rounded-xl bg-slate-900 text-white text-sm font-bold">Start Match Day</button>
-                            <button onClick={() => onNavigate('players')} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-bold">Collect Player Fees</button>
-                            <button onClick={() => onNavigate('finances')} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-bold">Open Bank</button>
-                        </div>
-                    </div>
-
                     <div className="grid grid-cols-2 gap-3">
-                        <div onClick={() => onNavigate('fixtures')} className="cursor-pointer">
-                            <StatCard icon="Trophy" label="Games" value={stats.fixtureCt} subtext="Season fixtures" color="blue" />
+                        <button onClick={() => onNavigate('fixtures')} className="text-left rounded-2xl border border-slate-200/80 bg-white/95 p-3.5 shadow-soft">
+                            <div>
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Fixtures</div>
+                                <div className="mt-1 text-2xl font-display font-bold text-slate-900 leading-none">{stats.fixtureCt}</div>
+                                <div className="text-[11px] text-slate-500 mt-1">Season games</div>
+                            </div>
+                        </button>
+                        <button onClick={() => onNavigate('players')} className="text-left rounded-2xl border border-slate-200/80 bg-white/95 p-3.5 shadow-soft">
+                            <div>
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Squad</div>
+                                <div className="mt-1 text-2xl font-display font-bold text-slate-900 leading-none">{stats.playerCt}</div>
+                                <div className="text-[11px] text-slate-500 mt-1">Registered players</div>
+                            </div>
+                        </button>
+                    </div>
+
+                    <div className="rounded-3xl border border-slate-200/70 bg-white/95 shadow-soft overflow-hidden">
+                        <button onClick={() => setShowHomeIntel(prev => !prev)} className="w-full flex items-center justify-between p-4">
+                            <div className="text-left">
+                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Insights</div>
+                                <div className="text-[11px] text-slate-400">Form, birthdays, kit snapshot and debt watch</div>
+                            </div>
+                            <Icon name={showHomeIntel ? 'ChevronUp' : 'ChevronDown'} size={18} className="text-slate-400" />
+                        </button>
+                        {showHomeIntel && (
+                            <div className="border-t border-slate-100 p-4 space-y-4">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Form & Performance</div>
+                                    <div className="grid grid-cols-2 gap-3 text-sm text-slate-700">
+                                    <div className="col-span-2">
+                                        <div className="text-[11px] uppercase font-bold text-slate-400 mb-1">Form (last 5)</div>
+                                        {insights.form.length ? (
+                                            <div className="flex gap-1">
+                                                {insights.form.map((item, idx) => (
+                                                    <div
+                                                        key={`form-${idx}`}
+                                                        title={`vs ${item.opponent} · ${item.score}`}
+                                                        className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold ${
+                                                            item.result === 'W'
+                                                                ? 'bg-emerald-100 text-emerald-700'
+                                                                : item.result === 'L'
+                                                                    ? 'bg-rose-100 text-rose-700'
+                                                                    : 'bg-slate-100 text-slate-600'
+                                                        }`}
+                                                    >
+                                                        {item.result}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="text-[12px] text-slate-400">No played games yet.</div>
+                                        )}
+                                    </div>
+                                    <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-1">
+                                        <div className="text-[10px] uppercase font-bold text-slate-400">Top Scorer</div>
+                                        {insights.topScorer ? (
+                                            <>
+                                                <div className="font-bold text-slate-900 truncate">{insights.topScorer.label}</div>
+                                                <div className="text-[11px] text-slate-500">{insights.topScorer.goals} goal{insights.topScorer.goals === 1 ? '' : 's'}</div>
+                                            </>
+                                        ) : (
+                                            <div className="text-[11px] text-slate-400">No goals recorded.</div>
+                                        )}
+                                    </div>
+                                    <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-1">
+                                        <div className="text-[10px] uppercase font-bold text-slate-400">MOTM Leader</div>
+                                        {insights.motmLeader ? (
+                                            <>
+                                                <div className="font-bold text-slate-900 truncate">{insights.motmLeader.label}</div>
+                                                <div className="text-[11px] text-slate-500">{insights.motmLeader.count} award{insights.motmLeader.count === 1 ? '' : 's'}</div>
+                                            </>
+                                        ) : (
+                                            <div className="text-[11px] text-slate-400">No awards yet.</div>
+                                        )}
+                                    </div>
+                                    <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-1 col-span-2">
+                                        <div className="text-[10px] uppercase font-bold text-slate-400">Goals & Clean Sheets</div>
+                                        <div className="text-[12px] text-slate-600">
+                                            Scoring {insights.avgGoals.for.toFixed(1)} · Conceding {insights.avgGoals.against.toFixed(1)} per match
+                                        </div>
+                                        <div className="text-[11px] text-slate-500">Clean sheets: {insights.cleanSheets}</div>
+                                    </div>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 space-y-3">
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Financial Pulse</div>
+                                    <div>
+                                        <div className="text-[10px] font-semibold text-rose-500 uppercase tracking-wider mb-1">Debt Watch</div>
+                                        {insights.debtors.length ? (
+                                            <div className="space-y-2">
+                                                {insights.debtors.map((debtor) => (
+                                                    <div key={debtor.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-rose-50 border border-rose-100">
+                                                        <div>
+                                                            <div className="text-sm font-bold text-rose-800">{debtor.name}</div>
+                                                            <div className="text-[11px] text-rose-500">Owes {formatCurrency(Math.abs(debtor.balance), { maximumFractionDigits: 0 })}</div>
+                                                        </div>
+                                                        <button onClick={() => onNavigate('players')} className="text-[10px] font-bold text-rose-700 underline">Follow up</button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="text-xs text-slate-400">No overdue balances.</div>
+                                        )}
+                                    </div>
+                                    <div className="pt-1">
+                                        <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider mb-1">Recent Payments</div>
+                                        {insights.recentPayments.length ? (
+                                            <div className="space-y-2">
+                                                {insights.recentPayments.map((tx) => (
+                                                    <div key={tx.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-100">
+                                                        <div>
+                                                            <div className="text-sm font-bold text-emerald-900 truncate">{tx.playerName || 'Unnamed payer'}</div>
+                                                            <div className="text-[11px] text-emerald-600 truncate">{tx.description}</div>
+                                                        </div>
+                                                        <div className="text-xs font-bold text-emerald-700">{formatCurrency(tx.amount, { maximumFractionDigits: 0 })}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="text-xs text-slate-400">No payments logged recently.</div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 space-y-3">
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Kit Overview</div>
+                                    <div className="grid grid-cols-2 gap-2 text-sm font-semibold text-slate-700">
+                                    <div className="flex justify-between">
+                                        <span>Players with kit</span>
+                                        <span className="font-mono text-slate-900">{kitOverview.holders}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Available numbers</span>
+                                        <span className="font-mono text-slate-900">{kitOverview.available}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Range tracked</span>
+                                        <span className="font-mono text-slate-900">{kitOverview.range}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Queued for order</span>
+                                        <span className="font-mono text-slate-900">{kitOverview.queue}</span>
+                                    </div>
+                                </div>
+                                    <div className="text-[11px] text-slate-500">Open Kit from More to update assignments and queue.</div>
+                                </div>
+
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 space-y-3">
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Upcoming Birthdays</div>
+                                    {insights.upcomingBirthdays.length ? (
+                                        <div className="space-y-2">
+                                            {insights.upcomingBirthdays.map((entry) => (
+                                                <div key={entry.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-slate-200">
+                                                    <div>
+                                                        <div className="text-sm font-bold text-slate-900">{entry.name}</div>
+                                                        <div className="text-[11px] text-slate-500">Turning {entry.turning} on {entry.dateLabel}</div>
+                                                    </div>
+                                                    <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+                                                        {entry.inDays === 0 ? 'Today' : `In ${entry.inDays}d`}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-xs text-slate-400">No birthdays in the next 60 days.</div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200/80 bg-white/95 p-3 shadow-soft flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Season Record</div>
+                            <div className="text-sm font-display font-bold text-slate-900">{stats.record.wins}W · {stats.record.draws}D · {stats.record.losses}L</div>
                         </div>
-                        <div onClick={() => onNavigate('players')} className="cursor-pointer">
-                            <StatCard icon="Users" label="Squad Size" value={stats.playerCt} subtext="Registered players" color="emerald" />
+                        <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-right">
+                            <div className="text-[10px] uppercase tracking-wider text-blue-600 font-bold">Points</div>
+                            <div className="text-base font-display font-bold text-blue-800 leading-none">{stats.record.points}</div>
                         </div>
                     </div>
 
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                    <div className="bg-white/95 border border-slate-200/70 rounded-3xl p-4 shadow-soft space-y-3 backdrop-blur-sm">
                         <div className="flex items-start justify-between gap-2">
                             <div>
                                 <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Unpaid Items</div>
@@ -7352,7 +7443,7 @@
                                         : 'Quick mark payments without leaving home.'}
                                 </div>
                             </div>
-                            <button onClick={() => onNavigate('players')} className="text-[10px] font-bold text-brand-600 underline">Open Squad</button>
+                            <button onClick={() => onNavigate('players')} className="min-h-[40px] px-3 rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-brand-600">Open Squad</button>
                         </div>
                         {unpaidGroups.length ? (
                             <div className="space-y-3 pr-1">
@@ -7414,7 +7505,7 @@
                         )}
                     </div>
 
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                    <div className="bg-white/95 border border-slate-200/70 rounded-3xl p-4 shadow-soft space-y-3 backdrop-blur-sm">
                         <div className="flex items-start justify-between gap-2">
                             <div>
                                 <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Receivables</div>
@@ -7424,7 +7515,7 @@
                                         : 'No clubs owe us right now.'}
                                 </div>
                             </div>
-                            <button onClick={() => onNavigate('opponents')} className="text-[10px] font-bold text-brand-600 underline">Open League</button>
+                            <button onClick={() => onNavigate('opponents')} className="min-h-[40px] px-3 rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-brand-600">Open League</button>
                         </div>
                         {clubReceivableGroups.length ? (
                             <div className="space-y-3 pr-1">
@@ -7477,165 +7568,6 @@
                             <div className="text-xs text-slate-400">No club receivables.</div>
                         )}
                     </div>
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-2">
-                        <button onClick={() => setShowHomeIntel(prev => !prev)} className="w-full flex items-center justify-between">
-                            <div>
-                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Intel</div>
-                                <div className="text-[11px] text-slate-400">Form, birthdays, kit snapshot and debt watch</div>
-                            </div>
-                            <Icon name={showHomeIntel ? 'ChevronUp' : 'ChevronDown'} size={18} className="text-slate-400" />
-                        </button>
-                    </div>
-
-                    {showHomeIntel && (
-                        <>
-                            <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
-                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Insights</div>
-                                <div className="grid grid-cols-2 gap-3 text-sm text-slate-700">
-                                    <div className="col-span-2">
-                                        <div className="text-[11px] uppercase font-bold text-slate-400 mb-1">Form (last 5)</div>
-                                        {insights.form.length ? (
-                                            <div className="flex gap-1">
-                                                {insights.form.map((item, idx) => (
-                                                    <div
-                                                        key={`form-${idx}`}
-                                                        title={`vs ${item.opponent} · ${item.score}`}
-                                                        className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold ${
-                                                            item.result === 'W'
-                                                                ? 'bg-emerald-100 text-emerald-700'
-                                                                : item.result === 'L'
-                                                                    ? 'bg-rose-100 text-rose-700'
-                                                                    : 'bg-slate-100 text-slate-600'
-                                                        }`}
-                                                    >
-                                                        {item.result}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        ) : (
-                                            <div className="text-[12px] text-slate-400">No played games yet.</div>
-                                        )}
-                                    </div>
-                                    <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1">
-                                        <div className="text-[10px] uppercase font-bold text-slate-400">Top Scorer</div>
-                                        {insights.topScorer ? (
-                                            <>
-                                                <div className="font-bold text-slate-900 truncate">{insights.topScorer.label}</div>
-                                                <div className="text-[11px] text-slate-500">{insights.topScorer.goals} goal{insights.topScorer.goals === 1 ? '' : 's'}</div>
-                                            </>
-                                        ) : (
-                                            <div className="text-[11px] text-slate-400">No goals recorded.</div>
-                                        )}
-                                    </div>
-                                    <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1">
-                                        <div className="text-[10px] uppercase font-bold text-slate-400">MOTM Leader</div>
-                                        {insights.motmLeader ? (
-                                            <>
-                                                <div className="font-bold text-slate-900 truncate">{insights.motmLeader.label}</div>
-                                                <div className="text-[11px] text-slate-500">{insights.motmLeader.count} award{insights.motmLeader.count === 1 ? '' : 's'}</div>
-                                            </>
-                                        ) : (
-                                            <div className="text-[11px] text-slate-400">No awards yet.</div>
-                                        )}
-                                    </div>
-                                    <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1 col-span-2">
-                                        <div className="text-[10px] uppercase font-bold text-slate-400">Goals & Clean Sheets</div>
-                                        <div className="text-[12px] text-slate-600">
-                                            Scoring {insights.avgGoals.for.toFixed(1)} · Conceding {insights.avgGoals.against.toFixed(1)} per match
-                                        </div>
-                                        <div className="text-[11px] text-slate-500">Clean sheets: {insights.cleanSheets}</div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-4">
-                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Financial Pulse</div>
-                                <div className="space-y-3">
-                                    <div>
-                                        <div className="text-[10px] font-semibold text-rose-500 uppercase tracking-wider mb-1">Debt Watch</div>
-                                        {insights.debtors.length ? (
-                                            <div className="space-y-2">
-                                                {insights.debtors.map((debtor) => (
-                                                    <div key={debtor.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-rose-50 border border-rose-100">
-                                                        <div>
-                                                            <div className="text-sm font-bold text-rose-800">{debtor.name}</div>
-                                                            <div className="text-[11px] text-rose-500">Owes {formatCurrency(Math.abs(debtor.balance), { maximumFractionDigits: 0 })}</div>
-                                                        </div>
-                                                        <button onClick={() => onNavigate('players')} className="text-[10px] font-bold text-rose-700 underline">Follow up</button>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        ) : (
-                                            <div className="text-xs text-slate-400">No overdue balances.</div>
-                                        )}
-                                    </div>
-                                    <div>
-                                        <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider mb-1">Recent Payments</div>
-                                        {insights.recentPayments.length ? (
-                                            <div className="space-y-2">
-                                                {insights.recentPayments.map((tx) => (
-                                                    <div key={tx.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-100">
-                                                        <div>
-                                                            <div className="text-sm font-bold text-emerald-900 truncate">{tx.playerName || 'Unnamed payer'}</div>
-                                                            <div className="text-[11px] text-emerald-600 truncate">{tx.description}</div>
-                                                        </div>
-                                                        <div className="text-xs font-bold text-emerald-700">{formatCurrency(tx.amount, { maximumFractionDigits: 0 })}</div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        ) : (
-                                            <div className="text-xs text-slate-400">No payments logged recently.</div>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
-                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Kit Overview</div>
-                                <div className="grid grid-cols-2 gap-2 text-sm font-semibold text-slate-700">
-                                    <div className="flex justify-between">
-                                        <span>Players with kit</span>
-                                        <span className="font-mono text-slate-900">{kitOverview.holders}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span>Available numbers</span>
-                                        <span className="font-mono text-slate-900">{kitOverview.available}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span>Range tracked</span>
-                                        <span className="font-mono text-slate-900">{kitOverview.range}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span>Queued for order</span>
-                                        <span className="font-mono text-slate-900">{kitOverview.queue}</span>
-                                    </div>
-                                </div>
-                                <div className="text-[11px] text-slate-500">Open Kit from More to update assignments and queue.</div>
-                            </div>
-
-                            <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
-                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Upcoming Birthdays</div>
-                                {insights.upcomingBirthdays.length ? (
-                                    <div className="space-y-2">
-                                        {insights.upcomingBirthdays.map((entry) => (
-                                            <div key={entry.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50 border border-slate-100">
-                                                <div>
-                                                    <div className="text-sm font-bold text-slate-900">{entry.name}</div>
-                                                    <div className="text-[11px] text-slate-500">Turning {entry.turning} on {entry.dateLabel}</div>
-                                                </div>
-                                                <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-brand-50 text-brand-700 border border-brand-100">
-                                                    {entry.inDays === 0 ? 'Today' : `In ${entry.inDays}d`}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="text-xs text-slate-400">No birthdays in the next 60 days.</div>
-                                )}
-                            </div>
-                        </>
-                    )}
-
                     <Modal isOpen={!!pendingPayment} onClose={closePaymentModal} title="Confirm Received Payment" placement="center">
                         {pendingPayment && (
                             <div className="space-y-4">
@@ -7657,14 +7589,13 @@
                     </Modal>
 
                     <ToastStack toasts={dashboardToasts} onDismiss={dismissDashboardToast} />
-
                 </div>
             );
         };
 
         // --- SHELL ---
         const Nav = ({ activeTab, setTab }) => {
-            const isMoreSection = ['more', 'players', 'kit', 'opponents', 'settings', 'finances'].includes(activeTab);
+            const isMoreSection = ['more', 'players', 'kit', 'opponents', 'venues', 'settings', 'finances'].includes(activeTab);
             const items = [
                 { id: 'dashboard', icon: 'LayoutGrid', label: 'Home' },
                 { id: 'fixtures', icon: 'Calendar', label: 'Games' },
@@ -7692,6 +7623,63 @@
         };
 
         const MoreHub = ({ onNavigate = () => {}, authStatus = null, buildInfo = null, onAuthAction = () => {} }) => {
+            const [motmBoard, setMotmBoard] = useState([]);
+            const [motmLoading, setMotmLoading] = useState(true);
+            useEffect(() => {
+                let cancelled = false;
+                const loadMotmBoard = async () => {
+                    setMotmLoading(true);
+                    try {
+                        await waitForDb();
+                        const [fixtures, players] = await Promise.all([
+                            db.fixtures.toArray(),
+                            db.players.toArray()
+                        ]);
+                        const playerLabelLookup = players.reduce((acc, player) => {
+                            const label = `${player.firstName || ''} ${player.lastName || ''}`.trim();
+                            if (label) acc[String(player.id)] = label;
+                            return acc;
+                        }, {});
+                        const rows = fixtures
+                            .filter(fixture => fixture?.manOfTheMatch !== undefined && fixture?.manOfTheMatch !== null && String(fixture.manOfTheMatch).trim())
+                            .map((fixture) => {
+                                const raw = String(fixture.manOfTheMatch || '').trim();
+                                if (!raw) return null;
+                                const label = playerLabelLookup[raw] || raw;
+                                const timestamp = Date.parse(fixture.date || '');
+                                return {
+                                    id: fixture.id,
+                                    opponent: fixture.opponent || 'Opponent',
+                                    label,
+                                    date: fixture.date,
+                                    timestamp: Number.isNaN(timestamp) ? 0 : timestamp,
+                                    homeScore: fixture.homeScore,
+                                    awayScore: fixture.awayScore
+                                };
+                            })
+                            .filter(Boolean)
+                            .sort((a, b) => b.timestamp - a.timestamp);
+                        if (!cancelled) setMotmBoard(rows);
+                    } catch (error) {
+                        console.error('Unable to load MOTM board', error);
+                        if (!cancelled) setMotmBoard([]);
+                    } finally {
+                        if (!cancelled) setMotmLoading(false);
+                    }
+                };
+                loadMotmBoard();
+                const refreshHandler = (event) => {
+                    if (!event?.detail?.name) return;
+                    if (event.detail.name === 'fixtures' || event.detail.name === 'players') {
+                        loadMotmBoard();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', refreshHandler);
+                return () => {
+                    cancelled = true;
+                    window.removeEventListener('gaffer-firestore-update', refreshHandler);
+                };
+            }, []);
             const actions = [
                 {
                     id: 'squad',
@@ -7715,11 +7703,18 @@
                     tab: 'finances'
                 },
                 {
-                    id: 'league',
-                    label: 'League & Opponents',
-                    sub: 'Clubs, venues, records, H2H',
+                    id: 'opponents',
+                    label: 'Opponents',
+                    sub: 'League table, clubs, and H2H',
                     icon: 'Shield',
                     tab: 'opponents'
+                },
+                {
+                    id: 'venues',
+                    label: 'Venues',
+                    sub: 'Grounds, maps, venue records',
+                    icon: 'MapPin',
+                    tab: 'venues'
                 },
                 {
                     id: 'settings',
@@ -7757,6 +7752,31 @@
                             {authActionLabel}
                         </button>
                     </div>
+                    <div className="bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft space-y-3">
+                        <div className="flex items-center justify-between">
+                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Man of the Match Board</div>
+                            {!motmLoading && <span className="text-[10px] font-semibold text-slate-400">{motmBoard.length} awards logged</span>}
+                        </div>
+                        {motmLoading ? (
+                            <div className="text-sm text-slate-400">Loading awards...</div>
+                        ) : motmBoard.length ? (
+                            <div className="space-y-2">
+                                {motmBoard.slice(0, 8).map(item => {
+                                    const dateLabel = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC';
+                                    const hasScore = typeof item.homeScore === 'number' && typeof item.awayScore === 'number';
+                                    const scoreLabel = hasScore ? ` · Exiles ${item.homeScore}-${item.awayScore}` : '';
+                                    return (
+                                        <div key={`more-motm-board-${item.id}`} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                                            <div className="text-sm font-bold text-slate-900">{item.label}</div>
+                                            <div className="text-[11px] text-slate-500">{dateLabel} · vs {item.opponent}{scoreLabel}</div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="text-sm text-slate-400">No awards recorded yet. Save a score in Games to start tracking.</div>
+                        )}
+                    </div>
                     <div className="space-y-3">
                         {actions.map(action => (
                             <button
@@ -7781,7 +7801,8 @@
             );
         };
 
-        const Opponents = ({ opponents, setOpponents, venues, setVenues, referees, setReferees, onNavigate }) => {
+        const Opponents = ({ opponents, setOpponents, venues, setVenues, referees, setReferees, onNavigate, initialView = 'opponents', lockView = false }) => {
+            const normalizedInitialView = initialView === 'venues' ? 'venues' : 'opponents';
             const [newOpponent, setNewOpponent] = useState({ name: '', contact: '', phone: '', payee: '' });
             const [isAddOpponentOpen, setIsAddOpponentOpen] = useState(false);
             const [isAddVenueOpen, setIsAddVenueOpen] = useState(false);
@@ -7798,7 +7819,7 @@
             const [venueLeagueTable, setVenueLeagueTable] = useState([]);
             const [venueLeagueTotals, setVenueLeagueTotals] = useState({ played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 });
             const [venueSeasonTotals, setVenueSeasonTotals] = useState([]);
-            const [viewTab, setViewTab] = useState('opponents');
+            const [viewTab, setViewTab] = useState(normalizedInitialView);
             const emptyOpponentForm = { name: '', contact: '', phone: '', payee: '' };
             const emptyVenueForm = { name: '', price: '', homeTeamId: null, address: '', notes: '', payee: '', contact: '' };
             const [selectedOpponent, setSelectedOpponent] = useState(null);
@@ -7837,6 +7858,11 @@
                     setReassignNew('');
                 }
             }, [reassignEntity, opponents, venues]);
+            useEffect(() => {
+                if (lockView) {
+                    setViewTab(normalizedInitialView);
+                }
+            }, [lockView, normalizedInitialView]);
             useEffect(() => {
                 return () => {
                     clearOpponentSaveTimer();
@@ -8757,12 +8783,23 @@
 
             return (
                 <div className="space-y-6 pb-20 animate-fade-in">
-                    <PageHeader title="League & Venues" subtitle="Manage clubs, venues, and performance records." />
+                    <PageHeader
+                        title={lockView ? (viewTab === 'venues' ? 'Venues' : 'Opponents') : 'League & Venues'}
+                        subtitle={
+                            lockView
+                                ? (viewTab === 'venues'
+                                    ? 'Manage grounds, maps, and venue performance records.'
+                                    : 'Manage clubs, league records, and head-to-head history.')
+                                : 'Manage clubs, venues, and performance records.'
+                        }
+                    />
 
-                    <div className="bg-white p-2 rounded-2xl border border-slate-100 flex gap-2 text-sm font-bold">
-                        <button onClick={() => setViewTab('opponents')} className={`flex-1 py-2 rounded-xl ${viewTab === 'opponents' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Opponents</button>
-                        <button onClick={() => setViewTab('venues')} className={`flex-1 py-2 rounded-xl ${viewTab === 'venues' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Venues</button>
-                    </div>
+                    {!lockView && (
+                        <div className="bg-white p-2 rounded-2xl border border-slate-100 flex gap-2 text-sm font-bold">
+                            <button onClick={() => setViewTab('opponents')} className={`flex-1 py-2 rounded-xl ${viewTab === 'opponents' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Opponents</button>
+                            <button onClick={() => setViewTab('venues')} className={`flex-1 py-2 rounded-xl ${viewTab === 'venues' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Venues</button>
+                        </div>
+                    )}
 
                     {viewTab === 'opponents' && (
                         <div className="space-y-4">
@@ -13735,7 +13772,12 @@
                             )}
                             {activeTab === 'opponents' && (
                                 <div data-tab-container="opponents">
-                                    <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={navigate} />
+                                    <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={navigate} initialView="opponents" lockView />
+                                </div>
+                            )}
+                            {activeTab === 'venues' && (
+                                <div data-tab-container="venues">
+                                    <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={navigate} initialView="venues" lockView />
                                 </div>
                             )}
                             {activeTab === 'more' && (
