@@ -9683,13 +9683,13 @@
                 let updated = categories.filter(c => c !== cat);
                 if(usage > 0) {
                     const fb = (fallbackName || '').trim();
-                    if(!fb) { alert('Provide a fallback category to reassign existing records.'); return; }
-                    if(fb === cat) { alert('Fallback must differ from the category being removed.'); return; }
+                    if(!fb) { pushSettingsToast('Provide a fallback category to reassign existing records.', 'warning'); return; }
+                    if(fb === cat) { pushSettingsToast('Fallback must differ from the category being removed.', 'warning'); return; }
                     await db.transactions.where('category').equals(cat).modify({ category: fb });
                     if(!updated.includes(fb)) updated.push(fb);
-                    alert(`Reassigned ${usage} record(s) to ${fb} and removed ${cat}.`);
+                    pushSettingsToast(`Reassigned ${usage} record(s) to ${fb} and removed ${cat}.`, 'success');
                 } else {
-                    alert(`Removed ${cat}.`);
+                    pushSettingsToast(`Removed ${cat}.`, 'success');
                 }
                 setCategories(updated);
                 persistCategories(updated);
@@ -9711,7 +9711,7 @@
                     const rows = parsePlayerImportRows(content, currentPlayers);
                     setPlayerImportRows(rows);
                 } catch (err) {
-                    alert('Import failed: ' + err.message);
+                    pushSettingsToast('Import failed: ' + err.message, 'error');
                 } finally {
                     setIsImportingPlayersCsv(false);
                     if (playerImportRef.current) playerImportRef.current.value = '';
@@ -9778,7 +9778,7 @@
                 }
                 const missing = rows.filter(row => row.selectedPositions.length === 0);
                 if (missing.length) {
-                    alert('Each row must have at least one selected position.');
+                    pushSettingsToast('Each row must have at least one selected position.', 'warning');
                     return;
                 }
                 startImportProgress('Importing players…');
@@ -9884,7 +9884,7 @@
                     }
                     setLegacyPreview(preview);
                 } catch (e) {
-                    alert('Legacy import failed: ' + e.message);
+                    pushSettingsToast('Legacy import failed: ' + e.message, 'error');
                 } finally {
                     setLegacyImporting(false);
                     finishImportProgress();
@@ -9946,11 +9946,11 @@
                         setCategories(updated);
                         persistCategories(updated);
                     }
-                    alert(`Imported ${rows.length} legacy rows after review.`);
+                    pushSettingsToast(`Imported ${rows.length} legacy rows after review.`, 'success');
                     setLegacyPreview([]);
                     setFixtures(await db.fixtures.toArray());
                 } catch (err) {
-                    alert('Commit failed: ' + err.message);
+                    pushSettingsToast('Commit failed: ' + err.message, 'error');
                 } finally {
                     finishImportProgress();
                 }
