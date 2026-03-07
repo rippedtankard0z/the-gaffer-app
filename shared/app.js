@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-15';
+        const MASTER_BUILD_VERSION = '2026.03.07-16';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -817,16 +817,39 @@
             return (
                 <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true">
                     <div className="absolute inset-0 bg-slate-900/30" onClick={onClose}></div>
-                    <div className="relative w-full max-w-md bg-white sm:rounded-3xl rounded-t-3xl shadow-2xl px-5 pt-5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6 animate-fade-in max-h-[92dvh] overflow-y-auto overscroll-contain">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="text-xl font-display font-bold text-slate-900">{title}</h3>
-                            <button onClick={onClose} className="h-11 w-11 flex items-center justify-center bg-slate-100 rounded-full hover:bg-slate-200 transition-colors">
-                                <Icon name="X" size={20} className="text-slate-500" />
-                            </button>
+                    <div className="relative w-full h-[100dvh] sm:h-auto sm:max-h-[92dvh] max-w-md bg-white sm:rounded-3xl rounded-t-3xl shadow-2xl animate-fade-in overflow-hidden">
+                        <div className="px-5 pt-4 pb-3 sm:px-6 sm:pt-5 sm:pb-4 border-b border-slate-100 bg-white/95 backdrop-blur sticky top-0 z-10">
+                            <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-3 sm:hidden"></div>
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-xl font-display font-bold text-slate-900">{title}</h3>
+                                <button onClick={onClose} className="h-11 w-11 flex items-center justify-center bg-slate-100 rounded-full hover:bg-slate-200 transition-colors">
+                                    <Icon name="X" size={20} className="text-slate-500" />
+                                </button>
+                            </div>
                         </div>
-                        {children}
+                        <div className="px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:px-6 sm:pt-5 overflow-y-auto overscroll-contain max-h-[calc(100dvh-5.75rem)] sm:max-h-[calc(92dvh-5.25rem)]">
+                            {children}
+                        </div>
                     </div>
                 </div>
+            );
+        };
+
+        const PageHeader = ({ title, subtitle = '', actions = null }) => {
+            return (
+                <header className="px-1">
+                    <div className="bg-white/90 backdrop-blur rounded-2xl border border-slate-200/70 p-4 shadow-soft flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                            <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">{title}</h1>
+                            {subtitle ? <p className="text-slate-500 text-sm font-medium mt-0.5">{subtitle}</p> : null}
+                        </div>
+                        {actions ? (
+                            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                                {actions}
+                            </div>
+                        ) : null}
+                    </div>
+                </header>
             );
         };
 
@@ -1799,22 +1822,22 @@
 
             return (
                 <div className="space-y-6 pb-20 animate-fade-in">
-                    <header className="px-1 space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                            <div>
-                                <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Squad</h1>
-                                <p className="text-slate-500 text-sm font-medium">Manage roster & debts</p>
-                            </div>
-                            <button onClick={() => setIsAddOpen(true)} className="p-2.5 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/30 flex items-center gap-1.5 hover:bg-slate-800 transition-colors">
+                    <PageHeader
+                        title="Squad"
+                        subtitle="Manage roster, debts, and attendance."
+                        actions={
+                            <button onClick={() => setIsAddOpen(true)} className="min-h-[44px] px-4 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/20 flex items-center gap-2 hover:bg-slate-800 transition-colors text-sm font-bold">
                                 <Icon name="Plus" size={16} />
-                                <span className="text-xs font-bold hidden sm:inline">New Player</span>
+                                New Player
                             </button>
-                        </div>
+                        }
+                    />
+                    <div className="px-1 space-y-3">
                         <div className="grid grid-cols-2 gap-2">
-                            <button onClick={() => setIsWallOpen(true)} className="w-full text-xs font-bold bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg border border-rose-100 flex items-center justify-center gap-1">
+                            <button onClick={() => setIsWallOpen(true)} className="w-full min-h-[44px] text-xs font-bold bg-rose-50 text-rose-700 px-3 py-1.5 rounded-lg border border-rose-100 flex items-center justify-center gap-1">
                                 <Icon name="AlertTriangle" size={14} /> Wall of Shame
                             </button>
-                            <button onClick={() => setIsDebtOpen(true)} className="w-full text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center justify-center gap-1">
+                            <button onClick={() => setIsDebtOpen(true)} className="w-full min-h-[44px] text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center justify-center gap-1">
                                 <Icon name="MessageSquare" size={14} /> Debt Message
                             </button>
                         </div>
@@ -1850,7 +1873,7 @@
                                 </button>
                             )}
                         </div>
-                    </header>
+                    </div>
 
                     <div className="bg-white rounded-2xl shadow-soft border border-slate-100 overflow-hidden divide-y divide-slate-50">
                         {filteredPlayers.length ? filteredPlayers.map((p) => {
@@ -4645,26 +4668,26 @@
 
             return (
                 <div className="space-y-6 pb-20 animate-fade-in">
-                    <header className="px-1 flex justify-between items-center">
-                        <div>
-                            <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">{launchMode === 'matchday' ? 'Match Day' : 'Games'}</h1>
-                            <p className="text-slate-500 text-sm font-medium">{launchMode === 'matchday' ? 'Quick access to today/next fixture' : 'Season schedule'}</p>
-                        </div>
-                        <div className="flex gap-2">
-                            <button onClick={() => setIsAddOpen(true)} className="p-2.5 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/30 flex items-center gap-1.5 hover:bg-slate-800 transition-colors">
-                                <Icon name="Plus" size={16} />
-                                <span className="text-xs font-bold hidden sm:inline">New Game</span>
-                            </button>
-                            <button onClick={() => setIsLegacyResultsOpen(true)} className="p-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/30 flex items-center gap-2 hover:bg-slate-800 transition-colors">
-                                <Icon name="History" size={18} />
-                                <span className="text-xs font-bold hidden sm:inline">Import Results</span>
-                            </button>
-                            <button onClick={() => setIsMagicOpen(true)} className="p-3 bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-500/30 flex items-center gap-2 hover:bg-indigo-700 transition-colors">
-                                <Icon name="Sparkles" size={18} />
-                                <span className="text-xs font-bold hidden sm:inline">Magic Import</span>
-                            </button>
-                        </div>
-                    </header>
+                    <PageHeader
+                        title={launchMode === 'matchday' ? 'Match Day' : 'Games'}
+                        subtitle={launchMode === 'matchday' ? 'Quick access to today and upcoming fixtures.' : 'Season schedule and result history.'}
+                        actions={
+                            <>
+                                <button onClick={() => setIsAddOpen(true)} className="min-h-[44px] px-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/20 flex items-center gap-1.5 hover:bg-slate-800 transition-colors text-xs font-bold">
+                                    <Icon name="Plus" size={16} />
+                                    New Game
+                                </button>
+                                <button onClick={() => setIsLegacyResultsOpen(true)} className="min-h-[44px] px-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/20 flex items-center gap-1.5 hover:bg-slate-800 transition-colors text-xs font-bold">
+                                    <Icon name="History" size={16} />
+                                    Import Results
+                                </button>
+                                <button onClick={() => setIsMagicOpen(true)} className="min-h-[44px] px-3 bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-500/20 flex items-center gap-1.5 hover:bg-indigo-700 transition-colors text-xs font-bold">
+                                    <Icon name="Sparkles" size={16} />
+                                    Magic Import
+                                </button>
+                            </>
+                        }
+                    />
 
                     <div className="grid grid-cols-2 gap-2">
                         <div className="bg-white p-3 rounded-2xl border border-slate-100">
@@ -6396,15 +6419,16 @@
 
             return (
                 <div className="space-y-6 pb-20 animate-fade-in">
-            <header className="px-1 flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-display font-bold text-slate-900 tracking-tight">Finances</h1>
-                    <p className="text-slate-500 text-xs font-medium">Reporting & accountability</p>
-                </div>
-                <button onClick={() => setIsAddTxOpen(true)} className="p-3 rounded-full bg-slate-900 text-white shadow-lg shadow-slate-800/20 hover:bg-slate-800">
-                    <Icon name="Plus" size={18} />
-                </button>
-            </header>
+                    <PageHeader
+                        title="Bank"
+                        subtitle="Cashflow, ledger, receivables, and exports."
+                        actions={
+                            <button onClick={() => setIsAddTxOpen(true)} className="min-h-[44px] px-4 rounded-xl bg-slate-900 text-white shadow-lg shadow-slate-800/20 hover:bg-slate-800 text-sm font-bold flex items-center gap-2">
+                                <Icon name="Plus" size={18} />
+                                Add Entry
+                            </button>
+                        }
+                    />
 
                     <div className="grid md:grid-cols-2 gap-3">
                         <div className="bg-white p-3 rounded-2xl shadow-soft border border-slate-100 space-y-2">
@@ -6695,6 +6719,9 @@
             const [pendingPayment, setPendingPayment] = useState(null);
             const [isPaying, setIsPaying] = useState(false);
             const [isSettlingClub, setIsSettlingClub] = useState(false);
+            const [showHomeIntel, setShowHomeIntel] = useState(false);
+            const [showAllUnpaidGroups, setShowAllUnpaidGroups] = useState(false);
+            const [showAllClubReceivables, setShowAllClubReceivables] = useState(false);
             const [dashboardToasts, setDashboardToasts] = useState([]);
             const pushDashboardToast = useCallback((message, tone = 'info') => {
                 const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -6763,6 +6790,14 @@
                     }))
                     .sort((a, b) => b.total - a.total);
             }, [insights.clubReceivables]);
+            const visibleUnpaidGroups = useMemo(() => {
+                return showAllUnpaidGroups ? unpaidGroups : unpaidGroups.slice(0, 2);
+            }, [unpaidGroups, showAllUnpaidGroups]);
+            const hiddenUnpaidGroupsCount = Math.max(0, unpaidGroups.length - 2);
+            const visibleClubReceivableGroups = useMemo(() => {
+                return showAllClubReceivables ? clubReceivableGroups : clubReceivableGroups.slice(0, 2);
+            }, [clubReceivableGroups, showAllClubReceivables]);
+            const hiddenClubReceivableCount = Math.max(0, clubReceivableGroups.length - 2);
 
             const loadDashboard = useCallback(async () => {
                     await waitForDb();
@@ -7085,7 +7120,7 @@
             const authActionLabel = authStatus?.actionLabel || 'Toggle database login';
 
             return (
-                <div className="space-y-6 pb-20 animate-slide-up">
+                <div className="space-y-5 pb-24 animate-slide-up">
                     <header className="flex justify-between items-center pt-2 px-1">
                         <div className="flex items-center gap-3">
                             <button type="button" onClick={onAuthLogoClick} aria-label={authActionLabel} className="h-12 w-12 rounded-2xl border border-white shadow-glass overflow-hidden bg-white/70">
@@ -7097,7 +7132,7 @@
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
-                            <button onClick={onOpenSettings} className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-700 hover:bg-slate-100 transition">
+                            <button onClick={onOpenSettings} className="w-11 h-11 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-700 hover:bg-slate-100 transition">
                                 <Icon name="Settings" size={18} />
                             </button>
                             <span className="text-[10px] font-semibold text-slate-400 leading-tight text-right">
@@ -7108,47 +7143,40 @@
                         </div>
                     </header>
 
-                    {/* Compact Balance Card */}
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft">
-                        <div className="flex items-center justify-between mb-2">
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                        <div className="flex items-center justify-between">
                             <div>
-                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Balance</div>
-                                <div className="text-2xl font-display font-bold text-slate-900">{formatCurrency(stats.balance, { minimumFractionDigits: 0 })}</div>
+                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Money Snapshot</div>
+                                <div className="text-3xl font-display font-bold text-slate-900">{formatCurrency(stats.balance, { minimumFractionDigits: 0 })}</div>
                             </div>
-                            <div className="h-12 w-24">
-                                <Sparkline data={stats.history} color="#2563eb" />
+                            <div className="h-14 w-28">
+                                <Sparkline data={stats.history} color="#1d4ed8" />
                             </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600 mt-2">
-                            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2">
+                        <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600">
+                            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2.5">
                                 <div>Open receivable</div>
                                 <div className="text-emerald-700 font-bold">{formatCurrency(stats.outstanding.receivable)}</div>
                             </div>
-                            <div className="bg-amber-50 border border-amber-100 rounded-xl p-2">
+                            <div className="bg-amber-50 border border-amber-100 rounded-xl p-2.5">
                                 <div>Open payable</div>
                                 <div className="text-amber-700 font-bold">{formatCurrency(Math.abs(stats.outstanding.payable))}</div>
                             </div>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                        <div onClick={() => onNavigate('fixtures')} className="cursor-pointer">
-                            <StatCard icon="Trophy" label="Games" value={stats.fixtureCt} subtext="Scheduled" color="blue" />
-                        </div>
-                        <div onClick={() => onNavigate('players')} className="cursor-pointer">
-                            <StatCard icon="Users" label="Squad Size" value={stats.playerCt} subtext="Active Players" color="emerald" />
-                        </div>
-                    </div>
-
                     <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
-                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Match Centre</div>
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Today</div>
+                            <button onClick={() => onNavigate('matchday')} className="text-[11px] font-bold text-brand-600 underline">Open Match Day</button>
+                        </div>
                         {nextFixture ? (
-                            <div className="flex items-center justify-between">
+                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 flex items-center justify-between">
                                 <div>
                                     <div className="text-sm font-bold text-slate-900">Next: vs {nextFixture.opponent}</div>
                                     <div className="text-[11px] text-slate-500">{new Date(nextFixture.date).toLocaleDateString()} · {renderTimeLabel(nextFixture.time)} · {nextFixture.venue || 'TBC'}</div>
                                 </div>
-                                <button onClick={() => onNavigate('fixtures')} className="text-[11px] font-bold text-brand-600 underline">Open</button>
+                                <button onClick={() => onNavigate('fixtures')} className="min-h-[44px] px-3 rounded-lg bg-white border border-slate-200 text-[11px] font-bold text-slate-700">Open</button>
                             </div>
                         ) : <div className="text-sm text-slate-500">No upcoming game scheduled.</div>}
                         {lastResult && (
@@ -7165,6 +7193,24 @@
                     </div>
 
                     <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Quick Actions</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <button onClick={() => onNavigate('matchday')} className="min-h-[48px] rounded-xl bg-slate-900 text-white text-sm font-bold">Start Match Day</button>
+                            <button onClick={() => onNavigate('players')} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-bold">Collect Player Fees</button>
+                            <button onClick={() => onNavigate('finances')} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-slate-700 text-sm font-bold">Open Bank</button>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <div onClick={() => onNavigate('fixtures')} className="cursor-pointer">
+                            <StatCard icon="Trophy" label="Games" value={stats.fixtureCt} subtext="Season fixtures" color="blue" />
+                        </div>
+                        <div onClick={() => onNavigate('players')} className="cursor-pointer">
+                            <StatCard icon="Users" label="Squad Size" value={stats.playerCt} subtext="Registered players" color="emerald" />
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
                         <div className="flex items-start justify-between gap-2">
                             <div>
                                 <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Unpaid Items</div>
@@ -7178,7 +7224,7 @@
                         </div>
                         {unpaidGroups.length ? (
                             <div className="space-y-3 pr-1">
-                                {unpaidGroups.map(group => (
+                                {visibleUnpaidGroups.map(group => (
                                     <div key={group.playerId} className="rounded-xl border border-amber-100 bg-amber-50/50 p-3 space-y-2">
                                         <div
                                             className="flex items-center justify-between cursor-pointer"
@@ -7210,7 +7256,7 @@
                                                             <div className="text-[11px] font-bold text-rose-600">{formatCurrency(Math.abs(item.amount), { maximumFractionDigits: 0 })}</div>
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); setPendingPayment(item); }}
-                                                                className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-1 rounded-md shadow-sm"
+                                                                className="min-h-[40px] text-[11px] font-bold bg-emerald-600 text-white px-3 py-1 rounded-md shadow-sm"
                                                             >
                                                                 Mark received
                                                             </button>
@@ -7221,6 +7267,15 @@
                                         </div>
                                     </div>
                                 ))}
+                                {hiddenUnpaidGroupsCount > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAllUnpaidGroups(prev => !prev)}
+                                        className="w-full min-h-[42px] text-sm font-bold rounded-lg border border-slate-200 bg-white text-slate-700"
+                                    >
+                                        {showAllUnpaidGroups ? 'Show fewer players' : `Show ${hiddenUnpaidGroupsCount} more player${hiddenUnpaidGroupsCount === 1 ? '' : 's'}`}
+                                    </button>
+                                )}
                             </div>
                         ) : (
                             <div className="text-xs text-slate-400">Everyone is settled up.</div>
@@ -7241,7 +7296,7 @@
                         </div>
                         {clubReceivableGroups.length ? (
                             <div className="space-y-3 pr-1">
-                                {clubReceivableGroups.map(group => (
+                                {visibleClubReceivableGroups.map(group => (
                                     <div key={group.clubName} className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 space-y-2">
                                         <div
                                             className="flex items-center justify-between cursor-pointer"
@@ -7269,163 +7324,185 @@
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <div className="text-[11px] font-bold text-indigo-600">{formatCurrency(Math.abs(item.amount), { maximumFractionDigits: 0 })}</div>
-                                                        <button onClick={(e) => { e.stopPropagation(); settleClubReceivable(item); }} disabled={isSettlingClub} className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-1 rounded-md shadow-sm disabled:opacity-60">{getSettlementActionLabel(item)}</button>
+                                                        <button onClick={(e) => { e.stopPropagation(); settleClubReceivable(item); }} disabled={isSettlingClub} className="min-h-[40px] text-[11px] font-bold bg-emerald-600 text-white px-3 py-1 rounded-md shadow-sm disabled:opacity-60">{getSettlementActionLabel(item)}</button>
                                                     </div>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
                                 ))}
+                                {hiddenClubReceivableCount > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAllClubReceivables(prev => !prev)}
+                                        className="w-full min-h-[42px] text-sm font-bold rounded-lg border border-slate-200 bg-white text-slate-700"
+                                    >
+                                        {showAllClubReceivables ? 'Show fewer clubs' : `Show ${hiddenClubReceivableCount} more club${hiddenClubReceivableCount === 1 ? '' : 's'}`}
+                                    </button>
+                                )}
                             </div>
                         ) : (
                             <div className="text-xs text-slate-400">No club receivables.</div>
                         )}
                     </div>
-
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
-                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Kit overview</div>
-                        <div className="grid grid-cols-2 gap-2 text-sm font-semibold text-slate-700">
-                            <div className="flex justify-between">
-                                <span>Players with kit</span>
-                                <span className="font-mono text-slate-900">{kitOverview.holders}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span>Available numbers</span>
-                                <span className="font-mono text-slate-900">{kitOverview.available}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span>Range tracked</span>
-                                <span className="font-mono text-slate-900">{kitOverview.range}</span>
-                            </div>
-                            <div className="flex justify-between">
-                                <span>Queued for order</span>
-                                <span className="font-mono text-slate-900">{kitOverview.queue}</span>
-                            </div>
-                        </div>
-                        <div className="text-[11px] text-slate-500">Open Kit from More to update assignments and queue.</div>
-                    </div>
-
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
-                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Insights</div>
-                        <div className="grid grid-cols-2 gap-3 text-sm text-slate-700">
-                            <div className="col-span-2">
-                                <div className="text-[11px] uppercase font-bold text-slate-400 mb-1">Form (last 5)</div>
-                                {insights.form.length ? (
-                                    <div className="flex gap-1">
-                                        {insights.form.map((item, idx) => (
-                                            <div
-                                                key={`form-${idx}`}
-                                                title={`vs ${item.opponent} · ${item.score}`}
-                                                className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${
-                                                    item.result === 'W'
-                                                        ? 'bg-emerald-100 text-emerald-700'
-                                                        : item.result === 'L'
-                                                            ? 'bg-rose-100 text-rose-700'
-                                                            : 'bg-slate-100 text-slate-600'
-                                                }`}
-                                            >
-                                                {item.result}
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="text-[12px] text-slate-400">No played games yet.</div>
-                                )}
-                            </div>
-                            <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1">
-                                <div className="text-[10px] uppercase font-bold text-slate-400">Top Scorer</div>
-                                {insights.topScorer ? (
-                                    <>
-                                        <div className="font-bold text-slate-900 truncate">{insights.topScorer.label}</div>
-                                        <div className="text-[11px] text-slate-500">{insights.topScorer.goals} goal{insights.topScorer.goals === 1 ? '' : 's'}</div>
-                                    </>
-                                ) : (
-                                    <div className="text-[11px] text-slate-400">No goals recorded.</div>
-                                )}
-                            </div>
-                            <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1">
-                                <div className="text-[10px] uppercase font-bold text-slate-400">MOTM Leader</div>
-                                {insights.motmLeader ? (
-                                    <>
-                                        <div className="font-bold text-slate-900 truncate">{insights.motmLeader.label}</div>
-                                        <div className="text-[11px] text-slate-500">{insights.motmLeader.count} award{insights.motmLeader.count === 1 ? '' : 's'}</div>
-                                    </>
-                                ) : (
-                                    <div className="text-[11px] text-slate-400">No awards yet.</div>
-                                )}
-                            </div>
-                            <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1 col-span-2">
-                                <div className="text-[10px] uppercase font-bold text-slate-400">Goals & Clean Sheets</div>
-                                <div className="text-[12px] text-slate-600">
-                                    Scoring {insights.avgGoals.for.toFixed(1)} · Conceding {insights.avgGoals.against.toFixed(1)} per match
-                                </div>
-                                <div className="text-[11px] text-slate-500">Clean sheets: {insights.cleanSheets}</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-4">
-                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Financial Pulse</div>
-                        <div className="space-y-3">
+                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-2">
+                        <button onClick={() => setShowHomeIntel(prev => !prev)} className="w-full flex items-center justify-between">
                             <div>
-                                <div className="text-[10px] font-semibold text-rose-500 uppercase tracking-wider mb-1">Debt Watch</div>
-                                {insights.debtors.length ? (
-                                    <div className="space-y-2">
-                                        {insights.debtors.map((debtor) => (
-                                            <div key={debtor.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-rose-50 border border-rose-100">
-                                                <div>
-                                                    <div className="text-sm font-bold text-rose-800">{debtor.name}</div>
-                                                    <div className="text-[11px] text-rose-500">Owes {formatCurrency(Math.abs(debtor.balance), { maximumFractionDigits: 0 })}</div>
-                                                </div>
-                                                <button onClick={() => onNavigate('players')} className="text-[10px] font-bold text-rose-700 underline">Follow up</button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="text-xs text-slate-400">No overdue balances 👏</div>
-                                )}
+                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Intel</div>
+                                <div className="text-[11px] text-slate-400">Form, birthdays, kit snapshot and debt watch</div>
                             </div>
-                            <div>
-                                <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider mb-1">Recent Payments</div>
-                                {insights.recentPayments.length ? (
-                                    <div className="space-y-2">
-                                        {insights.recentPayments.map((tx) => (
-                                            <div key={tx.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-100">
-                                                <div>
-                                                    <div className="text-sm font-bold text-emerald-900 truncate">{tx.playerName || 'Unnamed payer'}</div>
-                                                    <div className="text-[11px] text-emerald-600 truncate">{tx.description}</div>
-                                                </div>
-                                                <div className="text-xs font-bold text-emerald-700">{formatCurrency(tx.amount, { maximumFractionDigits: 0 })}</div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="text-xs text-slate-400">No payments logged recently.</div>
-                                )}
-                            </div>
-                        </div>
+                            <Icon name={showHomeIntel ? 'ChevronUp' : 'ChevronDown'} size={18} className="text-slate-400" />
+                        </button>
                     </div>
 
-                    <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
-                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Upcoming Birthdays</div>
-                        {insights.upcomingBirthdays.length ? (
-                            <div className="space-y-2">
-                                {insights.upcomingBirthdays.map((entry) => (
-                                    <div key={entry.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50 border border-slate-100">
-                                        <div>
-                                            <div className="text-sm font-bold text-slate-900">{entry.name}</div>
-                                            <div className="text-[11px] text-slate-500">Turning {entry.turning} on {entry.dateLabel}</div>
+                    {showHomeIntel && (
+                        <>
+                            <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Insights</div>
+                                <div className="grid grid-cols-2 gap-3 text-sm text-slate-700">
+                                    <div className="col-span-2">
+                                        <div className="text-[11px] uppercase font-bold text-slate-400 mb-1">Form (last 5)</div>
+                                        {insights.form.length ? (
+                                            <div className="flex gap-1">
+                                                {insights.form.map((item, idx) => (
+                                                    <div
+                                                        key={`form-${idx}`}
+                                                        title={`vs ${item.opponent} · ${item.score}`}
+                                                        className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold ${
+                                                            item.result === 'W'
+                                                                ? 'bg-emerald-100 text-emerald-700'
+                                                                : item.result === 'L'
+                                                                    ? 'bg-rose-100 text-rose-700'
+                                                                    : 'bg-slate-100 text-slate-600'
+                                                        }`}
+                                                    >
+                                                        {item.result}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="text-[12px] text-slate-400">No played games yet.</div>
+                                        )}
+                                    </div>
+                                    <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1">
+                                        <div className="text-[10px] uppercase font-bold text-slate-400">Top Scorer</div>
+                                        {insights.topScorer ? (
+                                            <>
+                                                <div className="font-bold text-slate-900 truncate">{insights.topScorer.label}</div>
+                                                <div className="text-[11px] text-slate-500">{insights.topScorer.goals} goal{insights.topScorer.goals === 1 ? '' : 's'}</div>
+                                            </>
+                                        ) : (
+                                            <div className="text-[11px] text-slate-400">No goals recorded.</div>
+                                        )}
+                                    </div>
+                                    <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1">
+                                        <div className="text-[10px] uppercase font-bold text-slate-400">MOTM Leader</div>
+                                        {insights.motmLeader ? (
+                                            <>
+                                                <div className="font-bold text-slate-900 truncate">{insights.motmLeader.label}</div>
+                                                <div className="text-[11px] text-slate-500">{insights.motmLeader.count} award{insights.motmLeader.count === 1 ? '' : 's'}</div>
+                                            </>
+                                        ) : (
+                                            <div className="text-[11px] text-slate-400">No awards yet.</div>
+                                        )}
+                                    </div>
+                                    <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 space-y-1 col-span-2">
+                                        <div className="text-[10px] uppercase font-bold text-slate-400">Goals & Clean Sheets</div>
+                                        <div className="text-[12px] text-slate-600">
+                                            Scoring {insights.avgGoals.for.toFixed(1)} · Conceding {insights.avgGoals.against.toFixed(1)} per match
                                         </div>
-                                        <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-brand-50 text-brand-700 border border-brand-100">
-                                            {entry.inDays === 0 ? 'Today' : `In ${entry.inDays}d`}
-                                        </span>
+                                        <div className="text-[11px] text-slate-500">Clean sheets: {insights.cleanSheets}</div>
                                     </div>
-                                ))}
+                                </div>
                             </div>
-                        ) : (
-                            <div className="text-xs text-slate-400">No birthdays in the next 60 days.</div>
-                        )}
-                    </div>
+
+                            <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-4">
+                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Financial Pulse</div>
+                                <div className="space-y-3">
+                                    <div>
+                                        <div className="text-[10px] font-semibold text-rose-500 uppercase tracking-wider mb-1">Debt Watch</div>
+                                        {insights.debtors.length ? (
+                                            <div className="space-y-2">
+                                                {insights.debtors.map((debtor) => (
+                                                    <div key={debtor.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-rose-50 border border-rose-100">
+                                                        <div>
+                                                            <div className="text-sm font-bold text-rose-800">{debtor.name}</div>
+                                                            <div className="text-[11px] text-rose-500">Owes {formatCurrency(Math.abs(debtor.balance), { maximumFractionDigits: 0 })}</div>
+                                                        </div>
+                                                        <button onClick={() => onNavigate('players')} className="text-[10px] font-bold text-rose-700 underline">Follow up</button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="text-xs text-slate-400">No overdue balances.</div>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider mb-1">Recent Payments</div>
+                                        {insights.recentPayments.length ? (
+                                            <div className="space-y-2">
+                                                {insights.recentPayments.map((tx) => (
+                                                    <div key={tx.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-100">
+                                                        <div>
+                                                            <div className="text-sm font-bold text-emerald-900 truncate">{tx.playerName || 'Unnamed payer'}</div>
+                                                            <div className="text-[11px] text-emerald-600 truncate">{tx.description}</div>
+                                                        </div>
+                                                        <div className="text-xs font-bold text-emerald-700">{formatCurrency(tx.amount, { maximumFractionDigits: 0 })}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="text-xs text-slate-400">No payments logged recently.</div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Kit Overview</div>
+                                <div className="grid grid-cols-2 gap-2 text-sm font-semibold text-slate-700">
+                                    <div className="flex justify-between">
+                                        <span>Players with kit</span>
+                                        <span className="font-mono text-slate-900">{kitOverview.holders}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Available numbers</span>
+                                        <span className="font-mono text-slate-900">{kitOverview.available}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Range tracked</span>
+                                        <span className="font-mono text-slate-900">{kitOverview.range}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Queued for order</span>
+                                        <span className="font-mono text-slate-900">{kitOverview.queue}</span>
+                                    </div>
+                                </div>
+                                <div className="text-[11px] text-slate-500">Open Kit from More to update assignments and queue.</div>
+                            </div>
+
+                            <div className="bg-white border border-slate-100 rounded-2xl p-4 shadow-soft space-y-3">
+                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Upcoming Birthdays</div>
+                                {insights.upcomingBirthdays.length ? (
+                                    <div className="space-y-2">
+                                        {insights.upcomingBirthdays.map((entry) => (
+                                            <div key={entry.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50 border border-slate-100">
+                                                <div>
+                                                    <div className="text-sm font-bold text-slate-900">{entry.name}</div>
+                                                    <div className="text-[11px] text-slate-500">Turning {entry.turning} on {entry.dateLabel}</div>
+                                                </div>
+                                                <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-brand-50 text-brand-700 border border-brand-100">
+                                                    {entry.inDays === 0 ? 'Today' : `In ${entry.inDays}d`}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-xs text-slate-400">No birthdays in the next 60 days.</div>
+                                )}
+                            </div>
+                        </>
+                    )}
 
                     <Modal isOpen={!!pendingPayment} onClose={closePaymentModal} title="Confirm Received Payment">
                         {pendingPayment && (
@@ -7465,15 +7542,15 @@
 
             return (
                 <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pb-safe">
-                    <nav className="glass-panel mx-auto w-full max-w-md flex items-center justify-between gap-1 p-2 rounded-t-2xl shadow-glass">
+                    <nav className="glass-panel mx-auto w-full max-w-md flex items-center justify-between gap-1 p-2.5 rounded-t-2xl shadow-glass">
                         {items.map(item => {
                             const isActive = item.id === 'more' ? isMoreSection : activeTab === item.id;
                             return (
                                 <button key={item.id} onClick={() => setTab(item.id)}
-                                    className={`relative flex flex-col items-center justify-center flex-1 h-16 rounded-xl transition-all duration-300 ${isActive ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+                                    className={`relative flex flex-col items-center justify-center flex-1 h-[4.5rem] rounded-xl transition-all duration-300 ${isActive ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
                                 >
                                     <Icon name={item.icon} size={20} strokeWidth={isActive ? 2.5 : 2} className="mb-0.5" />
-                                    <span className="text-[10px] font-bold tracking-wide">{item.label}</span>
+                                    <span className="text-[11px] font-bold tracking-wide">{item.label}</span>
                                 </button>
                             );
                         })}
@@ -7522,16 +7599,13 @@
             ];
             return (
                 <div className="space-y-5 pb-20 animate-fade-in">
-                    <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-soft">
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">More</div>
-                        <div className="text-sm text-slate-600 mt-1">Everything else in one place.</div>
-                    </div>
+                    <PageHeader title="More" subtitle="Everything else in one place." />
                     <div className="space-y-3">
                         {actions.map(action => (
                             <button
                                 key={action.id}
                                 onClick={() => onNavigate(action.tab)}
-                                className="w-full flex items-center justify-between bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft hover:border-brand-200"
+                                className="w-full min-h-[74px] flex items-center justify-between bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft hover:border-brand-200"
                             >
                                 <div className="flex items-center gap-3 text-left">
                                     <div className="h-11 w-11 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center">
@@ -8526,10 +8600,7 @@
 
             return (
                 <div className="space-y-6 pb-20 animate-fade-in">
-                    <header className="px-1">
-                        <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">League & Venues</h1>
-                        <p className="text-slate-500 text-sm font-medium">Keep clean lists and nerdy stats</p>
-                    </header>
+                    <PageHeader title="League & Venues" subtitle="Manage clubs, venues, and performance records." />
 
                     <div className="bg-white p-2 rounded-2xl border border-slate-100 flex gap-2 text-sm font-bold">
                         <button onClick={() => setViewTab('opponents')} className={`flex-1 py-2 rounded-xl ${viewTab === 'opponents' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Opponents</button>
@@ -9641,17 +9712,17 @@
 
             return (
                 <div className="space-y-6 pb-20 animate-fade-in">
-                    <header className="px-1 space-y-1">
-                        <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Kit</h1>
-                        <p className="text-slate-500 text-sm font-medium">List who has gear, what's free, and who's up next.</p>
-                        <div className="flex flex-wrap gap-2">
-                            <button onClick={() => importInputRef.current?.click()} className={`px-3 py-2 text-xs font-bold rounded-xl ${isImportingKit ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'}`} disabled={isImportingKit}>
-                                {isImportingKit ? 'Importing…' : 'Upload kit CSV'}
+                    <PageHeader
+                        title="Kit"
+                        subtitle="Track assignments, free numbers, and order queue."
+                        actions={
+                            <button onClick={() => importInputRef.current?.click()} className={`min-h-[44px] px-4 text-xs font-bold rounded-xl ${isImportingKit ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'}`} disabled={isImportingKit}>
+                                {isImportingKit ? 'Importing…' : 'Upload Kit CSV'}
                             </button>
-                            <span className="text-[11px] text-slate-400">Expect columns: Player Name, Kit arrived, Shirt Size, Number Requested, Short Size, Writing On Back Of Shirt, Paid?, Number Free, Number Requested, Number Assigned.</span>
-                        </div>
-                        {kitImportMessage && <p className="text-[11px] text-slate-500">{kitImportMessage}</p>}
-                    </header>
+                        }
+                    />
+                    <div className="px-1 text-[11px] text-slate-500">Expected columns: Player Name, Kit arrived, Shirt Size, Number Requested, Short Size, Writing On Back Of Shirt, Paid?, Number Free, Number Requested, Number Assigned.</div>
+                    {kitImportMessage && <p className="px-1 text-[11px] text-slate-500">{kitImportMessage}</p>}
 
                     <div className="space-y-4">
                         <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-soft space-y-3">
@@ -12159,10 +12230,7 @@
 
             return (
                 <div className="space-y-6 pb-20 animate-fade-in">
-                    <header className="px-1">
-                        <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Settings</h1>
-                        <p className="text-slate-500 text-sm font-medium">Configure categories for costs</p>
-                    </header>
+                    <PageHeader title="Settings" subtitle="Backups, imports, repair tools, and app controls." />
 
                     <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">App Refresh</div>
@@ -13026,6 +13094,18 @@
             });
             const settingsLoadedRef = useRef(false);
             const isVersionMismatch = hasLocalVersionMismatch || hasRemoteVersionMismatch;
+            useEffect(() => {
+                if (typeof document === 'undefined') return undefined;
+                const styleId = 'gaffer-mobile-form-font-fix';
+                if (document.getElementById(styleId)) return undefined;
+                const style = document.createElement('style');
+                style.id = styleId;
+                style.textContent = '@media (max-width: 640px) { input, select, textarea { font-size: 16px !important; } }';
+                document.head.appendChild(style);
+                return () => {
+                    if (style.parentNode) style.parentNode.removeChild(style);
+                };
+            }, []);
             const startImportProgress = useCallback((label = 'Updating data…') => {
                 setImportCount(prev => {
                     if (prev === 0) {
