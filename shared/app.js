@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-01';
+        const MASTER_BUILD_VERSION = '2026.03.07-03';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -8058,6 +8058,10 @@
             const [playerImportRows, setPlayerImportRows] = useState(null);
             const [isRefreshingApp, setIsRefreshingApp] = useState(false);
             const [isRepairingLedger, setIsRepairingLedger] = useState(false);
+            const [isApplyingLedgerRepair, setIsApplyingLedgerRepair] = useState(false);
+            const [isLedgerRepairPreviewOpen, setIsLedgerRepairPreviewOpen] = useState(false);
+            const [ledgerRepairCandidates, setLedgerRepairCandidates] = useState([]);
+            const [ledgerRepairSelection, setLedgerRepairSelection] = useState({});
             const [ledgerRepairSummary, setLedgerRepairSummary] = useState(null);
             const [ledgerRepairHasRun, setLedgerRepairHasRun] = useState(() => {
                 try {
@@ -8391,6 +8395,14 @@
                 setLedgerRepairSummary(null);
                 startImportProgress('Reviewing receivable/payable ledger entries…');
                 try {
+                    const normalizeEntityText = (value = '') => {
+                        return (value || '')
+                            .toString()
+                            .toLowerCase()
+                            .replace(/[^a-z0-9\s]/g, ' ')
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                    };
                     await waitForDb();
                     const [transactionsList, fixtureList] = await Promise.all([
                         db.transactions.toArray(),
@@ -8432,14 +8444,24 @@
                         }
 
                         const fixture = (tx.fixtureId !== undefined && tx.fixtureId !== null) ? fixtureLookup[String(tx.fixtureId)] : null;
-                        const payeeName = (tx.payee || '').toString().trim().toLowerCase();
-                        const fixtureOpponent = (fixture?.opponent || '').toString().trim().toLowerCase();
-                        const isOpponentPayee = !!payeeName && !!fixtureOpponent && payeeName === fixtureOpponent;
+                        const payeeRaw = (tx.payee || '').toString().trim();
+                        const opponentRaw = (fixture?.opponent || '').toString().trim();
+                        const payeeName = normalizeEntityText(payeeRaw);
+                        const fixtureOpponent = normalizeEntityText(opponentRaw);
+                        const isOpponentPayeeExact = !!payeeName && !!fixtureOpponent && payeeName === fixtureOpponent;
+                        const isOpponentPayeeLoose = !!payeeName && !!fixtureOpponent
+                            && (payeeName.includes(fixtureOpponent) || fixtureOpponent.includes(payeeName))
+                            && Math.min(payeeName.length, fixtureOpponent.length) >= 4;
+                        const hasOpponentContext = !!fixtureOpponent && (!payeeName || isOpponentPayeeExact || isOpponentPayeeLoose);
                         const normalizedCategory = normalizeFeeCategory(tx.category);
-                        const isPitchFee = normalizedCategory === PITCH_FEE_CATEGORY || /pitch fee/i.test((tx.description || '').toString());
+                        const categoryText = (tx.category || '').toString().toLowerCase();
+                        const descriptionText = (tx.description || '').toString();
+                        const isPitchFee = normalizedCategory === PITCH_FEE_CATEGORY
+                            || categoryText.includes('pitch')
+                            || /pitch\s*fee|pitch\s*hire|ground\s*hire/i.test(descriptionText);
                         const isClubLedgerRow = tx.playerId === undefined || tx.playerId === null;
 
-                        if (isClubLedgerRow && isPitchFee && isOpponentPayee) {
+                        if (isClubLedgerRow && isPitchFee && hasOpponentContext) {
                             if (effectiveFlow !== 'receivable') {
                                 patch.flow = 'receivable';
                                 effectiveFlow = 'receivable';
@@ -8470,7 +8492,7 @@
                             if (currentType !== targetType) {
                                 patch.type = targetType;
                                 touched = true;
-                                if (isClubLedgerRow && isPitchFee && isOpponentPayee) {
+                                if (isClubLedgerRow && isPitchFee && hasOpponentContext) {
                                     touchedOpponentPitch = true;
                                 } else {
                                     touchedMismatch = true;
@@ -8482,7 +8504,31 @@
                         if (touchedMissingFlow) fixedMissingFlow += 1;
                         if (touchedOpponentPitch) fixedOpponentPitchFees += 1;
                         if (touchedMismatch) fixedFlowAmountMismatches += 1;
-                        updates.push({ id: txId, patch });
+                        const currentFlowDisplay = currentFlow || inferFlowFromAmount(amountRaw, currentType || '');
+                        const nextAmount = patch.amount !== undefined ? Number(patch.amount) : amountRaw;
+                        const nextFlow = patch.flow || inferFlowFromAmount(nextAmount, patch.type || currentType || '');
+                        const currentTypeDisplay = currentType || (amountRaw > 0 ? 'INCOME' : 'EXPENSE');
+                        const nextType = patch.type || (nextAmount > 0 ? 'INCOME' : 'EXPENSE');
+                        updates.push({
+                            id: txId,
+                            patch,
+                            date: tx.date || '',
+                            description: tx.description || '',
+                            category: normalizedCategory || tx.category || 'Other',
+                            payee: payeeRaw || '',
+                            fixtureOpponent: opponentRaw || '',
+                            currentAmount: amountRaw,
+                            nextAmount,
+                            currentFlow: currentFlowDisplay,
+                            nextFlow,
+                            currentType: currentTypeDisplay,
+                            nextType,
+                            reasonFlags: {
+                                missingFlow: touchedMissingFlow,
+                                opponentPitch: touchedOpponentPitch,
+                                mismatch: touchedMismatch
+                            }
+                        });
                     });
 
                     addProgressDetail(`Scanned ${transactionsList.length} transaction(s).`);
@@ -8505,27 +8551,65 @@
                         return;
                     }
 
-                    const apply = confirm(`Found ${updates.length} ledger entr${updates.length === 1 ? 'y' : 'ies'} to fix. Apply fixes now?`);
-                    if (!apply) {
-                        setLedgerRepairSummary({
-                            scanned: transactionsList.length,
-                            fixed: 0,
-                            fixedFlowAmountMismatches: 0,
-                            fixedOpponentPitchFees: 0,
-                            fixedMissingFlow: 0,
-                            pending: updates.length,
-                            cancelled: true,
-                            timestamp: new Date().toISOString()
-                        });
-                        return;
+                    setLedgerRepairSummary({
+                        scanned: transactionsList.length,
+                        fixed: 0,
+                        proposed: updates.length,
+                        fixedFlowAmountMismatches: 0,
+                        fixedOpponentPitchFees: 0,
+                        fixedMissingFlow: 0,
+                        timestamp: new Date().toISOString()
+                    });
+                    const nextSelection = {};
+                    updates.forEach(row => {
+                        nextSelection[String(row.id)] = true;
+                    });
+                    setLedgerRepairCandidates(updates);
+                    setLedgerRepairSelection(nextSelection);
+                    setIsLedgerRepairPreviewOpen(true);
+                } catch (err) {
+                    console.error('Ledger repair failed', err);
+                    alert('Unable to repair ledger: ' + (err?.message || 'Unexpected error'));
+                } finally {
+                    finishImportProgress();
+                    setIsRepairingLedger(false);
+                }
+            };
+
+            const toggleLedgerRepairSelection = (rowId) => {
+                const key = String(rowId);
+                setLedgerRepairSelection(prev => ({ ...prev, [key]: !prev[key] }));
+            };
+
+            const setAllLedgerRepairSelections = (isSelected) => {
+                const next = {};
+                ledgerRepairCandidates.forEach(row => {
+                    next[String(row.id)] = !!isSelected;
+                });
+                setLedgerRepairSelection(next);
+            };
+
+            const applyLedgerRepairSelection = async () => {
+                if (isApplyingLedgerRepair) return;
+                const selectedRows = ledgerRepairCandidates.filter(row => ledgerRepairSelection[String(row.id)]);
+                if (!selectedRows.length) {
+                    alert('Select at least one row to apply.');
+                    return;
+                }
+                setIsApplyingLedgerRepair(true);
+                startImportProgress('Applying selected ledger fixes…');
+                try {
+                    addProgressDetail(`Applying ${selectedRows.length} selected fix(es)…`);
+                    for (const row of selectedRows) {
+                        await db.transactions.update(row.id, row.patch);
                     }
 
-                    addProgressDetail(`Applying ${updates.length} fix(es)…`);
-                    await db.transaction('rw', db.transactions, async () => {
-                        for (const row of updates) {
-                            await db.transactions.update(row.id, row.patch);
-                        }
-                    });
+                    const reasonTotals = selectedRows.reduce((acc, row) => {
+                        if (row.reasonFlags?.missingFlow) acc.missingFlow += 1;
+                        if (row.reasonFlags?.opponentPitch) acc.opponentPitch += 1;
+                        if (row.reasonFlags?.mismatch) acc.mismatch += 1;
+                        return acc;
+                    }, { missingFlow: 0, opponentPitch: 0, mismatch: 0 });
 
                     try {
                         localStorage.setItem(LEDGER_REPAIR_FLAG_KEY, '1');
@@ -8535,23 +8619,31 @@
                     }
 
                     setLedgerRepairSummary({
-                        scanned: transactionsList.length,
-                        fixed: updates.length,
-                        fixedFlowAmountMismatches,
-                        fixedOpponentPitchFees,
-                        fixedMissingFlow,
+                        scanned: ledgerRepairSummary?.scanned || 0,
+                        fixed: selectedRows.length,
+                        fixedFlowAmountMismatches: reasonTotals.mismatch,
+                        fixedOpponentPitchFees: reasonTotals.opponentPitch,
+                        fixedMissingFlow: reasonTotals.missingFlow,
+                        pending: Math.max(0, ledgerRepairCandidates.length - selectedRows.length),
                         timestamp: new Date().toISOString()
                     });
+                    setIsLedgerRepairPreviewOpen(false);
+                    setLedgerRepairCandidates([]);
+                    setLedgerRepairSelection({});
                     window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'transactions' } }));
-                    alert(`Ledger repair complete. Updated ${updates.length} entr${updates.length === 1 ? 'y' : 'ies'}.`);
+                    alert(`Ledger repair complete. Updated ${selectedRows.length} entr${selectedRows.length === 1 ? 'y' : 'ies'}.`);
                 } catch (err) {
-                    console.error('Ledger repair failed', err);
-                    alert('Unable to repair ledger: ' + (err?.message || 'Unexpected error'));
+                    console.error('Ledger repair apply failed', err);
+                    alert('Unable to apply ledger repair: ' + (err?.message || 'Unexpected error'));
                 } finally {
                     finishImportProgress();
-                    setIsRepairingLedger(false);
+                    setIsApplyingLedgerRepair(false);
                 }
             };
+
+            const selectedLedgerRepairCount = useMemo(() => {
+                return ledgerRepairCandidates.filter(row => ledgerRepairSelection[String(row.id)]).length;
+            }, [ledgerRepairCandidates, ledgerRepairSelection]);
 
             const resetNukeSteps = () => setNukeSteps(NUKE_ITEMS.map(item => ({ ...item, status: 'pending', note: '' })));
 
@@ -9637,24 +9729,26 @@
                     <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ledger Repair (one-time)</div>
                         <div className="text-sm text-slate-600">
-                            Reviews club receivables/payables, then fixes wrong signs (credit/debit), missing flow, and opponent pitch-fee direction.
+                            Scan first, review each suggested fix, then apply only the rows you approve.
                         </div>
                         <button
                             onClick={runLedgerRepair}
                             disabled={isRepairingLedger}
                             className={`w-full font-bold rounded-lg px-4 py-3 ${isRepairingLedger ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
                         >
-                            {isRepairingLedger ? 'Reviewing…' : (ledgerRepairHasRun ? 'Run review & fix again' : 'Run one-time review & fix')}
+                            {isRepairingLedger ? 'Scanning…' : (ledgerRepairHasRun ? 'Scan again & review' : 'Scan & review fixes')}
                         </button>
                         <div className="text-[11px] text-slate-500">
-                            Recommended before closing this season. Safe to rerun if new old data is imported later.
+                            Safe to rerun if older data is imported later.
                         </div>
                         {ledgerRepairSummary && (
                             <div className={`text-[11px] rounded-lg border px-3 py-2 ${ledgerRepairSummary.cancelled ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
                                 {ledgerRepairSummary.cancelled
                                     ? `Review found ${ledgerRepairSummary.pending || 0} issue(s), but no fixes were applied.`
-                                    : `Scanned ${ledgerRepairSummary.scanned || 0}. Fixed ${ledgerRepairSummary.fixed || 0} transaction(s).`}
-                                {!ledgerRepairSummary.cancelled && (
+                                    : ledgerRepairSummary.proposed
+                                        ? `Scanned ${ledgerRepairSummary.scanned || 0}. ${ledgerRepairSummary.proposed} suggested change(s) ready for review.`
+                                        : `Scanned ${ledgerRepairSummary.scanned || 0}. Fixed ${ledgerRepairSummary.fixed || 0} transaction(s).`}
+                                {!ledgerRepairSummary.cancelled && !ledgerRepairSummary.proposed && (
                                     <span>{` Flow/sign fixes: ${ledgerRepairSummary.fixedFlowAmountMismatches || 0} · Opponent pitch fee fixes: ${ledgerRepairSummary.fixedOpponentPitchFees || 0} · Missing flow fixes: ${ledgerRepairSummary.fixedMissingFlow || 0}.`}</span>
                                 )}
                             </div>
@@ -9687,6 +9781,67 @@
                         </div>
                         <div className="text-[11px] text-slate-500">These actions are destructive; backups include kit, queue, and settings—export one before wiping.</div>
                     </div>
+
+                    <Modal isOpen={isLedgerRepairPreviewOpen} onClose={() => { if(!isApplyingLedgerRepair) setIsLedgerRepairPreviewOpen(false); }} title="Review Ledger Fixes">
+                        <div className="text-xs text-slate-500 mb-3">
+                            Review each suggested change below. Untick anything you want to keep unchanged.
+                        </div>
+                        <div className="flex gap-2 mb-3">
+                            <button onClick={() => setAllLedgerRepairSelections(true)} disabled={isApplyingLedgerRepair || !ledgerRepairCandidates.length} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${isApplyingLedgerRepair || !ledgerRepairCandidates.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                                Select all
+                            </button>
+                            <button onClick={() => setAllLedgerRepairSelections(false)} disabled={isApplyingLedgerRepair || !ledgerRepairCandidates.length} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${isApplyingLedgerRepair || !ledgerRepairCandidates.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                                Clear all
+                            </button>
+                        </div>
+                        <div className="space-y-2 max-h-[52vh] overflow-y-auto pr-1">
+                            {ledgerRepairCandidates.map(row => {
+                                const key = String(row.id);
+                                const checked = !!ledgerRepairSelection[key];
+                                const dateLabel = row.date ? new Date(row.date).toLocaleDateString() : 'No date';
+                                return (
+                                    <label key={`ledger-fix-${row.id}`} className={`block p-3 rounded-xl border cursor-pointer ${checked ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-200 bg-white'}`}>
+                                        <div className="flex gap-3">
+                                            <input type="checkbox" checked={checked} onChange={() => toggleLedgerRepairSelection(row.id)} className="mt-1" />
+                                            <div className="flex-1 space-y-1">
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div className="text-sm font-bold text-slate-900">{row.description || 'No description'}</div>
+                                                    <div className={`text-xs font-bold ${row.nextAmount >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                        {formatCurrency(row.currentAmount)} → {formatCurrency(row.nextAmount)}
+                                                    </div>
+                                                </div>
+                                                <div className="text-[11px] text-slate-500">
+                                                    {row.category || 'Other'} · {row.payee || row.fixtureOpponent || 'No payee'} · {dateLabel}
+                                                </div>
+                                                <div className="text-[11px] text-slate-500">
+                                                    Flow: {row.currentFlow || 'unset'} → {row.nextFlow || 'unset'} · Type: {row.currentType || 'unset'} → {row.nextType || 'unset'}
+                                                </div>
+                                                <div className="flex flex-wrap gap-1 pt-1">
+                                                    {row.reasonFlags?.opponentPitch && <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold">Opponent pitch fee</span>}
+                                                    {row.reasonFlags?.mismatch && <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold">Flow/sign mismatch</span>}
+                                                    {row.reasonFlags?.missingFlow && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">Missing flow</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </label>
+                                );
+                            })}
+                            {!ledgerRepairCandidates.length && (
+                                <div className="text-sm text-slate-400 text-center py-6">No suggestions available. Run a scan first.</div>
+                            )}
+                        </div>
+                        <div className="mt-3 text-[11px] text-slate-500">
+                            Selected: <span className="font-bold text-slate-700">{selectedLedgerRepairCount}</span> of <span className="font-bold text-slate-700">{ledgerRepairCandidates.length}</span>
+                        </div>
+                        <div className="mt-4 flex gap-2">
+                            <button onClick={() => setIsLedgerRepairPreviewOpen(false)} disabled={isApplyingLedgerRepair} className={`flex-1 rounded-lg border border-slate-200 px-4 py-2 font-bold ${isApplyingLedgerRepair ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-50 text-slate-700'}`}>
+                                Cancel
+                            </button>
+                            <button onClick={applyLedgerRepairSelection} disabled={isApplyingLedgerRepair || !selectedLedgerRepairCount} className={`flex-1 rounded-lg px-4 py-2 font-bold text-white ${(isApplyingLedgerRepair || !selectedLedgerRepairCount) ? 'bg-slate-400 cursor-not-allowed' : 'bg-emerald-600'}`}>
+                                {isApplyingLedgerRepair ? 'Applying…' : `Apply selected (${selectedLedgerRepairCount})`}
+                            </button>
+                        </div>
+                    </Modal>
 
                     {isNuking && (
                         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
