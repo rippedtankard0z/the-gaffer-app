@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-08';
+        const MASTER_BUILD_VERSION = '2026.03.07-10';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -775,17 +775,52 @@
             );
         };
 
+        const lockBodyScrollForModal = () => {
+            if (typeof document === 'undefined') return;
+            const body = document.body;
+            const root = document.documentElement;
+            const lockCount = Number(body.dataset.gafferModalLockCount || '0');
+            if (lockCount === 0) {
+                body.dataset.gafferPrevOverflow = body.style.overflow || '';
+                root.dataset.gafferPrevOverscrollY = root.style.overscrollBehaviorY || '';
+                body.style.overflow = 'hidden';
+                root.style.overscrollBehaviorY = 'none';
+            }
+            body.dataset.gafferModalLockCount = String(lockCount + 1);
+        };
+
+        const unlockBodyScrollForModal = () => {
+            if (typeof document === 'undefined') return;
+            const body = document.body;
+            const root = document.documentElement;
+            const lockCount = Number(body.dataset.gafferModalLockCount || '0');
+            if (lockCount <= 1) {
+                body.style.overflow = body.dataset.gafferPrevOverflow || '';
+                root.style.overscrollBehaviorY = root.dataset.gafferPrevOverscrollY || '';
+                delete body.dataset.gafferPrevOverflow;
+                delete root.dataset.gafferPrevOverscrollY;
+                delete body.dataset.gafferModalLockCount;
+                return;
+            }
+            body.dataset.gafferModalLockCount = String(lockCount - 1);
+        };
+
         // --- 3. UI Primitives ---
 
         const Modal = ({ isOpen, onClose, title, children }) => {
+            useEffect(() => {
+                if (!isOpen) return;
+                lockBodyScrollForModal();
+                return () => unlockBodyScrollForModal();
+            }, [isOpen]);
             if (!isOpen) return null;
             return (
-                <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4">
-                    <div className="absolute inset-0 bg-slate-900/20 backdrop-blur-sm" onClick={onClose}></div>
-                    <div className="relative w-full max-w-md bg-white sm:rounded-3xl rounded-t-3xl shadow-2xl p-6 pb-safe pb-24 animate-slide-up max-h-[90vh] overflow-y-auto">
+                <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true">
+                    <div className="absolute inset-0 bg-slate-900/30" onClick={onClose}></div>
+                    <div className="relative w-full max-w-md bg-white sm:rounded-3xl rounded-t-3xl shadow-2xl px-5 pt-5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6 animate-fade-in max-h-[92dvh] overflow-y-auto overscroll-contain">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-xl font-display font-bold text-slate-900">{title}</h3>
-                            <button onClick={onClose} className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors">
+                            <button onClick={onClose} className="h-11 w-11 flex items-center justify-center bg-slate-100 rounded-full hover:bg-slate-200 transition-colors">
                                 <Icon name="X" size={20} className="text-slate-500" />
                             </button>
                         </div>
@@ -1784,7 +1819,7 @@
 
             if (isKitTab) {
                 return (
-                    <div className="space-y-6 pb-28 animate-fade-in">
+                    <div className="space-y-6 pb-20 animate-fade-in">
                         <header className="px-1 space-y-3">
                             <div>
                                 <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Squad</h1>
@@ -1811,7 +1846,7 @@
             }
 
             return (
-                <div className="space-y-6 pb-28 animate-fade-in">
+                <div className="space-y-6 pb-20 animate-fade-in">
                     <header className="px-1 space-y-3">
                         <div className="flex items-start justify-between gap-3">
                             <div>
@@ -2016,7 +2051,7 @@
 
                                 <div className="space-y-2">
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Past Games</div>
-                                    <div className="max-h-40 overflow-y-auto space-y-2">
+                                    <div className="space-y-2">
                                         {participations.filter(pa => pa.playerId === selectedPlayer.id).map(pa => {
                                             const fx = fixtures.find(f => f.id === pa.fixtureId);
                                             if(!fx) return null;
@@ -2038,7 +2073,7 @@
 
                                 <div className="space-y-2">
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments & Fees</div>
-                                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                                    <div className="space-y-2">
                                         {Array.from(new Map(playerTx.map(tx => [tx.id, tx])).values()).map(tx => {
                                             const isCharge = tx.amount < 0;
                                             const fixture = fixtures.find(f => f.id === tx.fixtureId);
@@ -2171,7 +2206,7 @@
                                 {deleteDialog.outstandingItems.length ? (
                                     <div className="space-y-2">
                                         <div className="text-[11px] font-bold uppercase text-slate-400 tracking-wider">Outstanding details</div>
-                                        <div className="space-y-2 max-h-32 overflow-y-auto">
+                                        <div className="space-y-2">
                                             {deleteDialog.outstandingItems.map(item => (
                                                 <div key={item.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white border border-slate-100">
                                                     <div className="text-sm text-slate-700">{item.label}</div>
@@ -3673,7 +3708,7 @@
             };
 
             return (
-                <div className="space-y-6 pb-28 animate-fade-in">
+                <div className="space-y-6 pb-20 animate-fade-in">
                     <header className="px-1 flex justify-between items-center">
                         <div>
                             <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Games</h1>
@@ -3732,7 +3767,7 @@
                                 <span className="text-[10px] font-semibold text-slate-400">{motmBoard.length} awards logged</span>
                             </div>
                             {motmBoard.length ? (
-                                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                <div className="space-y-2 pr-1">
                                     {motmBoard.slice(0, 8).map(item => {
                                         const dateLabel = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC';
                                         const hasScore = typeof item.homeScore === 'number' && typeof item.awayScore === 'number';
@@ -3866,7 +3901,7 @@
                     </Modal>
 
                     {selectedFixture && (
-                        <div ref={matchDayRef} className="fixed inset-0 z-[60] bg-white overflow-y-auto pb-28 sm:pb-10">
+                        <div ref={matchDayRef} className="fixed inset-0 z-[60] bg-white overflow-y-auto pb-20 sm:pb-10">
                             <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
                                 <div className="flex items-center justify-between">
                                     <div>
@@ -4280,7 +4315,7 @@
                                 <div className="text-[11px] text-slate-500">We auto-detect Exiles side, opponent, venue and score; new opponents/venues are suggested. You can review before saving.</div>
                             </div>
                         ) : (
-                            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+                            <div className="space-y-3 pr-1">
                                 {resultsPreview.map((r, idx) => (
                                     <div key={idx} className="p-3 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
                                         <div className="flex justify-between items-center text-sm font-bold text-slate-800">
@@ -4424,7 +4459,7 @@
                                         <input type="checkbox" checked={showScheduledMagic} onChange={e => setShowScheduledMagic(e.target.checked)} />
                                         Include scheduled games
                                     </label>
-                                    <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                                    <div className="space-y-2 pr-1">
                                         {magicFixtureOptions.sort((a,b)=>new Date(b.date)-new Date(a.date)).map(f => (
                                             <label key={`magic-fixture-${f.id}`} className={`flex items-start gap-2 p-2 rounded-lg border ${magicFixtureTarget === String(f.id) ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-white'}`}>
                                                 <input type="radio" value={String(f.id)} checked={magicFixtureTarget === String(f.id)} onChange={e => setMagicFixtureTarget(e.target.value)} />
@@ -4446,7 +4481,7 @@
                                     <div className="text-[11px] text-slate-500">Selecting an existing game replaces its squad list and player-fee entries.</div>
                                 </div>
 
-                                <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
+                                <div className="space-y-3 pr-1">
                                     {parsedData.entries.map((entry, idx) => {
                                         const nearest = entry.suggestions && entry.suggestions[0];
                                         const selectionValue = entry.selectedId !== null && entry.selectedId !== undefined ? String(entry.selectedId) : 'new';
@@ -4894,7 +4929,7 @@
             };
 
             return (
-                <div className="space-y-6 pb-28 animate-fade-in">
+                <div className="space-y-6 pb-20 animate-fade-in">
             <header className="px-1 flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-display font-bold text-slate-900 tracking-tight">Finances</h1>
@@ -5006,7 +5041,7 @@
                                     <span className="flex-1 text-right pr-3">Outgoings</span>
                                     <span className="flex-1 text-right">Net</span>
                                 </div>
-                                <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                                <div className="divide-y divide-slate-100">
                                     {statements.monthlyRows.map(row => (
                                     <div key={row.label} className="flex items-center px-3 py-2 text-[12px] font-mono">
                                             <span className="w-24 font-sans font-bold text-slate-800 truncate">{row.label}</span>
@@ -5028,7 +5063,7 @@
                                 <div className="text-[10px] text-slate-500">Last 10 transactions</div>
                             </div>
                         </div>
-                        <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                        <div className="space-y-1.5 pr-1">
                             {transactions.slice(0,10).map(tx => {
                                 const player = tx.playerId ? playerLookup[tx.playerId] : null;
                                 const playerName = player ? `${player.firstName} ${player.lastName}` : '';
@@ -5070,7 +5105,7 @@
                                 Print / PDF View
                             </button>
                         </div>
-                        <div className="space-y-1.5 max-h-[380px] overflow-y-auto pr-1">
+                        <div className="space-y-1.5 pr-1">
                             {transactions.map(tx => {
                                 const outstandingTx = isOutstandingTransaction(tx, transactions);
                                 const coveredPlayerCharge = !tx.isReconciled && isCoveredPlayerCharge(tx, transactions);
@@ -5130,7 +5165,7 @@
                                 <span className="text-right">Net</span>
                                 <span className="text-right">Items</span>
                             </div>
-                            <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                            <div className="divide-y divide-slate-100">
                                 {categorySummary.map(row => (
                                     <div key={row.cat} className="grid grid-cols-5 items-center px-2 py-2 text-[12px]">
                                         <span className="font-semibold text-slate-800 truncate">{formatCategoryLabel(row.cat) || row.cat}</span>
@@ -5584,7 +5619,7 @@
             const authActionLabel = authStatus?.actionLabel || 'Toggle database login';
 
             return (
-                <div className="space-y-6 pb-28 animate-slide-up">
+                <div className="space-y-6 pb-20 animate-slide-up">
                     <header className="flex justify-between items-center pt-2 px-1">
                         <div className="flex items-center gap-3">
                             <button type="button" onClick={onAuthLogoClick} aria-label={authActionLabel} className="h-12 w-12 rounded-2xl border border-white shadow-glass overflow-hidden bg-white/70">
@@ -5676,7 +5711,7 @@
                             <button onClick={() => onNavigate('players')} className="text-[10px] font-bold text-brand-600 underline">Open Squad</button>
                         </div>
                         {unpaidGroups.length ? (
-                            <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                            <div className="space-y-3 pr-1">
                                 {unpaidGroups.map(group => (
                                     <div key={group.playerId} className="rounded-xl border border-amber-100 bg-amber-50/50 p-3 space-y-2">
                                         <div
@@ -5739,7 +5774,7 @@
                             <button onClick={() => onNavigate('opponents')} className="text-[10px] font-bold text-brand-600 underline">Open League</button>
                         </div>
                         {clubReceivableGroups.length ? (
-                            <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                            <div className="space-y-3 pr-1">
                                 {clubReceivableGroups.map(group => (
                                     <div key={group.clubName} className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 space-y-2">
                                         <div
@@ -5954,22 +5989,22 @@
 
         // --- SHELL ---
         const Nav = ({ activeTab, setTab }) => {
+            const isMoreSection = ['more', 'players', 'opponents', 'settings'].includes(activeTab);
             const items = [
                 { id: 'dashboard', icon: 'LayoutGrid', label: 'Home' },
                 { id: 'fixtures', icon: 'Calendar', label: 'Games' },
-                { id: 'players', icon: 'Users', label: 'Squad' },
-                { id: 'opponents', icon: 'Shield', label: 'League' },
                 { id: 'finances', icon: 'Wallet', label: 'Bank' },
+                { id: 'more', icon: 'MoreHorizontal', label: 'More' }
             ];
 
             return (
                 <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pb-safe">
                     <nav className="glass-panel mx-auto w-full max-w-md flex items-center justify-between gap-1 p-2 rounded-t-2xl shadow-glass">
                         {items.map(item => {
-                            const isActive = activeTab === item.id;
+                            const isActive = item.id === 'more' ? isMoreSection : activeTab === item.id;
                             return (
                                 <button key={item.id} onClick={() => setTab(item.id)}
-                                    className={`relative flex flex-col items-center justify-center flex-1 h-14 rounded-xl transition-all duration-300 ${isActive ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+                                    className={`relative flex flex-col items-center justify-center flex-1 h-16 rounded-xl transition-all duration-300 ${isActive ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
                                 >
                                     <Icon name={item.icon} size={20} strokeWidth={isActive ? 2.5 : 2} className="mb-0.5" />
                                     <span className="text-[10px] font-bold tracking-wide">{item.label}</span>
@@ -5977,6 +6012,60 @@
                             );
                         })}
                     </nav>
+                </div>
+            );
+        };
+
+        const MoreHub = ({ onNavigate = () => {} }) => {
+            const actions = [
+                {
+                    id: 'squad',
+                    label: 'Squad',
+                    sub: 'Players, balances, kit, attendance',
+                    icon: 'Users',
+                    tab: 'players'
+                },
+                {
+                    id: 'league',
+                    label: 'League & Opponents',
+                    sub: 'Clubs, venues, records, H2H',
+                    icon: 'Shield',
+                    tab: 'opponents'
+                },
+                {
+                    id: 'settings',
+                    label: 'Settings',
+                    sub: 'Backups, imports, repair tools, app controls',
+                    icon: 'Settings',
+                    tab: 'settings'
+                }
+            ];
+            return (
+                <div className="space-y-5 pb-20 animate-fade-in">
+                    <div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-soft">
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">More</div>
+                        <div className="text-sm text-slate-600 mt-1">Everything else in one place.</div>
+                    </div>
+                    <div className="space-y-3">
+                        {actions.map(action => (
+                            <button
+                                key={action.id}
+                                onClick={() => onNavigate(action.tab)}
+                                className="w-full flex items-center justify-between bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft hover:border-brand-200"
+                            >
+                                <div className="flex items-center gap-3 text-left">
+                                    <div className="h-11 w-11 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center">
+                                        <Icon name={action.icon} size={18} />
+                                    </div>
+                                    <div>
+                                        <div className="text-base font-display font-bold text-slate-900">{action.label}</div>
+                                        <div className="text-[12px] text-slate-500">{action.sub}</div>
+                                    </div>
+                                </div>
+                                <Icon name="ChevronRight" size={18} className="text-slate-400" />
+                            </button>
+                        ))}
+                    </div>
                 </div>
             );
         };
@@ -6956,7 +7045,7 @@
             };
 
             return (
-                <div className="space-y-6 pb-28 animate-fade-in">
+                <div className="space-y-6 pb-20 animate-fade-in">
                     <header className="px-1">
                         <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">League & Venues</h1>
                         <p className="text-slate-500 text-sm font-medium">Keep clean lists and nerdy stats</p>
@@ -7480,7 +7569,7 @@
                                             <span className="px-2 py-1 rounded-full bg-rose-50 text-rose-700 font-bold">Payable: {formatCurrency(Math.abs(venuePaymentSummary.outstandingPayable))}</span>
                                             <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 font-bold">Net: {formatCurrency(venuePaymentSummary.netOutstanding)}</span>
                                         </div>
-                                        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                                        <div className="space-y-2 pr-1">
                                             {venueTransactions.length ? venueTransactions.slice(0, 8).map(tx => {
                                                 const fixture = tx.fixtureId ? venueFixtureLookup[String(tx.fixtureId)] : null;
                                                 const dateSource = fixture?.date || tx.date;
@@ -7529,7 +7618,7 @@
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Games & Schedule</div>
                                         <button onClick={() => jumpToVenueGames(selectedVenue.name)} className="text-[11px] text-brand-600 underline">Open games</button>
                                     </div>
-                                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                    <div className="space-y-2 pr-1">
                                         {venueFixtures.length ? venueFixtures.map(f => {
                                             const dateLabel = f.date ? new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Date TBC';
                                             const outcome = getFixtureOutcome(f);
@@ -7639,7 +7728,7 @@
                                             <span className="px-2 py-1 rounded-full bg-rose-50 text-rose-700 font-bold">Payable: {formatCurrency(Math.abs(opponentPaymentSummary.outstandingPayable))}</span>
                                             <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 font-bold">Net: {formatCurrency(opponentPaymentSummary.netOutstanding)}</span>
                                         </div>
-                                        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                                        <div className="space-y-2 pr-1">
                                             {opponentTransactions.length ? opponentTransactions.slice(0, 8).map(tx => {
                                                 const fixture = tx.fixtureId ? opponentFixtureLookup[String(tx.fixtureId)] : null;
                                                 const dateSource = fixture?.date || tx.date;
@@ -7687,7 +7776,7 @@
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Games & Scores</div>
                                         <button onClick={() => jumpToOpponentGames(selectedOpponent.name)} className="text-[11px] text-brand-600 underline">Open games</button>
                                     </div>
-                                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                    <div className="space-y-2 pr-1">
                                         {opponentFixtures.length ? opponentFixtures.slice(0, 8).map(f => {
                                             const dateLabel = f.date ? new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Date TBC';
                                             const outcome = getFixtureOutcome(f);
@@ -8071,7 +8160,7 @@
             const rangeLabel = `1-${Math.max(1, Number(kitNumberLimit) || DEFAULT_KIT_NUMBER_LIMIT)}`;
 
             return (
-                <div className="space-y-6 pb-28 animate-fade-in">
+                <div className="space-y-6 pb-20 animate-fade-in">
                     <header className="px-1 space-y-1">
                         <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Kit</h1>
                         <p className="text-slate-500 text-sm font-medium">List who has gear, what's free, and who's up next.</p>
@@ -8252,7 +8341,7 @@
 
                     <Modal isOpen={Boolean(kitImportRows && kitImportRows.length)} onClose={() => setKitImportRows(null)} title="Review kit import">
                         {kitImportRows ? (
-                            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+                            <div className="space-y-3 pr-1">
                                 {kitImportRows.map((row, idx) => (
                                     <div key={row.id} className={`p-3 rounded-xl border ${row.drop ? 'border-slate-200 bg-slate-50' : row.needsReview ? 'border-amber-200 bg-amber-50/60' : 'border-slate-100 bg-white'} space-y-2`}>
                                         <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 gap-2">
@@ -8450,6 +8539,66 @@
             const dismissSettingsToast = useCallback((id) => {
                 setSettingsToasts(prev => prev.filter(toast => toast.id !== id));
             }, []);
+            const confirmResolveRef = useRef(null);
+            const [confirmDialog, setConfirmDialog] = useState({
+                open: false,
+                title: '',
+                description: '',
+                confirmLabel: 'Confirm',
+                danger: false
+            });
+            const requestSettingsConfirmation = useCallback((config = {}) => {
+                return new Promise((resolve) => {
+                    confirmResolveRef.current = resolve;
+                    setConfirmDialog({
+                        open: true,
+                        title: config.title || 'Confirm action',
+                        description: config.description || '',
+                        confirmLabel: config.confirmLabel || 'Confirm',
+                        danger: !!config.danger
+                    });
+                });
+            }, []);
+            const closeSettingsConfirmation = useCallback((confirmed = false) => {
+                setConfirmDialog(prev => ({ ...prev, open: false }));
+                if (confirmResolveRef.current) {
+                    confirmResolveRef.current(confirmed);
+                    confirmResolveRef.current = null;
+                }
+            }, []);
+            const promptResolveRef = useRef(null);
+            const [textPrompt, setTextPrompt] = useState({
+                open: false,
+                title: '',
+                description: '',
+                confirmLabel: 'Save',
+                placeholder: '',
+                initialValue: ''
+            });
+            const [textPromptValue, setTextPromptValue] = useState('');
+            const requestSettingsPrompt = useCallback((config = {}) => {
+                return new Promise((resolve) => {
+                    promptResolveRef.current = resolve;
+                    setTextPrompt({
+                        open: true,
+                        title: config.title || 'Enter value',
+                        description: config.description || '',
+                        confirmLabel: config.confirmLabel || 'Save',
+                        placeholder: config.placeholder || '',
+                        initialValue: config.initialValue || ''
+                    });
+                    setTextPromptValue(config.initialValue || '');
+                });
+            }, []);
+            const closeSettingsPrompt = useCallback((commit = false) => {
+                setTextPrompt(prev => ({ ...prev, open: false }));
+                const value = textPromptValue;
+                setTextPromptValue('');
+                if (promptResolveRef.current) {
+                    promptResolveRef.current(commit ? value : null);
+                    promptResolveRef.current = null;
+                }
+            }, [textPromptValue]);
             const typedConfirmResolveRef = useRef(null);
             const [typedConfirm, setTypedConfirm] = useState({
                 open: false,
@@ -8488,6 +8637,14 @@
             }, [typedConfirm?.phrase, typedConfirmValue]);
             useEffect(() => {
                 return () => {
+                    if (confirmResolveRef.current) {
+                        confirmResolveRef.current(false);
+                        confirmResolveRef.current = null;
+                    }
+                    if (promptResolveRef.current) {
+                        promptResolveRef.current(null);
+                        promptResolveRef.current = null;
+                    }
                     if (typedConfirmResolveRef.current) {
                         typedConfirmResolveRef.current(false);
                         typedConfirmResolveRef.current = null;
@@ -8554,7 +8711,13 @@
                 if(importInputRef.current) importInputRef.current.value = '';
             };
             const archiveSeason = async (carryDebt) => {
-                if(!confirm(`Archive season and ${carryDebt ? 'carry over' : 'reset'} balances?`)) return;
+                const approved = await requestSettingsConfirmation({
+                    title: 'Close season',
+                    description: `Archive this season and ${carryDebt ? 'carry debt into next season' : 'reset player balances to zero'}?`,
+                    confirmLabel: carryDebt ? 'Close season (carry debt)' : 'Close season (reset balances)',
+                    danger: true
+                });
+                if(!approved) return;
                 const ts = new Date().toISOString();
                 const allFixtures = await db.fixtures.toArray();
                 if(allFixtures.length) {
@@ -8578,7 +8741,7 @@
                 }
                 if(allTx.length) await db.transactions.bulkPut(allTx.map(t => ({ ...t, archivedAt: ts, seasonTag: '24/25' })));
                 localStorage.setItem('gaffer:lastArchive', ts);
-                alert('Season archived. New year ready.');
+                pushSettingsToast('Season archived. New year ready.', 'success');
             };
 
             const handleExportPositions = () => {
@@ -8592,7 +8755,13 @@
 
             const handlePositionImport = async (file) => {
                 if(!file) return;
-                if(!confirm('Importing positions will replace the current list. Continue?')) {
+                const approved = await requestSettingsConfirmation({
+                    title: 'Import position definitions',
+                    description: 'This will replace the current position list.',
+                    confirmLabel: 'Replace positions',
+                    danger: true
+                });
+                if(!approved) {
                     if(positionImportRef.current) positionImportRef.current.value = '';
                     return;
                 }
@@ -8614,7 +8783,7 @@
                     if(!imported.length) throw new Error('No valid positions found.');
                     setPositionDefinitions(imported);
                 } catch (err) {
-                    alert('Positions import failed: ' + err.message);
+                    pushSettingsToast('Positions import failed: ' + err.message, 'error');
                 } finally {
                     setPositionImporting(false);
                     finishImportProgress();
@@ -8626,11 +8795,11 @@
                 const code = (newPositionCode || '').toUpperCase().trim();
                 const label = (newPositionLabel || '').trim();
                 if(!code || !label) {
-                    alert('Enter both code and definition.');
+                    pushSettingsToast('Enter both code and definition.', 'warning');
                     return;
                 }
                 if(positionDefinitions.some(def => def.code === code)) {
-                    alert('Position code already exists.');
+                    pushSettingsToast('Position code already exists.', 'warning');
                     return;
                 }
                 setPositionDefinitions([...positionDefinitions, { code, label }]);
@@ -8638,12 +8807,23 @@
                 setNewPositionLabel('');
             };
 
-            const editPositionDefinition = (code) => {
+            const editPositionDefinition = async (code) => {
                 const existing = positionDefinitions.find(def => def.code === code);
                 if(!existing) return;
-                const label = prompt('Edit definition', existing.label);
-                if(!label) return;
-                setPositionDefinitions(positionDefinitions.map(def => def.code === code ? { ...def, label: label.trim() } : def));
+                const label = await requestSettingsPrompt({
+                    title: `Edit ${existing.code} definition`,
+                    description: 'Update the position label.',
+                    placeholder: 'Definition',
+                    initialValue: existing.label,
+                    confirmLabel: 'Save definition'
+                });
+                if(label === null) return;
+                const clean = label.trim();
+                if(!clean) {
+                    pushSettingsToast('Definition cannot be empty.', 'warning');
+                    return;
+                }
+                setPositionDefinitions(positionDefinitions.map(def => def.code === code ? { ...def, label: clean } : def));
             };
 
             const prepareDeletePositionDefinition = async (code) => {
@@ -8668,7 +8848,7 @@
                     ? (positionReassignNew || '').toUpperCase().trim()
                     : (isNone ? '' : positionReassignChoice);
                 if(!isNone && !fallback) {
-                    alert('Provide a fallback position.');
+                    pushSettingsToast('Provide a fallback position.', 'warning');
                     return;
                 }
                 const fallbackLabel = positionReassignChoice === '__new__'
@@ -8692,17 +8872,25 @@
                 setPositionReassignChoice('');
                 setPositionReassignNew('');
                 setPositionReassignNewLabel('');
+                pushSettingsToast(`Position ${code} removed${fallback ? ` and reassigned to ${fallback}` : ''}.`, 'success');
             };
 
-            const resetPositionDefinitions = () => {
-                if(!confirm('Reset positions to defaults? This replaces the current list.')) return;
+            const resetPositionDefinitions = async () => {
+                const approved = await requestSettingsConfirmation({
+                    title: 'Reset position definitions',
+                    description: 'Replace the current list with default position codes?',
+                    confirmLabel: 'Reset positions',
+                    danger: true
+                });
+                if(!approved) return;
                 setPositionDefinitions([...DEFAULT_POSITION_DEFINITIONS]);
+                pushSettingsToast('Position definitions reset to defaults.', 'success');
             };
 
             const addCategory = () => {
                 const name = newCat.trim();
                 if(!name) return;
-                if(categories.includes(name)) { alert('Category already exists'); return; }
+                if(categories.includes(name)) { pushSettingsToast('Category already exists.', 'warning'); return; }
                 const updated = [...categories, name];
                 setCategories(updated);
                 persistCategories(updated);
@@ -8712,7 +8900,7 @@
             const addSeason = () => {
                 const name = newSeason.trim();
                 if(!name) return;
-                if(seasonCategories.includes(name)) { alert('Season already exists'); return; }
+                if(seasonCategories.includes(name)) { pushSettingsToast('Season already exists.', 'warning'); return; }
                 const updated = [...seasonCategories, name];
                 setSeasonCategories(updated);
                 persistSeasonCategories(updated);
@@ -8722,13 +8910,20 @@
             const addKitSize = () => {
                 const value = (newKitSize || '').trim().toUpperCase();
                 if(!value) return;
-                if(kitSizeOptions.some(size => size.toUpperCase() === value)) { alert('Size already exists'); return; }
+                if(kitSizeOptions.some(size => size.toUpperCase() === value)) { pushSettingsToast('Size already exists.', 'warning'); return; }
                 setKitSizeOptions(prev => [...prev, value]);
                 setNewKitSize('');
             };
 
             const renameCategory = async (cat, isItem = false) => {
-                const name = prompt('Rename category', cat) || cat;
+                const name = await requestSettingsPrompt({
+                    title: `Rename ${isItem ? 'player item' : 'cost'} category`,
+                    description: 'This updates existing ledger rows that use this category.',
+                    placeholder: 'Category name',
+                    initialValue: cat,
+                    confirmLabel: 'Save name'
+                });
+                if(name === null) return;
                 const clean = name.trim();
                 if(!clean) return;
                 const list = isItem ? itemCategories : categories;
@@ -8767,7 +8962,7 @@
                 if(!cat || !count) { setReassignModal({ open:false, cat:'', isItem:false, count:0 }); return; }
                 const list = isItem ? itemCategories : categories;
                 const fallback = (reassignChoice === '__new__' ? reassignNew : reassignChoice)?.trim();
-                if(!fallback) { alert('Choose or enter a category'); return; }
+                if(!fallback) { pushSettingsToast('Choose or enter a category.', 'warning'); return; }
                 let nextList = list;
                 if(!nextList.includes(fallback)) nextList = [...nextList, fallback];
                 await db.transactions.where('category').equals(cat).modify({ category: fallback });
@@ -8782,35 +8977,53 @@
                 setReassignModal({ open:false, cat:'', isItem:false, count:0 });
                 setReassignChoice('');
                 setReassignNew('');
-                alert(`Reassigned ${count} record(s) to ${fallback} and removed ${cat}.`);
+                pushSettingsToast(`Reassigned ${count} record(s) to ${fallback} and removed ${cat}.`, 'success');
             };
 
             const clearFixtures = async () => {
-                if(!confirm('Delete all fixtures, participations, and related payments?')) return;
+                const approved = await requestSettingsConfirmation({
+                    title: 'Clear fixtures',
+                    description: 'Delete all fixtures, participations, and related payments?',
+                    confirmLabel: 'Clear fixtures',
+                    danger: true
+                });
+                if(!approved) return;
                 const ids = await db.fixtures.toCollection().primaryKeys();
                 await db.fixtures.clear();
                 if(ids.length) {
                     await db.participations.where('fixtureId').anyOf(ids).delete();
                     await db.transactions.where('fixtureId').anyOf(ids).delete();
                 }
-                alert('All fixtures cleared.');
+                pushSettingsToast('All fixtures cleared.', 'success');
             };
 
             const clearPlayers = async () => {
-                if(!confirm('Delete all players and their records?')) return;
+                const approved = await requestSettingsConfirmation({
+                    title: 'Clear players',
+                    description: 'Delete all players and their records?',
+                    confirmLabel: 'Clear players',
+                    danger: true
+                });
+                if(!approved) return;
                 const ids = await db.players.toCollection().primaryKeys();
                 await db.players.clear();
                 if(ids.length) {
                     await db.participations.where('playerId').anyOf(ids).delete();
                     await db.transactions.where('playerId').anyOf(ids).delete();
                 }
-                alert('All players cleared.');
+                pushSettingsToast('All players cleared.', 'success');
             };
 
             const clearAccounts = async () => {
-                if(!confirm('Delete all transactions (accounts)?')) return;
+                const approved = await requestSettingsConfirmation({
+                    title: 'Clear accounts',
+                    description: 'Delete all transactions (accounts)?',
+                    confirmLabel: 'Clear accounts',
+                    danger: true
+                });
+                if(!approved) return;
                 await db.transactions.clear();
-                alert('All accounts cleared.');
+                pushSettingsToast('All accounts cleared.', 'success');
             };
 
             const runLedgerRepair = async () => {
@@ -8828,19 +9041,41 @@
                             .trim();
                     };
                     await waitForDb();
-                    const [transactionsList, fixtureList] = await Promise.all([
+                    const [transactionsList, fixtureList, opponentsList, venuesList] = await Promise.all([
                         db.transactions.toArray(),
-                        db.fixtures.toArray()
+                        db.fixtures.toArray(),
+                        db.opponents.toArray(),
+                        db.venues.toArray()
                     ]);
                     const fixtureLookup = {};
                     fixtureList.forEach(fx => {
                         fixtureLookup[String(fx.id)] = fx;
                     });
+                    const looseNameMatch = (needle = '', candidate = '') => {
+                        if (!needle || !candidate) return false;
+                        if (needle === candidate) return true;
+                        if (needle.length < 4 || candidate.length < 4) return false;
+                        return needle.includes(candidate) || candidate.includes(needle);
+                    };
+                    const knownOpponentNames = Array.from(new Set([
+                        ...fixtureList.map(fx => normalizeEntityText(fx?.opponent || '')),
+                        ...opponentsList.map(opp => normalizeEntityText(opp?.name || ''))
+                    ].filter(Boolean)));
+                    const knownVenueNames = Array.from(new Set([
+                        ...fixtureList.map(fx => normalizeEntityText(fx?.venue || '')),
+                        ...venuesList.map(venue => normalizeEntityText(venue?.name || '')),
+                        ...venuesList.map(venue => normalizeEntityText(venue?.payee || ''))
+                    ].filter(Boolean)));
+                    const matchesKnownName = (value = '', names = []) => {
+                        if (!value || !names.length) return false;
+                        return names.some(name => looseNameMatch(value, name));
+                    };
 
                     const updates = [];
                     let fixedFlowAmountMismatches = 0;
                     let fixedOpponentPitchFees = 0;
                     let fixedMissingFlow = 0;
+                    let scannedClubPitchRows = 0;
                     let scannedOpponentPitchCandidates = 0;
                     let alreadyCorrectOpponentPitch = 0;
 
@@ -8892,7 +9127,13 @@
                             );
                         const descriptionSignalsReceivable = /\b(for|from|owed|owes|receivable|receive|received)\b/i.test(descriptionRaw);
                         const descriptionSignalsPayable = /\bto\b/i.test(descriptionRaw);
-                        const hasOpponentReceivableContext = !!fixtureOpponent && (
+                        const descriptionHasPitchForPattern = /\bpitch\s*fee\s+for\b/i.test(descriptionRaw);
+                        const descriptionHasPitchToPattern = /\bpitch\s*fee\s+to\b/i.test(descriptionRaw);
+                        const descriptionHasVsPattern = /\b(vs|versus)\b/i.test(descriptionRaw);
+                        const descriptionMentionsKnownOpponent = matchesKnownName(descriptionEntity, knownOpponentNames);
+                        const payeeLooksLikeOpponent = matchesKnownName(payeeName, knownOpponentNames);
+                        const payeeLooksLikeVenue = matchesKnownName(payeeName, knownVenueNames);
+                        const hasFixtureOpponentReceivableContext = !!fixtureOpponent && (
                             isOpponentPayeeExact
                             || isOpponentPayeeLoose
                             || (
@@ -8900,6 +9141,15 @@
                                 && (descriptionSignalsReceivable || !descriptionSignalsPayable)
                             )
                         );
+                        const hasLegacyOpponentReceivableContext = !payeeLooksLikeVenue && (
+                            (payeeLooksLikeOpponent && !descriptionSignalsPayable)
+                            || (
+                                !descriptionHasPitchToPattern
+                                && (descriptionHasPitchForPattern || descriptionHasVsPattern || /\bopposition\b/i.test(descriptionRaw))
+                                && (descriptionSignalsReceivable || descriptionHasPitchForPattern || descriptionMentionsKnownOpponent)
+                            )
+                        );
+                        const hasOpponentReceivableContext = hasFixtureOpponentReceivableContext || hasLegacyOpponentReceivableContext;
                         const isClubLedgerRow = tx.playerId === undefined || tx.playerId === null;
                         const isLegacyClubMatchFee = isClubLedgerRow && (
                             categoryUpper === 'MATCH FEE'
@@ -8910,6 +9160,7 @@
                             || categoryText.includes('pitch')
                             || /pitch\s*fee|pitch\s*hire|ground\s*hire/i.test(descriptionText)
                             || isLegacyClubMatchFee;
+                        if (isClubLedgerRow && isPitchFee) scannedClubPitchRows += 1;
 
                         const isOpponentPitchCandidate = isClubLedgerRow && isPitchFee && hasOpponentReceivableContext;
                         if (isOpponentPitchCandidate) scannedOpponentPitchCandidates += 1;
@@ -8950,7 +9201,7 @@
                             if (currentType !== targetType) {
                                 patch.type = targetType;
                                 touched = true;
-                                if (isClubLedgerRow && isPitchFee && hasOpponentReceivableContext) {
+                                if (isOpponentPitchCandidate) {
                                     touchedOpponentPitch = true;
                                 } else {
                                     touchedMismatch = true;
@@ -9006,6 +9257,7 @@
                             fixedFlowAmountMismatches,
                             fixedOpponentPitchFees,
                             fixedMissingFlow,
+                            scannedClubPitchRows,
                             scannedOpponentPitchCandidates,
                             alreadyCorrectOpponentPitch,
                             timestamp: new Date().toISOString()
@@ -9021,6 +9273,7 @@
                         fixedFlowAmountMismatches: 0,
                         fixedOpponentPitchFees: 0,
                         fixedMissingFlow: 0,
+                        scannedClubPitchRows,
                         scannedOpponentPitchCandidates,
                         alreadyCorrectOpponentPitch,
                         timestamp: new Date().toISOString()
@@ -9089,6 +9342,7 @@
                         fixedFlowAmountMismatches: reasonTotals.mismatch,
                         fixedOpponentPitchFees: reasonTotals.opponentPitch,
                         fixedMissingFlow: reasonTotals.missingFlow,
+                        scannedClubPitchRows: ledgerRepairSummary?.scannedClubPitchRows || 0,
                         scannedOpponentPitchCandidates: ledgerRepairSummary?.scannedOpponentPitchCandidates || 0,
                         alreadyCorrectOpponentPitch: ledgerRepairSummary?.alreadyCorrectOpponentPitch || 0,
                         pending: Math.max(0, ledgerRepairCandidates.length - selectedRows.length),
@@ -9757,17 +10011,35 @@
                 };
 
                 if(key === 'opponents') {
-                    if(!confirm('Replace opponents with this file?')) return;
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import opponents',
+                        description: 'Replace opponents with this file?',
+                        confirmLabel: 'Replace opponents',
+                        danger: true
+                    });
+                    if(!approved) return;
                     await db.opponents.clear();
                     if(Array.isArray(data) && data.length) await db.opponents.bulkAdd(data);
                     setOpponents(await db.opponents.toArray());
                 } else if(key === 'venues') {
-                    if(!confirm('Replace venues with this file?')) return;
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import venues',
+                        description: 'Replace venues with this file?',
+                        confirmLabel: 'Replace venues',
+                        danger: true
+                    });
+                    if(!approved) return;
                     await db.venues.clear();
                     if(Array.isArray(data) && data.length) await db.venues.bulkAdd(data);
                     setVenues(await db.venues.toArray());
                 } else if(key === 'players') {
-                    if(!confirm('Replace players (clears their participations and transactions)?')) return;
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import players',
+                        description: 'Replace players (clears their participations and transactions)?',
+                        confirmLabel: 'Replace players',
+                        danger: true
+                    });
+                    if(!approved) return;
                     const ids = await db.players.toCollection().primaryKeys();
                     await db.players.clear();
                     if(ids.length) {
@@ -9776,7 +10048,13 @@
                     }
                     if(Array.isArray(data) && data.length) await db.players.bulkAdd(data);
                 } else if(key === 'fixtures') {
-                    if(!confirm('Replace fixtures (clears related participations and fixture transactions)?')) return;
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import fixtures',
+                        description: 'Replace fixtures (clears related participations and fixture transactions)?',
+                        confirmLabel: 'Replace fixtures',
+                        danger: true
+                    });
+                    if(!approved) return;
                     const ids = await db.fixtures.toCollection().primaryKeys();
                     await db.fixtures.clear();
                     if(ids.length) {
@@ -9785,34 +10063,70 @@
                     }
                     if(Array.isArray(data) && data.length) await db.fixtures.bulkAdd(data);
                 } else if(key === 'referees') {
-                    if(!confirm('Replace referees with this file?')) return;
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import referees',
+                        description: 'Replace referees with this file?',
+                        confirmLabel: 'Replace referees',
+                        danger: true
+                    });
+                    if(!approved) return;
                     await db.referees.clear();
                     if(Array.isArray(data) && data.length) await db.referees.bulkAdd(data);
                     setReferees(await db.referees.toArray());
                 } else if(key === 'kitDetails') {
-                    if(!confirm('Replace kit detail records with this file?')) return;
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import kit holders',
+                        description: 'Replace kit detail records with this file?',
+                        confirmLabel: 'Replace kit holders',
+                        danger: true
+                    });
+                    if(!approved) return;
                     await db.kitDetails.clear();
                     if(Array.isArray(data) && data.length) await db.kitDetails.bulkPut(data);
-                    alert('Kit detail records imported.');
+                    pushSettingsToast('Kit detail records imported.', 'success');
                     return;
                 } else if(key === 'kitQueue') {
-                    if(!confirm('Replace kit queue with this file?')) return;
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import kit queue',
+                        description: 'Replace kit queue with this file?',
+                        confirmLabel: 'Replace kit queue',
+                        danger: true
+                    });
+                    if(!approved) return;
                     await db.kitQueue.clear();
                     if(Array.isArray(data) && data.length) await db.kitQueue.bulkPut(data);
-                    alert('Kit queue imported.');
+                    pushSettingsToast('Kit queue imported.', 'success');
                     return;
                 } else if(key === 'itemCategories') {
-                    if(!confirm('Replace player item categories with this file?')) return;
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import player item categories',
+                        description: 'Replace player item categories with this file?',
+                        confirmLabel: 'Replace player item categories',
+                        danger: true
+                    });
+                    if(!approved) return;
                     const arr = Array.isArray(data) ? data : [];
                     setItemCategories(arr);
                     persistItemCategories(arr);
                 } else if(key === 'categories') {
-                    if(!confirm('Replace cost categories with this file?')) return;
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import cost categories',
+                        description: 'Replace cost categories with this file?',
+                        confirmLabel: 'Replace cost categories',
+                        danger: true
+                    });
+                    if(!approved) return;
                     const arr = Array.isArray(data) ? data : [];
                     setCategories(arr);
                     persistCategories(arr);
                 } else if(key === 'seasonCategories') {
-                    if(!confirm('Replace season categories with this file?')) return;
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import season categories',
+                        description: 'Replace season categories with this file?',
+                        confirmLabel: 'Replace season categories',
+                        danger: true
+                    });
+                    if(!approved) return;
                     const arr = Array.isArray(data) ? data : [];
                     setSeasonCategories(arr);
                     persistSeasonCategories(arr);
@@ -10017,7 +10331,7 @@
                     await backupData();
                     setIsBackupPreviewOpen(false);
                 } catch (err) {
-                    alert('Backup failed: ' + err.message);
+                    pushSettingsToast('Backup failed: ' + err.message, 'error');
                 } finally {
                     setIsBackupGenerating(false);
                 }
@@ -10140,7 +10454,7 @@
                     setVenues(await db.venues.toArray());
                     setReferees(await db.referees.toArray());
                     setIsImportStepsDone(true);
-                    alert('Import complete');
+                    pushSettingsToast('Import complete.', 'success');
                 } catch (err) {
                     const msg = err?.message || 'Import failed. Invalid file?';
                     setImportSteps(prev => prev.map(step => {
@@ -10148,7 +10462,7 @@
                         if (step.status === 'running') return { ...step, status: 'error', note: msg };
                         return step;
                     }));
-                    alert('Import failed. Invalid file?');
+                    pushSettingsToast(msg, 'error');
                 } finally {
                     setIsImporting(false);
                     finishImportProgress();
@@ -10167,14 +10481,19 @@
                     setImportPreviewName(file.name || 'backup.json');
                     setIsImportPreviewOpen(true);
                 } catch (err) {
-                    alert('Import failed. Invalid file?');
+                    pushSettingsToast('Import failed. Invalid file?', 'error');
                     resetImportPreviewState();
                 }
             };
 
             const fullRefreshPwa = async () => {
                 if (isRefreshingApp) return;
-                const proceed = confirm('Run a full app refresh now? This clears cached app files and reloads.');
+                const proceed = await requestSettingsConfirmation({
+                    title: 'Full refresh PWA',
+                    description: 'Clear cached app files and reload now?',
+                    confirmLabel: 'Refresh now',
+                    danger: true
+                });
                 if (!proceed) return;
                 setIsRefreshingApp(true);
                 try {
@@ -10197,12 +10516,12 @@
                 } catch (err) {
                     console.error('Full refresh failed', err);
                     setIsRefreshingApp(false);
-                    alert('Unable to refresh the app: ' + (err?.message || 'Unexpected error'));
+                    pushSettingsToast('Unable to refresh the app: ' + (err?.message || 'Unexpected error'), 'error');
                 }
             };
 
             return (
-                <div className="space-y-6 pb-28 animate-fade-in">
+                <div className="space-y-6 pb-20 animate-fade-in">
                     <header className="px-1">
                         <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">Settings</h1>
                         <p className="text-slate-500 text-sm font-medium">Configure categories for costs</p>
@@ -10454,7 +10773,7 @@
                                 {!ledgerRepairSummary.cancelled && !ledgerRepairSummary.proposed && (
                                     <span>{` Flow/sign fixes: ${ledgerRepairSummary.fixedFlowAmountMismatches || 0} · Opponent pitch fee fixes: ${ledgerRepairSummary.fixedOpponentPitchFees || 0} · Missing flow fixes: ${ledgerRepairSummary.fixedMissingFlow || 0}.`}</span>
                                 )}
-                                <span>{` Opponent/match-fee rows checked: ${ledgerRepairSummary.scannedOpponentPitchCandidates || 0} · Already correct: ${ledgerRepairSummary.alreadyCorrectOpponentPitch || 0}.`}</span>
+                                <span>{` Club pitch/match-fee rows scanned: ${ledgerRepairSummary.scannedClubPitchRows || 0} · Candidate opponent receivables: ${ledgerRepairSummary.scannedOpponentPitchCandidates || 0} · Already correct: ${ledgerRepairSummary.alreadyCorrectOpponentPitch || 0}.`}</span>
                             </div>
                         )}
                     </div>
@@ -10521,7 +10840,7 @@
                                 Clear all
                             </button>
                         </div>
-                        <div className="space-y-2 max-h-[52vh] overflow-y-auto pr-1">
+                        <div className="space-y-2 pr-1">
                             {ledgerRepairCandidates.map(row => {
                                 const key = String(row.id);
                                 const checked = !!ledgerRepairSelection[key];
@@ -10582,7 +10901,7 @@
                                 Clear all
                             </button>
                         </div>
-                        <div className="space-y-2 max-h-[52vh] overflow-y-auto pr-1">
+                        <div className="space-y-2 pr-1">
                             {playerReconCandidates.map(row => {
                                 const key = String(row.id);
                                 const checked = !!playerReconSelection[key];
@@ -10649,7 +10968,7 @@
                                     </div>
                                 </div>
                                 <p className="text-[11px] text-slate-500">We clear each list one by one. Wait for every item to show a check before closing.</p>
-                                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                <div className="space-y-2 pr-1">
                                     {nukeSteps.map(step => {
                                         const status = step.status;
                                         const isDone = status === 'done';
@@ -10696,7 +11015,7 @@
                                     </div>
                                 </div>
                                 <p className="text-[11px] text-slate-500">We import each list one by one. Keep this open until every row shows a check.</p>
-                                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                <div className="space-y-2 pr-1">
                                     {importSteps.map(step => {
                                         const status = step.status;
                                         const isDone = status === 'done';
@@ -10735,7 +11054,7 @@
                         {importPreviewName && (
                             <div className="mb-2 text-xs text-slate-500">File: <span className="font-semibold text-slate-700">{importPreviewName}</span></div>
                         )}
-                        <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                        <div className="space-y-3 pr-1">
                             {BACKUP_SCOPE_ITEMS.map(item => {
                                 const count = importPreviewSummary[item.key] || 0;
                                 const included = count > 0;
@@ -10768,7 +11087,7 @@
                     </Modal>
 
                     <Modal isOpen={isBackupPreviewOpen} onClose={() => { if(!isBackupGenerating) setIsBackupPreviewOpen(false); }} title="Backup Contents">
-                        <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                        <div className="space-y-3 pr-1">
                             {BACKUP_SCOPE_ITEMS.map(item => (
                                 <div key={item.key} className="flex gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
                                     <div className="mt-1 h-6 w-6 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
@@ -10794,7 +11113,7 @@
 
                     <Modal isOpen={Boolean(playerImportRows && playerImportRows.length)} onClose={() => setPlayerImportRows(null)} title="Review player import">
                         {playerImportRows ? (
-                            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+                            <div className="space-y-3 pr-1">
                                 {playerImportRows.map((row, idx) => (
                                     <div key={row.id} className={`p-3 rounded-xl border ${row.drop ? 'border-slate-200 bg-slate-50' : row.needsReview ? 'border-amber-200 bg-amber-50/60' : 'border-slate-100 bg-white'} space-y-2`}>
                                         <div className="flex items-center justify-between gap-3">
@@ -10865,7 +11184,7 @@
                     </Modal>
 
                     <Modal isOpen={legacyPreview.length > 0} onClose={() => setLegacyPreview([])} title="Review Legacy Import">
-                        <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+                        <div className="space-y-3 pr-1">
                             {legacyPreview.map(row => (
                                 <div key={row.id} className="p-3 rounded-xl border border-slate-100 bg-slate-50 space-y-2">
                                     <div className="flex items-center justify-between">
@@ -11024,7 +11343,6 @@
             const [kitNumberLimit, setKitNumberLimit] = useState(loadKitNumberLimit());
             const [kitSizeOptions, setKitSizeOptions] = useState(loadKitSizeOptions());
             const [squadTab, setSquadTab] = useState('players');
-            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [hasLocalVersionMismatch, setHasLocalVersionMismatch] = useState(false);
             const [hasRemoteVersionMismatch, setHasRemoteVersionMismatch] = useState(false);
             const [availableBuildVersion, setAvailableBuildVersion] = useState(APP_VERSION);
@@ -11468,10 +11786,10 @@
                             </div>
                         )}
 
-                        <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-safe pb-32">
+                        <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-[calc(6rem+env(safe-area-inset-bottom))]">
                             {activeTab === 'dashboard' && (
                                 <div data-tab-container="dashboard">
-                                    <Dashboard onNavigate={navigate} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => setIsSettingsOpen(true)} authStatus={authStatus} onAuthLogoClick={handleAuthLogoClick} />
+                                    <Dashboard onNavigate={navigate} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} onOpenSettings={() => navigate('settings')} authStatus={authStatus} onAuthLogoClick={handleAuthLogoClick} />
                                 </div>
                             )}
                             {activeTab === 'finances' && (
@@ -11508,6 +11826,16 @@
                                     <Opponents opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} onNavigate={navigate} />
                                 </div>
                             )}
+                            {activeTab === 'more' && (
+                                <div data-tab-container="more">
+                                    <MoreHub onNavigate={navigate} />
+                                </div>
+                            )}
+                            {activeTab === 'settings' && (
+                                <div data-tab-container="settings">
+                                    <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} />
+                                </div>
+                            )}
                             <div className="pt-6 text-center text-[10px] text-slate-400">
                                 {(() => {
                                     const formatted = READ_ONLY ? formatBuildLabel(APP_VERSION, true) : formatBuildLabel(APP_VERSION, false);
@@ -11522,9 +11850,6 @@
                         </main>
                         
                         <Nav activeTab={activeTab} setTab={navigate} />
-                        <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="Settings">
-                            <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} />
-                        </Modal>
                     </div>
                     {importCount > 0 && <ImportProgressOverlay message={importMessage || "Updating data…"} details={progressDetails} />}
                 </ImportProgressContext.Provider>
