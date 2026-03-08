@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.08-30';
+        const MASTER_BUILD_VERSION = '2026.03.08-31';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -2483,6 +2483,7 @@
             const fixtureSaveTimerRef = useRef(null);
             const [costEditor, setCostEditor] = useState({ open: false, txId: null, description: '', amount: '', sign: 1 });
             const [costDeleteTarget, setCostDeleteTarget] = useState(null);
+            const [paymentAmountEditor, setPaymentAmountEditor] = useState({ open: false, playerId: null, playerName: '', amount: '' });
             const [fixtureToasts, setFixtureToasts] = useState([]);
             const pushFixtureToast = useCallback((message, tone = 'info') => {
                 const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -2614,6 +2615,7 @@
                 setIsSquadPanelOpen(launchMode !== 'matchday');
                 setFixtureDetailTab('overview');
                 setIsFixtureAdvancedOpen(false);
+                setPaymentAmountEditor({ open: false, playerId: null, playerName: '', amount: '' });
             }, [selectedFixture?.id]);
             useEffect(() => {
                 if (fixtureDetailTab === 'payments') {
@@ -3655,9 +3657,9 @@
                 }
             };
 
-            const updateFeeForPlayer = async (playerId) => {
+            const updateFeeForPlayer = async (playerId, amountOverride = null) => {
                 if(!selectedFixture) return;
-                const raw = Number(feeEdits[playerId] ?? (selectedFixture.feeAmount || 20));
+                const raw = Number(amountOverride ?? feeEdits[playerId] ?? (selectedFixture.feeAmount || 20));
                 const amount = isNaN(raw) ? (selectedFixture.feeAmount || 20) : Math.max(0, raw);
                 const feeTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: PLAYER_FEE_CATEGORY }).and(t => t.amount < 0).first();
                 if (feeTx) {
@@ -3677,11 +3679,30 @@
                 }
                 reloadSelected();
             };
+            const openPaymentAmountEditor = (row) => {
+                const amountValue = Number(feeEdits[row.player.id] ?? row.due);
+                setPaymentAmountEditor({
+                    open: true,
+                    playerId: row.player.id,
+                    playerName: `${row.player.firstName || ''} ${row.player.lastName || ''}`.trim(),
+                    amount: Number.isFinite(amountValue) ? String(Math.max(0, amountValue)) : ''
+                });
+            };
+            const closePaymentAmountEditor = () => {
+                setPaymentAmountEditor({ open: false, playerId: null, playerName: '', amount: '' });
+            };
+            const savePaymentAmountEditor = async () => {
+                if (!paymentAmountEditor.playerId) return;
+                const normalizedAmount = Math.max(0, Number(paymentAmountEditor.amount) || 0);
+                setFeeEdits(prev => ({ ...prev, [paymentAmountEditor.playerId]: normalizedAmount }));
+                await updateFeeForPlayer(paymentAmountEditor.playerId, normalizedAmount);
+                closePaymentAmountEditor();
+            };
 
             const togglePayment = async (playerId) => {
                 if(!selectedFixture) return;
-                const fee = Number(feeEdits[playerId] ?? (selectedFixture.feeAmount || 20)) || 0;
                 const feeTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: PLAYER_FEE_CATEGORY }).and(t => t.amount < 0).first();
+                const fee = Math.max(0, Number(feeEdits[playerId] ?? (feeTx ? Math.abs(feeTx.amount) : (selectedFixture.feeAmount || 20))) || 0);
                 const payTx = await db.transactions.where({ fixtureId: selectedFixture.id, playerId, category: PLAYER_FEE_CATEGORY }).and(t => t.amount > 0 && !t.isWriteOff).first();
                 if(payTx) {
                     await db.transactions.delete(payTx.id);
@@ -4877,7 +4898,7 @@
                     </Modal>
 
                     {selectedFixture && (
-                        <div ref={matchDayRef} className="fixed inset-0 z-[60] bg-white overflow-y-auto overflow-x-hidden overscroll-contain pb-20 sm:pb-10">
+                        <div ref={matchDayRef} className="fixed inset-0 z-[60] bg-white overflow-y-auto overflow-x-hidden overscroll-contain pb-32 sm:pb-20">
                             <div className="max-w-4xl mx-auto px-4 py-6 space-y-5">
                                 <div className="sticky top-0 z-[70] -mx-4 px-4 py-3 bg-white/95 backdrop-blur border-b border-slate-100 space-y-3">
                                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -4896,14 +4917,8 @@
                                             </div>
                                         </div>
                                         <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:justify-end">
-                                            {!isMatchdayWorkspace && (
-                                                <button onClick={() => setIsScoreOpen(true)} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Score</button>
-                                            )}
                                             <button onClick={() => setSelectedFixture(null)} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
                                             <button onClick={() => deleteFixture(selectedFixture)} className="min-h-[46px] px-4 py-2 rounded-lg border border-rose-200 bg-rose-50 text-sm font-bold text-rose-700">Delete</button>
-                                            <button onClick={() => saveFixtureDetails({ closeOnSave: true })} className="min-h-[46px] px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold">
-                                                {isMatchdayWorkspace ? 'Save Plan & Close' : 'Save & Close'}
-                                            </button>
                                         </div>
                                     </div>
                                     {!isMatchdayWorkspace && (
@@ -5605,18 +5620,23 @@
                                                             {row.isWrittenOff ? 'WRITE-OFF' : (row.isPaid ? 'PAID' : 'UNPAID')}
                                                         </div>
                                                     </div>
-                                                    <div className="flex flex-col md:flex-row gap-2 mt-2">
-                                                        <input type="number" min="0" step="1" className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" value={feeEdits[row.player.id] ?? row.due} onChange={e => setFeeEdits({ ...feeEdits, [row.player.id]: Number(e.target.value) })} />
-                                                        <button onClick={() => updateFeeForPlayer(row.player.id)} className="bg-white border border-slate-200 text-slate-800 font-bold px-3 py-2 rounded-lg text-sm">Save amount</button>
-                                                        <button onClick={() => togglePayment(row.player.id)} disabled={row.isWrittenOff} className={`font-bold px-3 py-2 rounded-lg text-sm ${row.isWrittenOff ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : row.isPaid ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-600 text-white'}`}>
+                                                    <div className="grid grid-cols-2 gap-2 mt-2">
+                                                        <button onClick={() => togglePayment(row.player.id)} disabled={row.isWrittenOff} className={`min-h-[44px] col-span-2 font-bold px-3 py-2 rounded-lg text-sm ${row.isWrittenOff ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : row.isPaid ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-600 text-white'}`}>
                                                             {row.isPaid ? 'Mark unpaid' : 'Mark received'}
                                                         </button>
-                                                        {row.feeTx && !row.isPaid && (
-                                                            <button onClick={() => toggleWriteOff(row.player.id)} className={`font-bold px-3 py-2 rounded-lg text-sm border ${row.isWrittenOff ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                                                                {row.isWrittenOff ? 'Undo write-off' : 'Write off'}
-                                                            </button>
-                                                        )}
-                                                        <button onClick={() => removePlayerFromFixture(row.player.id)} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold px-3 py-2 rounded-lg text-sm">Remove</button>
+                                                        <button
+                                                            onClick={() => toggleWriteOff(row.player.id)}
+                                                            disabled={!row.isWrittenOff && (!row.feeTx || row.isPaid)}
+                                                            className={`min-h-[44px] font-bold px-3 py-2 rounded-lg text-sm border ${(!row.isWrittenOff && (!row.feeTx || row.isPaid)) ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : row.isWrittenOff ? 'bg-slate-100 text-slate-700 border-slate-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}
+                                                        >
+                                                            {row.isWrittenOff ? 'Undo write-off' : 'Write off'}
+                                                        </button>
+                                                        <button onClick={() => openPaymentAmountEditor(row)} className="min-h-[44px] bg-white border border-slate-200 text-slate-800 font-bold px-3 py-2 rounded-lg text-sm">
+                                                            Adjust fee
+                                                        </button>
+                                                        <button onClick={() => removePlayerFromFixture(row.player.id)} className="min-h-[44px] col-span-2 bg-rose-50 text-rose-700 border border-rose-200 font-bold px-3 py-2 rounded-lg text-sm">
+                                                            Remove player
+                                                        </button>
                                                     </div>
                                                 </div>
                                             ))}
@@ -5724,7 +5744,25 @@
                                     </button>
                                 </div>
                             </div>
-                            <button onClick={scrollToTop} className="fixed bottom-4 right-4 z-[65] bg-white/90 backdrop-blur border border-slate-200 shadow-lg rounded-full px-4 py-2 text-sm font-bold text-slate-700 flex items-center gap-2">
+                            <div className="fixed inset-x-0 bottom-0 z-[72] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-white via-white/95 to-white/0">
+                                <div className="max-w-4xl mx-auto grid grid-cols-3 gap-2">
+                                    <button onClick={() => setSelectedFixture(null)} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
+                                        Back
+                                    </button>
+                                    {!isMatchdayWorkspace && (
+                                        <button onClick={() => setIsScoreOpen(true)} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
+                                            Score
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => saveFixtureDetails({ closeOnSave: true })}
+                                        className={`min-h-[48px] rounded-xl bg-slate-900 text-white text-sm font-bold ${isMatchdayWorkspace ? 'col-span-2' : ''}`}
+                                    >
+                                        {isMatchdayWorkspace ? 'Save Plan & Close' : 'Save & Close'}
+                                    </button>
+                                </div>
+                            </div>
+                            <button onClick={scrollToTop} className="fixed bottom-24 right-4 z-[75] bg-white/90 backdrop-blur border border-slate-200 shadow-lg rounded-full px-4 py-2 text-sm font-bold text-slate-700 flex items-center gap-2">
                                 <Icon name="ArrowUp" size={14} /> Top
                             </button>
                         </div>
@@ -5784,6 +5822,30 @@
                                 <p className="text-[11px] text-slate-500">Pick someone from the squad or choose custom for guests/opposition.</p>
                             </div>
                             <button onClick={saveScore} className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">Save Score</button>
+                        </div>
+                    </Modal>
+
+                    <Modal isOpen={paymentAmountEditor.open} onClose={closePaymentAmountEditor} title="Adjust Player Fee" placement="center">
+                        <div className="space-y-3">
+                            <div className="text-sm text-slate-600">
+                                Set fee amount for <span className="font-bold text-slate-900">{paymentAmountEditor.playerName || 'player'}</span>.
+                            </div>
+                            <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-lg p-3 text-base"
+                                value={paymentAmountEditor.amount}
+                                onChange={e => setPaymentAmountEditor(prev => ({ ...prev, amount: e.target.value }))}
+                            />
+                            <div className="grid grid-cols-2 gap-2">
+                                <button onClick={closePaymentAmountEditor} className="min-h-[44px] bg-slate-100 border border-slate-200 text-slate-700 font-bold rounded-lg">
+                                    Cancel
+                                </button>
+                                <button onClick={savePaymentAmountEditor} className="min-h-[44px] bg-slate-900 text-white font-bold rounded-lg">
+                                    Save fee
+                                </button>
+                            </div>
                         </div>
                     </Modal>
 
