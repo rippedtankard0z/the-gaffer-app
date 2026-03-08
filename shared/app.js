@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.08-34';
+        const MASTER_BUILD_VERSION = '2026.03.08-38';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -39,6 +39,16 @@
         const PITCH_FEE_CATEGORY = 'Pitch Fee';
         const LEDGER_REPAIR_FLAG_KEY = 'gaffer:ledgerRepairV1Done';
         const PLAYER_RECON_REPAIR_FLAG_KEY = 'gaffer:playerReconciliationV1Done';
+        const PLAYER_NAME_MATCH_HISTORY_MAX_NAMES = 500;
+        const PLAYER_NAME_MATCH_HISTORY_MAX_PLAYERS_PER_NAME = 6;
+
+        const normalizePersonNameKey = (name = '') => {
+            return (name || '')
+                .toString()
+                .toLowerCase()
+                .replace(/\s+/g, ' ')
+                .trim();
+        };
 
         const normalizeFeeCategory = (value = '') => {
             if (!value) return '';
@@ -471,6 +481,43 @@
             return value ? `${value}`.trim() : '';
         };
 
+        const normalizePlayerNameMatchHistory = (value = {}) => {
+            if (!value || typeof value !== 'object') return {};
+            const normalizedEntries = Object.entries(value).map(([rawName, rawCounts]) => {
+                const key = normalizePersonNameKey(rawName);
+                if (!key || !rawCounts || typeof rawCounts !== 'object') return null;
+                const counts = Object.entries(rawCounts).map(([playerId, count]) => {
+                    const id = (playerId ?? '').toString().trim();
+                    const numeric = Math.max(0, Math.floor(Number(count) || 0));
+                    if (!id || !numeric) return null;
+                    return [id, numeric];
+                }).filter(Boolean).sort((a, b) => b[1] - a[1]).slice(0, PLAYER_NAME_MATCH_HISTORY_MAX_PLAYERS_PER_NAME);
+                if (!counts.length) return null;
+                return [key, Object.fromEntries(counts)];
+            }).filter(Boolean);
+            const unique = new Map();
+            normalizedEntries.forEach(([key, counts]) => {
+                if (!unique.has(key)) {
+                    unique.set(key, { ...counts });
+                    return;
+                }
+                const merged = { ...unique.get(key) };
+                Object.entries(counts).forEach(([id, count]) => {
+                    merged[id] = Math.max(1, Number(merged[id] || 0) + Number(count || 0));
+                });
+                const trimmed = Object.entries(merged)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, PLAYER_NAME_MATCH_HISTORY_MAX_PLAYERS_PER_NAME);
+                unique.set(key, Object.fromEntries(trimmed));
+            });
+            const compact = Array.from(unique.entries())
+                .map(([key, counts]) => ({ key, counts, total: Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0) }))
+                .sort((a, b) => b.total - a.total)
+                .slice(0, PLAYER_NAME_MATCH_HISTORY_MAX_NAMES)
+                .map(item => [item.key, item.counts]);
+            return Object.fromEntries(compact);
+        };
+
         const normalizePositionDefinitions = (defs, fallback) => {
             if (!Array.isArray(defs) || !defs.length) return clonePositionDefinitions(fallback);
             const cleaned = defs.map(item => {
@@ -489,6 +536,7 @@
             kitNumberLimit: DEFAULT_KIT_NUMBER_LIMIT,
             kitSizeOptions: [...DEFAULT_KIT_SIZE_OPTIONS],
             positionDefinitions: clonePositionDefinitions(DEFAULT_POSITION_DEFINITIONS),
+            playerNameMatchHistory: {},
             buildVersion: APP_VERSION
         });
 
@@ -507,6 +555,7 @@
                     : defaults.kitNumberLimit,
                 kitSizeOptions: Array.isArray(data.kitSizeOptions) && data.kitSizeOptions.length ? data.kitSizeOptions : defaults.kitSizeOptions,
                 positionDefinitions: normalizePositionDefinitions(data.positionDefinitions, defaults.positionDefinitions),
+                playerNameMatchHistory: normalizePlayerNameMatchHistory(data.playerNameMatchHistory),
                 buildVersion: extractBuildVersion(data) || defaults.buildVersion
             };
         };
@@ -778,10 +827,74 @@
             return (maxLen - distance) / maxLen;
         };
 
-        const suggestPlayers = (name, players, limit = 3) => {
+        const getPlayerNameMatchCounts = (name, playerNameMatchHistory = {}) => {
+            const key = normalizePersonNameKey(name);
+            const raw = key && playerNameMatchHistory && typeof playerNameMatchHistory === 'object'
+                ? playerNameMatchHistory[key]
+                : null;
+            if (!raw || typeof raw !== 'object') {
+                return { key, counts: {}, maxCount: 0 };
+            }
+            const counts = Object.entries(raw).reduce((acc, [playerId, count]) => {
+                const id = (playerId ?? '').toString().trim();
+                const numeric = Math.max(0, Number(count) || 0);
+                if (!id || !numeric) return acc;
+                acc[id] = numeric;
+                return acc;
+            }, {});
+            const maxCount = Object.values(counts).reduce((max, count) => Math.max(max, count), 0);
+            return { key, counts, maxCount };
+        };
+
+        const getPreferredPlayerIdForName = (name, players = [], playerNameMatchHistory = {}) => {
+            const { counts } = getPlayerNameMatchCounts(name, playerNameMatchHistory);
+            const entries = Object.entries(counts);
+            if (!entries.length) return '';
+            const rosterIds = new Set((players || []).map(player => String(player.id)));
+            const best = entries
+                .filter(([id]) => rosterIds.has(String(id)))
+                .sort((a, b) => b[1] - a[1])[0];
+            return best ? String(best[0]) : '';
+        };
+
+        const recordPlayerNameMatch = (history = {}, name = '', playerId = null) => {
+            const key = normalizePersonNameKey(name);
+            const id = (playerId ?? '').toString().trim();
+            if (!key || !id) return normalizePlayerNameMatchHistory(history);
+            const base = normalizePlayerNameMatchHistory(history);
+            const next = { ...base };
+            const bucket = { ...(next[key] || {}) };
+            bucket[id] = Math.max(1, Number(bucket[id] || 0) + 1);
+            const trimmedBucket = Object.entries(bucket)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, PLAYER_NAME_MATCH_HISTORY_MAX_PLAYERS_PER_NAME);
+            next[key] = Object.fromEntries(trimmedBucket);
+            return normalizePlayerNameMatchHistory(next);
+        };
+
+        const suggestPlayers = (name, players, limit = 3, playerNameMatchHistory = {}) => {
+            const { counts, maxCount } = getPlayerNameMatchCounts(name, playerNameMatchHistory);
             return players
-                .map(p => ({ player: p, score: stringSimilarity(name, `${p.firstName} ${p.lastName}`) }))
-                .sort((a, b) => b.score - a.score)
+                .map(p => {
+                    const fullName = `${p.firstName} ${p.lastName}`.trim();
+                    const baseScore = stringSimilarity(name, fullName);
+                    const learnedCount = Number(counts[String(p.id)] || 0);
+                    const learnedBoost = learnedCount > 0 && maxCount > 0
+                        ? (0.22 + (learnedCount / maxCount) * 0.18)
+                        : 0;
+                    return {
+                        player: p,
+                        score: Math.min(1, baseScore + learnedBoost),
+                        baseScore,
+                        learnedCount
+                    };
+                })
+                .sort((a, b) => {
+                    if (b.score !== a.score) return b.score - a.score;
+                    if (b.learnedCount !== a.learnedCount) return b.learnedCount - a.learnedCount;
+                    if (b.baseScore !== a.baseScore) return b.baseScore - a.baseScore;
+                    return String(a.player?.id || '').localeCompare(String(b.player?.id || ''));
+                })
                 .slice(0, limit);
         };
 
@@ -1065,7 +1178,7 @@
             'current player or not': 'currentPlayer'
         };
 
-        const sanitizeNameKey = (name) => (name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        const sanitizeNameKey = (name) => normalizePersonNameKey(name);
         const extractPositionCodes = (value) => {
             return (value || '')
                 .split(',')
@@ -1073,7 +1186,7 @@
                 .filter(Boolean);
         };
 
-        const parsePlayerImportRows = (text, players) => {
+        const parsePlayerImportRows = (text, players, playerNameMatchHistory = {}) => {
             const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
             if (lines.length < 2) throw new Error('Player CSV must include headers and at least one row.');
             const headers = splitCsvLine(lines[0]);
@@ -1102,11 +1215,12 @@
                 const lastName = nameParts.join(' ') || '(New)';
                 const sanitized = sanitizeNameKey(rawName);
                 const existingExact = sanitized ? players.find(p => sanitizeNameKey(`${p.firstName} ${p.lastName}`) === sanitized) : null;
-                const suggestions = suggestPlayers(rawName, players, 4);
+                const suggestions = suggestPlayers(rawName, players, 4, playerNameMatchHistory);
                 const bestSuggestion = suggestions[0];
+                const preferredPlayerId = getPreferredPlayerIdForName(rawName, players, playerNameMatchHistory);
                 const matchedPlayerId = existingExact
                     ? String(existingExact.id)
-                    : (bestSuggestion && bestSuggestion.score >= 0.7 ? String(bestSuggestion.player.id) : null);
+                    : (preferredPlayerId || (bestSuggestion && bestSuggestion.score >= 0.7 ? String(bestSuggestion.player.id) : null));
                 const positionTokens = inferPositionsFromText(record.positionText || '');
                 const selectedPositions = Array.from(new Set(positionTokens.map(token => normalizePositionToken(token)).filter(Boolean)));
                     parsed.push({
@@ -2285,6 +2399,148 @@
             midfield: 'Midfield',
             forward: 'Forward'
         };
+        const MATCHDAY_TOTAL_MINUTES = 80;
+        const MATCHDAY_LIVE_PHASES = ['PRE', 'LIVE_1H', 'WB_1H', 'HT', 'LIVE_2H', 'WB_2H', 'FT'];
+        const MATCHDAY_LIVE_PHASE_LABELS = {
+            PRE: 'Pre-match',
+            LIVE_1H: '1st half',
+            WB_1H: 'Water break (1H)',
+            HT: 'Half-time',
+            LIVE_2H: '2nd half',
+            WB_2H: 'Water break (2H)',
+            FT: 'Full-time'
+        };
+        const MATCHDAY_CLOCK_MARKERS = [
+            { key: 'ko', minute: 0, phase: 'LIVE_1H', label: 'Kick-off' },
+            { key: 'wb1', minute: 20, phase: 'WB_1H', label: 'Water break 1' },
+            { key: 'ht', minute: 40, phase: 'HT', label: 'Half-time' },
+            { key: 'wb2', minute: 60, phase: 'WB_2H', label: 'Water break 2' },
+            { key: 'ft', minute: 80, phase: 'FT', label: 'Full-time' }
+        ];
+        const clampMatchMinute = (value) => {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return 0;
+            return Math.max(0, Math.min(MATCHDAY_TOTAL_MINUTES, Math.round(num)));
+        };
+        const normalizeLivePhase = (value) => {
+            const clean = (value || '').toString().trim().toUpperCase();
+            return MATCHDAY_LIVE_PHASES.includes(clean) ? clean : 'PRE';
+        };
+        const normalizeLiveClock = (value = {}) => ({
+            currentMinute: clampMatchMinute(value?.currentMinute),
+            phase: normalizeLivePhase(value?.phase)
+        });
+        const createLivePlayerStat = (value = {}) => {
+            const totalOn = Math.max(0, Number(value?.totalOn) || 0);
+            const currentOnMinute = value?.currentOnMinute === null || value?.currentOnMinute === undefined || value?.currentOnMinute === ''
+                ? null
+                : clampMatchMinute(value.currentOnMinute);
+            const lastOnMinute = value?.lastOnMinute === null || value?.lastOnMinute === undefined || value?.lastOnMinute === ''
+                ? null
+                : clampMatchMinute(value.lastOnMinute);
+            const lastOffMinute = value?.lastOffMinute === null || value?.lastOffMinute === undefined || value?.lastOffMinute === ''
+                ? null
+                : clampMatchMinute(value.lastOffMinute);
+            const stints = Array.isArray(value?.stints)
+                ? value.stints.map((stint) => {
+                    const on = clampMatchMinute(stint?.on);
+                    const off = stint?.off === null || stint?.off === undefined || stint?.off === ''
+                        ? null
+                        : clampMatchMinute(stint.off);
+                    if (off !== null && off < on) return { on, off: on };
+                    return { on, off };
+                })
+                : [];
+            return { totalOn, currentOnMinute, lastOnMinute, lastOffMinute, stints };
+        };
+        const cloneLivePlayerStats = (stats = {}) => {
+            if (!stats || typeof stats !== 'object') return {};
+            return Object.entries(stats).reduce((acc, [playerId, value]) => {
+                const id = normalizePlayerIdValue(playerId);
+                if (!id) return acc;
+                acc[id] = createLivePlayerStat(value);
+                return acc;
+            }, {});
+        };
+        const normalizeLivePlayerStats = (stats = {}) => cloneLivePlayerStats(stats);
+        const ensureLivePlayerStat = (statsRaw = {}, playerId) => {
+            const id = normalizePlayerIdValue(playerId);
+            if (!id) return normalizeLivePlayerStats(statsRaw);
+            const stats = cloneLivePlayerStats(statsRaw);
+            if (!stats[id]) stats[id] = createLivePlayerStat();
+            return stats;
+        };
+        const liveStatsEnterPitch = (statsRaw = {}, playerId, minuteRaw) => {
+            const id = normalizePlayerIdValue(playerId);
+            if (!id) return normalizeLivePlayerStats(statsRaw);
+            const minute = clampMatchMinute(minuteRaw);
+            const stats = ensureLivePlayerStat(statsRaw, id);
+            const current = stats[id];
+            if (current.currentOnMinute !== null && current.currentOnMinute !== undefined) return stats;
+            const stints = Array.isArray(current.stints) ? [...current.stints] : [];
+            if (!stints.length || stints[stints.length - 1]?.off !== null) {
+                stints.push({ on: minute, off: null });
+            }
+            stats[id] = {
+                ...current,
+                currentOnMinute: minute,
+                lastOnMinute: minute,
+                stints
+            };
+            return stats;
+        };
+        const liveStatsLeavePitch = (statsRaw = {}, playerId, minuteRaw) => {
+            const id = normalizePlayerIdValue(playerId);
+            if (!id) return normalizeLivePlayerStats(statsRaw);
+            const minute = clampMatchMinute(minuteRaw);
+            const stats = ensureLivePlayerStat(statsRaw, id);
+            const current = stats[id];
+            if (current.currentOnMinute === null || current.currentOnMinute === undefined) {
+                stats[id] = {
+                    ...current,
+                    lastOffMinute: minute
+                };
+                return stats;
+            }
+            const elapsed = Math.max(0, minute - clampMatchMinute(current.currentOnMinute));
+            const stints = Array.isArray(current.stints) ? [...current.stints] : [];
+            if (stints.length) {
+                const lastIdx = stints.length - 1;
+                const last = stints[lastIdx];
+                if (last.off === null) {
+                    stints[lastIdx] = { ...last, off: Math.max(last.on, minute) };
+                } else {
+                    stints.push({ on: minute, off: minute });
+                }
+            } else {
+                stints.push({ on: minute, off: minute });
+            }
+            stats[id] = {
+                ...current,
+                totalOn: Math.max(0, current.totalOn + elapsed),
+                currentOnMinute: null,
+                lastOffMinute: minute,
+                stints
+            };
+            return stats;
+        };
+        const liveStatsFinalizeOnPitch = (statsRaw = {}, onPitchMap = {}, minuteRaw = 0) => {
+            const minute = clampMatchMinute(minuteRaw);
+            const ids = uniquePlayerIds(Object.values(onPitchMap || {}));
+            let next = normalizeLivePlayerStats(statsRaw);
+            ids.forEach((id) => {
+                next = liveStatsLeavePitch(next, id, minute);
+            });
+            return next;
+        };
+        const createPlannerLiveEvent = ({ type = 'event', note = '', minute = null, phase = '' } = {}) => ({
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            type,
+            note: (note || '').toString(),
+            minute: minute === null || minute === undefined || minute === '' ? null : clampMatchMinute(minute),
+            phase: normalizeLivePhase(phase || ''),
+            at: new Date().toISOString()
+        });
         const matchdayDefaultPlanner = () => ({
             version: 1,
             formation: '4-3-3',
@@ -2292,7 +2548,13 @@
             matchedEntries: [],
             starters: {},
             bench: { defence: [], midfield: [], forward: [] },
-            live: { active: false, onPitch: {}, events: [] },
+            live: {
+                active: false,
+                onPitch: {},
+                events: [],
+                clock: normalizeLiveClock({ currentMinute: 0, phase: 'PRE' }),
+                playerStats: {}
+            },
             updatedAt: new Date().toISOString()
         });
         const normalizePlayerIdValue = (value) => {
@@ -2343,9 +2605,19 @@
                     id: event?.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
                     type: event?.type || 'event',
                     note: (event?.note || '').toString(),
+                    minute: event?.minute === null || event?.minute === undefined || event?.minute === ''
+                        ? null
+                        : clampMatchMinute(event.minute),
+                    phase: normalizeLivePhase(event?.phase || ''),
                     at: event?.at || new Date().toISOString()
                 }))
                 : [];
+            const clock = normalizeLiveClock(liveRaw.clock || {});
+            let playerStats = normalizeLivePlayerStats(liveRaw.playerStats || {});
+            const onPitchIds = uniquePlayerIds(Object.values(onPitch || {}));
+            onPitchIds.forEach((playerId) => {
+                playerStats = liveStatsEnterPitch(playerStats, playerId, clock.currentMinute);
+            });
             return {
                 ...base,
                 ...raw,
@@ -2357,7 +2629,9 @@
                 live: {
                     active: !!liveRaw.active,
                     onPitch,
-                    events
+                    events,
+                    clock,
+                    playerStats
                 },
                 updatedAt: raw?.updatedAt || new Date().toISOString()
             };
@@ -2409,13 +2683,18 @@
             });
             return rows;
         };
-        const buildPlannerMatchedEntries = (names = [], players = []) => {
+        const buildPlannerMatchedEntries = (names = [], players = [], playerNameMatchHistory = {}) => {
             return names.map((rawName) => {
-                const exact = players.find((player) => `${player.firstName} ${player.lastName}`.trim().toLowerCase() === rawName.toLowerCase())
-                    || players.find((player) => (player.firstName || '').toLowerCase() === rawName.toLowerCase());
-                const suggestions = suggestPlayers(rawName, players, 4);
+                const exactFullMatches = players.filter((player) => `${player.firstName} ${player.lastName}`.trim().toLowerCase() === rawName.toLowerCase());
+                const firstNameMatches = players.filter((player) => (player.firstName || '').toLowerCase() === rawName.toLowerCase());
+                const exact = exactFullMatches.length === 1
+                    ? exactFullMatches[0]
+                    : (firstNameMatches.length === 1 ? firstNameMatches[0] : null);
+                const suggestions = suggestPlayers(rawName, players, 4, playerNameMatchHistory);
                 const best = suggestions[0];
-                const picked = exact || ((best && best.score >= 0.72) ? best.player : null);
+                const preferredId = getPreferredPlayerIdForName(rawName, players, playerNameMatchHistory);
+                const preferredPlayer = preferredId ? players.find((player) => String(player.id) === String(preferredId)) : null;
+                const picked = exact || preferredPlayer || ((best && best.score >= 0.72) ? best.player : null);
                 const playerId = picked ? String(picked.id) : '';
                 const suggestionIds = uniquePlayerIds(suggestions.map(item => String(item.player.id)));
                 if (playerId && !suggestionIds.includes(playerId)) suggestionIds.unshift(playerId);
@@ -2464,6 +2743,25 @@
                     usedBenchIds.add(playerId);
                 });
             });
+            const clock = normalizeLiveClock(liveRaw.clock || {});
+            let playerStats = normalizeLivePlayerStats(liveRaw.playerStats || {});
+            const rosterIds = Array.from(rosterSet);
+            playerStats = Object.entries(playerStats).reduce((acc, [playerId, stat]) => {
+                if (!rosterSet.has(playerId)) return acc;
+                acc[playerId] = createLivePlayerStat(stat);
+                return acc;
+            }, {});
+            const onPitchIds = uniquePlayerIds(Object.values(onPitch || {}));
+            onPitchIds.forEach((playerId) => {
+                playerStats = liveStatsEnterPitch(playerStats, playerId, clock.currentMinute);
+            });
+            rosterIds
+                .filter(playerId => !onPitchIds.includes(playerId))
+                .forEach((playerId) => {
+                    if (playerStats[playerId]?.currentOnMinute !== null && playerStats[playerId]?.currentOnMinute !== undefined) {
+                        playerStats = liveStatsLeavePitch(playerStats, playerId, clock.currentMinute);
+                    }
+                });
             return {
                 ...planner,
                 starters,
@@ -2471,7 +2769,9 @@
                 live: {
                     active: !!liveRaw.active,
                     onPitch,
-                    events: Array.isArray(liveRaw.events) ? liveRaw.events : []
+                    events: Array.isArray(liveRaw.events) ? liveRaw.events : [],
+                    clock,
+                    playerStats
                 }
             };
         };
@@ -2487,7 +2787,7 @@
             forfeitResult: FORFEIT_RESULT.NONE
         });
 
-        const Fixtures = ({ categories, opponents, venues, referees, refDefaults, seasonCategories, setOpponents, setVenues, onNavigate, launchMode = 'schedule' }) => {
+        const Fixtures = ({ categories, opponents, venues, referees, refDefaults, seasonCategories, setOpponents, setVenues, onNavigate, launchMode = 'schedule', playerNameMatchHistory = {}, onRememberPlayerNameMatches = null }) => {
             const [fixtures, setFixtures] = useState([]);
             const [selectedFixture, setSelectedFixture] = useState(null);
             const [players, setPlayers] = useState([]);
@@ -2523,6 +2823,17 @@
             const dismissFixtureToast = useCallback((id) => {
                 setFixtureToasts(prev => prev.filter(toast => toast.id !== id));
             }, []);
+            const rememberPlayerNameMatches = useCallback(async (pairs = []) => {
+                if (typeof onRememberPlayerNameMatches !== 'function' || !Array.isArray(pairs) || !pairs.length) return;
+                const normalized = pairs
+                    .map((pair) => ({
+                        name: (pair?.name || '').toString().trim(),
+                        playerId: (pair?.playerId ?? '').toString().trim()
+                    }))
+                    .filter((pair) => pair.name && pair.playerId);
+                if (!normalized.length) return;
+                await onRememberPlayerNameMatches(normalized);
+            }, [onRememberPlayerNameMatches]);
             const fixtureConfirmResolveRef = useRef(null);
             const [fixtureConfirm, setFixtureConfirm] = useState({ open: false, title: '', message: '', confirmLabel: 'Confirm', danger: false });
             const requestFixtureConfirmation = useCallback((config = {}) => {
@@ -2641,14 +2952,15 @@
                 setShowAvailablePlayers(false);
                 setIsPaymentsOpen(false);
                 setIsSquadPanelOpen(launchMode !== 'matchday');
+                setIsMatchdayDetailsOpen(launchMode !== 'matchday');
                 setFixtureDetailTab('overview');
                 setIsFixtureAdvancedOpen(false);
                 setPaymentAmountEditor({ open: false, playerId: null, playerName: '', amount: '' });
                 setMatchdayFlowTab('roster');
                 setMatchdayLineupView('positions');
-                setMatchdayLiveView('actions');
+                setMatchdayLiveView('pitch');
                 setMatchdayShowAllRosterRows(false);
-            }, [selectedFixture?.id]);
+            }, [selectedFixture?.id, launchMode]);
             useEffect(() => {
                 if (fixtureDetailTab === 'payments') {
                     setIsPaymentsOpen(true);
@@ -2717,8 +3029,9 @@
             const [plannerBoardAssignPlayerId, setPlannerBoardAssignPlayerId] = useState('');
             const [matchdayFlowTab, setMatchdayFlowTab] = useState('roster');
             const [matchdayLineupView, setMatchdayLineupView] = useState('positions');
-            const [matchdayLiveView, setMatchdayLiveView] = useState('actions');
+            const [matchdayLiveView, setMatchdayLiveView] = useState('pitch');
             const [matchdayShowAllRosterRows, setMatchdayShowAllRosterRows] = useState(false);
+            const [isMatchdayDetailsOpen, setIsMatchdayDetailsOpen] = useState(launchMode !== 'matchday');
             const magicFixtureOptions = useMemo(() => {
                 const allowed = showScheduledMagic ? ['PLAYED', 'SCHEDULED'] : ['PLAYED'];
                 return fixtures.filter(f => allowed.includes(f.status));
@@ -2805,15 +3118,63 @@
             const plannerSubIncomingIds = useMemo(() => {
                 return uniquePlayerIds([...plannerBenchAllIds, ...plannerReserveIds]).filter(id => !plannerOnPitchIds.includes(id));
             }, [plannerBenchAllIds, plannerReserveIds, plannerOnPitchIds]);
-            const plannerOnPitchSlots = useMemo(() => {
-                return plannerSlots.filter(slot => normalizePlayerIdValue(plannerCurrentOnPitch[slot.id]));
-            }, [plannerSlots, plannerCurrentOnPitch]);
+            const plannerLiveIncomingGroups = useMemo(() => {
+                const grouped = { defence: [], midfield: [], forward: [], reserve: [] };
+                plannerSubIncomingIds.forEach((playerId) => {
+                    const group = plannerBenchLookup[playerId];
+                    if (group === 'defence' || group === 'midfield' || group === 'forward') {
+                        grouped[group].push(playerId);
+                    } else {
+                        grouped.reserve.push(playerId);
+                    }
+                });
+                return grouped;
+            }, [plannerSubIncomingIds, plannerBenchLookup]);
             const plannerBenchAssignableIds = useMemo(() => {
                 return plannerRosterIds.filter(id => !plannerStarterIds.includes(id));
             }, [plannerRosterIds, plannerStarterIds]);
             const plannerMatchedCount = useMemo(() => {
                 return (matchdayPlanner?.matchedEntries || []).filter(entry => normalizePlayerIdValue(entry.playerId)).length;
             }, [matchdayPlanner?.matchedEntries]);
+            const plannerLiveClock = useMemo(() => {
+                return normalizeLiveClock(matchdayPlanner?.live?.clock || {});
+            }, [matchdayPlanner?.live?.clock]);
+            const plannerLiveMinute = plannerLiveClock.currentMinute;
+            const plannerLivePhaseLabel = MATCHDAY_LIVE_PHASE_LABELS[plannerLiveClock.phase] || MATCHDAY_LIVE_PHASE_LABELS.PRE;
+            const plannerLivePlayerStats = useMemo(() => {
+                return normalizeLivePlayerStats(matchdayPlanner?.live?.playerStats || {});
+            }, [matchdayPlanner?.live?.playerStats]);
+            const plannerLiveTimeRows = useMemo(() => {
+                return plannerRosterIds
+                    .map((playerId) => {
+                        const player = plannerPlayerLookup[playerId];
+                        const stat = plannerLivePlayerStats[playerId];
+                        const isOnPitch = plannerOnPitchIds.includes(playerId);
+                        let onMinutes = Math.max(0, Number(stat?.totalOn || 0));
+                        const currentOnMinute = stat?.currentOnMinute;
+                        if (currentOnMinute !== null && currentOnMinute !== undefined && currentOnMinute !== '') {
+                            onMinutes += Math.max(0, plannerLiveMinute - clampMatchMinute(currentOnMinute));
+                        } else if (!stat && isOnPitch && plannerLiveMinute > 0) {
+                            onMinutes += plannerLiveMinute;
+                        }
+                        onMinutes = Math.min(MATCHDAY_TOTAL_MINUTES, Math.round(onMinutes));
+                        const offMinutes = Math.max(0, plannerLiveMinute - onMinutes);
+                        return {
+                            playerId,
+                            playerName: player ? `${player.firstName || ''} ${player.lastName || ''}`.trim() : `Player ${playerId}`,
+                            isOnPitch,
+                            onMinutes,
+                            offMinutes,
+                            lastOnMinute: stat?.lastOnMinute ?? null,
+                            lastOffMinute: stat?.lastOffMinute ?? null
+                        };
+                    })
+                    .sort((a, b) => {
+                        if (a.isOnPitch !== b.isOnPitch) return a.isOnPitch ? -1 : 1;
+                        if (b.onMinutes !== a.onMinutes) return b.onMinutes - a.onMinutes;
+                        return a.playerName.localeCompare(b.playerName);
+                    });
+            }, [plannerRosterIds, plannerPlayerLookup, plannerLivePlayerStats, plannerLiveMinute, plannerOnPitchIds]);
             const plannerVsHistory = useMemo(() => {
                 const opponent = (selectedFixture?.opponent || '').trim().toLowerCase();
                 if (!opponent) return { played: 0, wins: 0, draws: 0, losses: 0, lastFive: [] };
@@ -3228,7 +3589,7 @@
                     pushFixtureToast('Paste player names first.', 'warning');
                     return;
                 }
-                const entries = buildPlannerMatchedEntries(names, players);
+                const entries = buildPlannerMatchedEntries(names, players, playerNameMatchHistory);
                 const matchedCount = entries.filter(entry => normalizePlayerIdValue(entry.playerId)).length;
                 await updatePlanner(prev => ({
                     ...prev,
@@ -3271,6 +3632,7 @@
 
             const plannerSetEntryPlayer = async (entryIndex, nextPlayerId) => {
                 const normalized = normalizePlayerIdValue(nextPlayerId);
+                const entry = (matchdayPlanner?.matchedEntries || [])[entryIndex];
                 await updatePlanner(prev => {
                     const matchedEntries = (prev.matchedEntries || []).map((entry, idx) => {
                         if (idx !== entryIndex) return entry;
@@ -3285,6 +3647,9 @@
                     });
                     return { ...prev, matchedEntries };
                 }, { silent: true });
+                if (normalized && entry?.rawName) {
+                    void rememberPlayerNameMatches([{ name: entry.rawName, playerId: normalized }]);
+                }
             };
 
             const plannerSetFormation = async (formation) => {
@@ -3366,6 +3731,45 @@
                 }, { silent: true });
             };
 
+            const plannerSetLiveMinute = async (minuteRaw, options = {}) => {
+                const current = plannerRef.current || matchdayPlanner;
+                const liveCurrent = current?.live || {};
+                const nextMinute = clampMatchMinute(minuteRaw);
+                const currentClock = normalizeLiveClock(liveCurrent.clock || {});
+                const nextPhase = options.phase ? normalizeLivePhase(options.phase) : currentClock.phase;
+                const shouldLog = !!options.note;
+                const hasChange = nextMinute !== currentClock.currentMinute || nextPhase !== currentClock.phase || shouldLog;
+                if (!hasChange) return;
+                let events = Array.isArray(liveCurrent.events) ? [...liveCurrent.events] : [];
+                if (shouldLog) {
+                    events = [...events, createPlannerLiveEvent({
+                        type: options.eventType || 'clock',
+                        note: options.note,
+                        minute: nextMinute,
+                        phase: nextPhase
+                    })].slice(-120);
+                }
+                await persistPlanner({
+                    ...current,
+                    live: {
+                        ...liveCurrent,
+                        clock: {
+                            currentMinute: nextMinute,
+                            phase: nextPhase
+                        },
+                        events
+                    }
+                }, { silent: true });
+            };
+
+            const plannerSetLiveMarker = async (marker = {}) => {
+                await plannerSetLiveMinute(marker.minute, {
+                    phase: marker.phase,
+                    note: marker.label ? `${marker.label} (${clampMatchMinute(marker.minute)}')` : '',
+                    eventType: 'clock-marker'
+                });
+            };
+
             const plannerStartLive = async () => {
                 const current = plannerRef.current || matchdayPlanner;
                 const onPitch = {};
@@ -3377,19 +3781,38 @@
                     pushFixtureToast('Set your starters before starting live tracking.', 'warning');
                     return;
                 }
-                const events = [...(current?.live?.events || []), {
-                    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                const clock = normalizeLiveClock(current?.live?.clock || {});
+                const minute = clampMatchMinute(clock.currentMinute || 0);
+                const phase = clock.phase === 'PRE' ? 'LIVE_1H' : clock.phase;
+                const onPitchIds = uniquePlayerIds(Object.values(onPitch || {}));
+                let playerStats = normalizeLivePlayerStats(current?.live?.playerStats || {});
+                const previousOnPitchIds = uniquePlayerIds(Object.values(current?.live?.onPitch || {}));
+                previousOnPitchIds
+                    .filter((playerId) => !onPitchIds.includes(playerId))
+                    .forEach((playerId) => {
+                        playerStats = liveStatsLeavePitch(playerStats, playerId, minute);
+                    });
+                onPitchIds.forEach((playerId) => {
+                    playerStats = liveStatsEnterPitch(playerStats, playerId, minute);
+                });
+                const events = [...(current?.live?.events || []), createPlannerLiveEvent({
                     type: 'live-start',
-                    note: `Live started with ${Object.keys(onPitch).length} players on pitch.`,
-                    at: new Date().toISOString()
-                }].slice(-120);
+                    note: `Live started (${minute}') with ${onPitchIds.length} players on pitch.`,
+                    minute,
+                    phase
+                })].slice(-120);
                 await persistPlanner({
                     ...current,
                     live: {
                         ...(current.live || {}),
                         active: true,
                         onPitch,
-                        events
+                        events,
+                        clock: {
+                            currentMinute: minute,
+                            phase
+                        },
+                        playerStats
                     }
                 }, { silent: true });
                 setPlannerBoardMode('sub');
@@ -3401,18 +3824,28 @@
             const plannerStopLive = async () => {
                 const current = plannerRef.current || matchdayPlanner;
                 if (!current?.live?.active) return;
-                const events = [...(current?.live?.events || []), {
-                    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                const clock = normalizeLiveClock(current?.live?.clock || {});
+                const minute = clampMatchMinute(clock.currentMinute);
+                const phase = clock.phase === 'PRE' ? 'FT' : clock.phase;
+                const onPitch = current?.live?.onPitch || {};
+                const playerStats = liveStatsFinalizeOnPitch(current?.live?.playerStats || {}, onPitch, minute);
+                const events = [...(current?.live?.events || []), createPlannerLiveEvent({
                     type: 'live-stop',
-                    note: 'Live tracking stopped.',
-                    at: new Date().toISOString()
-                }].slice(-120);
+                    note: `Live tracking stopped at ${minute}'.`,
+                    minute,
+                    phase
+                })].slice(-120);
                 await persistPlanner({
                     ...current,
                     live: {
                         ...(current.live || {}),
                         active: false,
-                        events
+                        events,
+                        clock: {
+                            currentMinute: minute,
+                            phase
+                        },
+                        playerStats
                     }
                 }, { silent: true });
                 setPlannerSubSlotId('');
@@ -3432,19 +3865,36 @@
                     const playerId = normalizePlayerIdValue(current?.starters?.[slot.id]);
                     if (playerId) onPitch[slot.id] = playerId;
                 });
-                const events = [...(current?.live?.events || []), {
-                    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                const clock = normalizeLiveClock(current?.live?.clock || {});
+                const minute = clampMatchMinute(clock.currentMinute);
+                const onPitchIds = uniquePlayerIds(Object.values(onPitch || {}));
+                const previousOnPitchIds = uniquePlayerIds(Object.values(current?.live?.onPitch || {}));
+                let playerStats = normalizeLivePlayerStats(current?.live?.playerStats || {});
+                previousOnPitchIds
+                    .filter((playerId) => !onPitchIds.includes(playerId))
+                    .forEach((playerId) => {
+                        playerStats = liveStatsLeavePitch(playerStats, playerId, minute);
+                    });
+                onPitchIds
+                    .filter((playerId) => !previousOnPitchIds.includes(playerId))
+                    .forEach((playerId) => {
+                        playerStats = liveStatsEnterPitch(playerStats, playerId, minute);
+                    });
+                const events = [...(current?.live?.events || []), createPlannerLiveEvent({
                     type: 'live-reset',
-                    note: 'On-pitch reset to starter lineup.',
-                    at: new Date().toISOString()
-                }].slice(-120);
+                    note: `On-pitch reset to starters at ${minute}'.`,
+                    minute,
+                    phase: clock.phase
+                })].slice(-120);
                 await persistPlanner({
                     ...current,
                     live: {
                         ...(current.live || {}),
                         active: true,
                         onPitch,
-                        events
+                        events,
+                        clock,
+                        playerStats
                     }
                 }, { silent: true });
                 setPlannerSubSlotId('');
@@ -3467,6 +3917,8 @@
                     pushFixtureToast('Start live tracking first.', 'warning');
                     return false;
                 }
+                const clock = normalizeLiveClock(current?.live?.clock || {});
+                const minute = clampMatchMinute(clock.currentMinute);
                 const onPitch = { ...(current.live?.onPitch || {}) };
                 const outgoingId = normalizePlayerIdValue(onPitch[slotId]);
                 if (!outgoingId) {
@@ -3490,12 +3942,15 @@
                 const incomingName = plannerPlayerName(incomingId);
                 const outgoingName = plannerPlayerName(outgoingId);
                 const slotLabel = plannerSlotLookup[slotId]?.label || slotId.toUpperCase();
-                const events = [...(current.live?.events || []), {
-                    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                let playerStats = normalizeLivePlayerStats(current?.live?.playerStats || {});
+                playerStats = liveStatsLeavePitch(playerStats, outgoingId, minute);
+                playerStats = liveStatsEnterPitch(playerStats, incomingId, minute);
+                const events = [...(current.live?.events || []), createPlannerLiveEvent({
                     type: 'sub',
-                    note: `${incomingName} on for ${outgoingName} (${slotLabel}).`,
-                    at: new Date().toISOString()
-                }].slice(-120);
+                    note: `${incomingName} on for ${outgoingName} (${slotLabel}) at ${minute}'.`,
+                    minute,
+                    phase: clock.phase
+                })].slice(-120);
                 await persistPlanner({
                     ...current,
                     bench,
@@ -3503,7 +3958,9 @@
                         ...(current.live || {}),
                         active: true,
                         onPitch,
-                        events
+                        events,
+                        clock,
+                        playerStats
                     }
                 }, { silent: true });
                 if (!options.keepIncomingSelection) {
@@ -3513,10 +3970,6 @@
                 setPlannerBoardSelectedSlotId(slotId);
                 pushFixtureToast(`${incomingName} substituted in.`, 'success');
                 return true;
-            };
-
-            const plannerApplySub = async () => {
-                await plannerApplySubAtSlot(plannerSubSlotId, plannerSubIncomingId);
             };
 
             const plannerApplySwapBetweenSlots = async (slotARaw, slotBRaw, options = {}) => {
@@ -3531,6 +3984,8 @@
                     pushFixtureToast('Start live tracking first.', 'warning');
                     return false;
                 }
+                const clock = normalizeLiveClock(current?.live?.clock || {});
+                const minute = clampMatchMinute(clock.currentMinute);
                 const onPitch = { ...(current.live?.onPitch || {}) };
                 const playerA = normalizePlayerIdValue(onPitch[slotA]);
                 const playerB = normalizePlayerIdValue(onPitch[slotB]);
@@ -3554,19 +4009,21 @@
                 } else {
                     swapNote = `Moved ${nameB} from ${labelB} to ${labelA}.`;
                 }
-                const events = [...(current.live?.events || []), {
-                    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                const events = [...(current.live?.events || []), createPlannerLiveEvent({
                     type: 'swap',
-                    note: swapNote,
-                    at: new Date().toISOString()
-                }].slice(-120);
+                    note: `${swapNote} (${minute}')`,
+                    minute,
+                    phase: clock.phase
+                })].slice(-120);
                 await persistPlanner({
                     ...current,
                     live: {
                         ...(current.live || {}),
                         active: true,
                         onPitch,
-                        events
+                        events,
+                        clock,
+                        playerStats: normalizeLivePlayerStats(current?.live?.playerStats || {})
                     }
                 }, { silent: true });
                 if (!options.keepSlotSelection) {
@@ -3580,6 +4037,18 @@
 
             const plannerApplySwap = async () => {
                 await plannerApplySwapBetweenSlots(plannerSwapSlotA, plannerSwapSlotB);
+            };
+
+            const plannerSubIncomingFromBench = async (incomingIdRaw) => {
+                const incomingId = normalizePlayerIdValue(incomingIdRaw);
+                if (!incomingId) return;
+                const slotId = (plannerSubSlotId || plannerBoardSelectedSlotId || '').trim();
+                if (!slotId) {
+                    pushFixtureToast('Tap an on-pitch slot first, then tap a sub.', 'warning');
+                    return;
+                }
+                setPlannerSubIncomingId(incomingId);
+                await plannerApplySubAtSlot(slotId, incomingId);
             };
 
             const plannerHandlePitchSlotTap = (slotId) => {
@@ -3628,15 +4097,6 @@
                 } else {
                     pushFixtureToast(`${slotLabel} cleared.`, 'info');
                 }
-            };
-
-            const plannerCommitBoardSub = async () => {
-                const slotId = (plannerBoardSelectedSlotId || plannerSubSlotId || '').trim();
-                await plannerApplySubAtSlot(slotId, plannerSubIncomingId, { keepIncomingSelection: true });
-            };
-
-            const plannerCommitBoardSwap = async () => {
-                await plannerApplySwapBetweenSlots(plannerSwapSlotA, plannerSwapSlotB);
             };
 
             const deleteFixture = async (fixture) => {
@@ -4066,8 +4526,8 @@
                 if (plannerLiveActive && matchdayFlowTab !== 'live') {
                     setMatchdayFlowTab('live');
                 }
-                if (plannerLiveActive && matchdayLiveView !== 'actions') {
-                    setMatchdayLiveView('actions');
+                if (plannerLiveActive && !['pitch', 'log'].includes(matchdayLiveView)) {
+                    setMatchdayLiveView('pitch');
                 }
             }, [isMatchdayWorkspace, plannerLiveActive, matchdayFlowTab, matchdayLiveView]);
             useEffect(() => {
@@ -4116,6 +4576,10 @@
                 : fixtureSaveStatus === 'saved'
                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                     : 'bg-rose-50 text-rose-700 border-rose-200';
+            const touchModalSelectClass = 'w-full min-h-[60px] bg-slate-50 border-2 border-slate-200 rounded-2xl px-4 py-3 text-[19px] font-semibold leading-tight outline-none';
+            const touchPanelSelectClass = 'w-full min-h-[60px] bg-white border-2 border-slate-200 rounded-xl px-4 py-3 text-[18px] font-semibold leading-tight';
+            const touchModalInputClass = 'w-full min-h-[60px] bg-slate-50 border-2 border-slate-200 rounded-2xl px-4 py-3 text-[19px] font-semibold leading-tight outline-none';
+            const touchPanelInputClass = 'w-full min-h-[60px] bg-white border-2 border-slate-200 rounded-xl px-4 py-3 text-[18px] font-semibold leading-tight outline-none';
 
             const fixtureTotals = useMemo(() => {
                 if(!selectedFixture) return { cost: 0, ref: 0 };
@@ -4404,15 +4868,20 @@
                         if(/^(time|venue|kit)/i.test(name)) return;
                         if(name.length < 2) return;
                         
-                        const existing = players.find(p => 
-                            p.firstName.toLowerCase() === name.toLowerCase() || 
-                            (p.firstName + ' ' + p.lastName).toLowerCase() === name.toLowerCase() ||
-                            name.toLowerCase().includes(p.firstName.toLowerCase()) && name.length > 3
-                        );
+                        const fullNameMatches = players.filter(p => `${p.firstName || ''} ${p.lastName || ''}`.trim().toLowerCase() === name.toLowerCase());
+                        const firstNameMatches = players.filter(p => (p.firstName || '').toLowerCase() === name.toLowerCase());
+                        const existing = fullNameMatches.length === 1
+                            ? fullNameMatches[0]
+                            : (firstNameMatches.length === 1 ? firstNameMatches[0] : null);
 
-                        const suggestions = suggestPlayers(name, players);
+                        const suggestions = suggestPlayers(name, players, 4, playerNameMatchHistory);
                         const bestSuggestion = suggestions[0];
+                        const preferredPlayerId = getPreferredPlayerIdForName(name, players, playerNameMatchHistory);
+                        const preferredPlayer = preferredPlayerId ? players.find(p => String(p.id) === String(preferredPlayerId)) : null;
                         let selectedId = existing ? String(existing.id) : null;
+                        if(!selectedId && preferredPlayer) {
+                            selectedId = String(preferredPlayer.id);
+                        }
                         if(!selectedId && bestSuggestion && bestSuggestion.score >= 0.75) {
                             selectedId = String(bestSuggestion.player.id);
                         }
@@ -4421,6 +4890,7 @@
 
                         entries.push({
                             name: normalizedName,
+                            sourceName: name,
                             isPaid,
                             selectedId,
                             suggestions,
@@ -4535,6 +5005,7 @@
                 const importTimestamp = new Date().toISOString();
                 const participations = [];
                 const transactions = [];
+                const nameLearningPairs = [];
 
                 for (let i = 0; i < playerEntries.length; i++) {
                     const entry = playerEntries[i];
@@ -4555,6 +5026,12 @@
                         addProgressDetail(`(${i + 1}/${playerEntries.length}) Added new player ${firstName} ${lastName}`);
                     } else {
                         addProgressDetail(`(${i + 1}/${playerEntries.length}) Linked ${trimmedName} to player #${playerId}`);
+                    }
+                    if (playerId && trimmedName) {
+                        nameLearningPairs.push({
+                            name: (entry.sourceName || entry.name || trimmedName),
+                            playerId: String(playerId)
+                        });
                     }
 
                     participations.push({ fixtureId: finalFixtureId, playerId, status: 'SELECTED' });
@@ -4593,6 +5070,7 @@
                 } else {
                     addProgressDetail('Saved fixture without a squad list; add registrations later.');
                 }
+                await rememberPlayerNameMatches(nameLearningPairs);
 
                 pushFixtureToast('Magic import complete.', 'success');
                 setIsMagicOpen(false);
@@ -4902,7 +5380,7 @@
 
                     <Modal isOpen={isAddOpen} onClose={() => { setIsAddOpen(false); setMatchdayOpenAfterAdd(false); }} title={isMatchdayWorkspace ? 'Create Match Day Plan' : 'Add Fixture'}>
                         <form onSubmit={handleAdd} className="space-y-4">
-                                <select required className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base"
+                                <select required className={touchModalSelectClass}
                                     value={newFixture.opponent} onChange={e => setNewFixture({...newFixture, opponent: e.target.value})}>
                                     <option value="">Select opponent</option>
                                     {opponents.map(o => <option key={o.id} value={o.name}>{o.name}</option>)}
@@ -4918,12 +5396,12 @@
                                     </div>
                                 )}
                             <div className="grid grid-cols-2 gap-4">
-                                <input type="date" required className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base"
+                                <input type="date" required className={touchModalInputClass}
                                     value={newFixture.date} onChange={e => setNewFixture({...newFixture, date: e.target.value})} />
-                                <input type="text" required placeholder="15:00" className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base"
+                                <input type="text" required placeholder="15:00" className={touchModalInputClass}
                                     value={newFixture.time} onChange={e => setNewFixture({...newFixture, time: e.target.value})} />
                             </div>
-                    <select required className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base"
+                    <select required className={touchModalSelectClass}
                         value={newFixture.venue} onChange={e => setNewFixture({...newFixture, venue: e.target.value})}>
                         <option value="">Select venue</option>
                         {venues.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
@@ -4944,13 +5422,13 @@
                                 </div>
                             ) : (
                                 <>
-                                    <select className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base" value={newFixture.competitionType} onChange={e => setNewFixture({ ...newFixture, competitionType: e.target.value })}>
+                                    <select className={touchModalSelectClass} value={newFixture.competitionType} onChange={e => setNewFixture({ ...newFixture, competitionType: e.target.value })}>
                                         {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
                                     </select>
-                                    <select className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base" value={normalizeForfeitResult(newFixture.forfeitResult)} onChange={e => setNewFixture({ ...newFixture, forfeitResult: e.target.value })}>
+                                    <select className={touchModalSelectClass} value={normalizeForfeitResult(newFixture.forfeitResult)} onChange={e => setNewFixture({ ...newFixture, forfeitResult: e.target.value })}>
                                         {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                                     </select>
-                                    <select className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base" value={newFixture.seasonTag} onChange={e => setNewFixture({ ...newFixture, seasonTag: e.target.value })}>
+                                    <select className={touchModalSelectClass} value={newFixture.seasonTag} onChange={e => setNewFixture({ ...newFixture, seasonTag: e.target.value })}>
                                         {seasonCategories.map(s => <option key={s} value={s}>{s}</option>)}
                                     </select>
                                     <input type="number" min="0" step="1" placeholder="Player Fee (default 20)" className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none text-base"
@@ -4999,10 +5477,26 @@
                                     )}
                                 </div>
 
-                                {(isMatchdayWorkspace || fixtureDetailTab === 'overview') && (
+                                {isMatchdayWorkspace && (
+                                    <div className="bg-white p-3 rounded-2xl border border-slate-100">
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsMatchdayDetailsOpen(v => !v)}
+                                            className="w-full min-h-[46px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 flex items-center justify-between"
+                                        >
+                                            <span>Match details</span>
+                                            <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+                                                {isMatchdayDetailsOpen ? 'Hide' : 'Show'}
+                                                <Icon name={isMatchdayDetailsOpen ? 'ChevronUp' : 'ChevronDown'} size={14} />
+                                            </span>
+                                        </button>
+                                    </div>
+                                )}
+
+                                {((isMatchdayWorkspace && isMatchdayDetailsOpen) || (!isMatchdayWorkspace && fixtureDetailTab === 'overview')) && (
                                 <div className="bg-slate-50 p-4 rounded-2xl space-y-3">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                        <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.opponent} onChange={e => setSelectedFixture({ ...selectedFixture, opponent: e.target.value })}>
+                                        <select className={touchPanelSelectClass} value={selectedFixture.opponent} onChange={e => setSelectedFixture({ ...selectedFixture, opponent: e.target.value })}>
                                             <option value="">Select opponent</option>
                                             {opponents.map(o => <option key={o.id} value={o.name}>{o.name}</option>)}
                                             <option value="__new__">Add new opponent…</option>
@@ -5013,9 +5507,9 @@
                                                 <button onClick={async () => { const opp = await createQuickOpponent(); if(opp) setSelectedFixture({ ...selectedFixture, opponent: opp.name }); }} className="min-h-[46px] bg-slate-900 text-white text-base font-bold px-3 py-2 rounded-lg">Save Opponent</button>
                                             </div>
                                         )}
-                                        <input className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" type="date" value={selectedFixture.date?.split('T')[0] || ''} onChange={e => setSelectedFixture({ ...selectedFixture, date: e.target.value })} />
-                                        <input className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" type="text" placeholder="15:00" value={selectedFixture.time} onChange={e => setSelectedFixture({ ...selectedFixture, time: e.target.value })} />
-                                        <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.venue} onChange={e => setSelectedFixture({ ...selectedFixture, venue: e.target.value })}>
+                                        <input className={touchPanelInputClass} type="date" value={selectedFixture.date?.split('T')[0] || ''} onChange={e => setSelectedFixture({ ...selectedFixture, date: e.target.value })} />
+                                        <input className={touchPanelInputClass} type="text" placeholder="15:00" value={selectedFixture.time} onChange={e => setSelectedFixture({ ...selectedFixture, time: e.target.value })} />
+                                        <select className={touchPanelSelectClass} value={selectedFixture.venue} onChange={e => setSelectedFixture({ ...selectedFixture, venue: e.target.value })}>
                                             <option value="">Select venue</option>
                                             {venues.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
                                             <option value="__new__">Add new venue…</option>
@@ -5038,13 +5532,13 @@
                                     </button>
                                     {isFixtureAdvancedOpen && (
                                         <>
-                                            <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.competitionType || 'LEAGUE'} onChange={e => setSelectedFixture({ ...selectedFixture, competitionType: e.target.value })}>
+                                            <select className={touchPanelSelectClass} value={selectedFixture.competitionType || 'LEAGUE'} onChange={e => setSelectedFixture({ ...selectedFixture, competitionType: e.target.value })}>
                                                 {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
                                             </select>
-                                            <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={normalizeForfeitResult(selectedFixture.forfeitResult)} onChange={e => setSelectedFixture({ ...selectedFixture, forfeitResult: e.target.value })}>
+                                            <select className={touchPanelSelectClass} value={normalizeForfeitResult(selectedFixture.forfeitResult)} onChange={e => setSelectedFixture({ ...selectedFixture, forfeitResult: e.target.value })}>
                                                 {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                                             </select>
-                                            <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.seasonTag || (seasonCategories?.[0] || '2025/2026 Season')} onChange={e => setSelectedFixture({ ...selectedFixture, seasonTag: e.target.value })}>
+                                            <select className={touchPanelSelectClass} value={selectedFixture.seasonTag || (seasonCategories?.[0] || '2025/2026 Season')} onChange={e => setSelectedFixture({ ...selectedFixture, seasonTag: e.target.value })}>
                                                 {seasonCategories.map(s => <option key={s} value={s}>{s}</option>)}
                                             </select>
                                             <input className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" type="number" min="0" step="1" value={selectedFixture.feeAmount || 20} onChange={e => setSelectedFixture({ ...selectedFixture, feeAmount: Number(e.target.value) })} placeholder="Player fee" />
@@ -5092,7 +5586,7 @@
                                         <button onClick={() => { setMatchdayFlowTab('lineup'); setMatchdayLineupView('positions'); }} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'lineup' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
                                             Lineup
                                         </button>
-                                        <button onClick={() => { setMatchdayFlowTab('live'); setMatchdayLiveView('actions'); }} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'live' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                        <button onClick={() => { setMatchdayFlowTab('live'); setMatchdayLiveView('pitch'); }} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'live' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
                                             Live
                                         </button>
                                         <button onClick={() => setMatchdayFlowTab('squad')} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'squad' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
@@ -5417,7 +5911,7 @@
                                         <button onClick={() => setMatchdayFlowTab('roster')} className="min-h-[42px] px-4 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-bold">
                                             Back: Roster
                                         </button>
-                                        <button onClick={() => { setMatchdayFlowTab('live'); setMatchdayLiveView('actions'); }} className="min-h-[42px] px-4 rounded-lg bg-slate-900 text-white text-sm font-bold">
+                                        <button onClick={() => { setMatchdayFlowTab('live'); setMatchdayLiveView('pitch'); }} className="min-h-[42px] px-4 rounded-lg bg-slate-900 text-white text-sm font-bold">
                                             Next: Live
                                         </button>
                                     </div>
@@ -5428,132 +5922,234 @@
                                     {matchdayFlowTab === 'live' && (
                                     <>
                                     <div className="space-y-3">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            {!plannerLiveActive ? (
-                                                <button onClick={plannerStartLive} className="min-h-[48px] px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-base">
-                                                    Start live tracking
-                                                </button>
-                                            ) : (
-                                                <>
-                                                    <button onClick={plannerResetLiveToStarters} className="min-h-[48px] px-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-base">
-                                                        Reset to starters
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                {!plannerLiveActive ? (
+                                                    <button onClick={plannerStartLive} className="min-h-[48px] px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-base">
+                                                        Start live tracking
                                                     </button>
-                                                    <button onClick={plannerStopLive} className="min-h-[48px] px-4 bg-amber-50 border border-amber-200 text-amber-700 font-bold rounded-lg text-base">
-                                                        Stop live
-                                                    </button>
-                                                </>
-                                            )}
-                                            <div className="text-[11px] text-slate-500">On pitch now: {plannerOnPitchIds.length}</div>
+                                                ) : (
+                                                    <>
+                                                        <button onClick={plannerResetLiveToStarters} className="min-h-[48px] px-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-base">
+                                                            Reset to starters
+                                                        </button>
+                                                        <button onClick={plannerStopLive} className="min-h-[48px] px-4 bg-amber-50 border border-amber-200 text-amber-700 font-bold rounded-lg text-base">
+                                                            Stop live
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                                                <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-700 font-semibold">{plannerLivePhaseLabel}</span>
+                                                <span className="px-2 py-1 rounded-full border border-brand-200 bg-brand-50 text-brand-700 font-semibold">{plannerLiveMinute}' / {MATCHDAY_TOTAL_MINUTES}'</span>
+                                                <span className="px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-600 font-semibold">On pitch {plannerOnPitchIds.length}</span>
+                                            </div>
                                         </div>
 
-                                        <div className="grid grid-cols-3 gap-2">
-                                            <button onClick={() => setMatchdayLiveView('actions')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'actions' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
-                                                Actions
-                                            </button>
-                                            <button onClick={() => setMatchdayLiveView('map')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'map' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
-                                                On-pitch
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button onClick={() => setMatchdayLiveView('pitch')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'pitch' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                                Pitch
                                             </button>
                                             <button onClick={() => setMatchdayLiveView('log')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'log' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
                                                 Log
                                             </button>
                                         </div>
 
-                                        {matchdayLiveView === 'actions' && (
-                                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                        {matchdayLiveView === 'pitch' && (
+                                            <div className="space-y-3">
                                                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
-                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">Substitute</div>
-                                                    <select
-                                                        className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
-                                                        value={plannerSubSlotId}
-                                                        onChange={e => {
-                                                            setPlannerSubSlotId(e.target.value);
-                                                            setPlannerBoardSelectedSlotId(e.target.value);
-                                                        }}
-                                                    >
-                                                        <option value="">Outgoing slot</option>
-                                                        {plannerOnPitchSlots.map((slot) => (
-                                                            <option key={`planner-sub-slot-${slot.id}`} value={slot.id}>
-                                                                {slot.label} - {plannerPlayerName(plannerCurrentOnPitch[slot.id])}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                    <select
-                                                        className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
-                                                        value={plannerSubIncomingId}
-                                                        onChange={e => setPlannerSubIncomingId(e.target.value)}
-                                                    >
-                                                        <option value="">Incoming player</option>
-                                                        {plannerSubIncomingIds.map((playerId) => {
-                                                            const player = plannerPlayerLookup[playerId];
-                                                            if (!player) return null;
-                                                            const group = plannerBenchLookup[playerId];
+                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">Match Clock</div>
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        <button
+                                                            onClick={() => plannerSetLiveMinute(plannerLiveMinute - 1)}
+                                                            className="min-h-[44px] rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700"
+                                                        >
+                                                            -1 min
+                                                        </button>
+                                                        <button
+                                                            onClick={() => plannerSetLiveMinute(plannerLiveMinute)}
+                                                            className="min-h-[44px] rounded-lg border border-brand-200 bg-brand-50 text-sm font-bold text-brand-700"
+                                                        >
+                                                            {plannerLiveMinute}'
+                                                        </button>
+                                                        <button
+                                                            onClick={() => plannerSetLiveMinute(plannerLiveMinute + 1)}
+                                                            className="min-h-[44px] rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700"
+                                                        >
+                                                            +1 min
+                                                        </button>
+                                                    </div>
+                                                    <div className="grid grid-cols-5 gap-2">
+                                                        {MATCHDAY_CLOCK_MARKERS.map((marker) => {
+                                                            const active = plannerLiveMinute === clampMatchMinute(marker.minute) && plannerLiveClock.phase === normalizeLivePhase(marker.phase);
                                                             return (
-                                                                <option key={`planner-sub-player-${playerId}`} value={playerId}>
-                                                                    {player.firstName} {player.lastName}{group ? ` (${getBenchGroupLabel(group)})` : ' (Reserve)'}
-                                                                </option>
+                                                                <button
+                                                                    key={`planner-live-marker-${marker.key}`}
+                                                                    onClick={() => plannerSetLiveMarker(marker)}
+                                                                    className={`min-h-[44px] rounded-lg border px-2 text-[11px] font-bold ${active ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                                                                >
+                                                                    <div>{marker.minute}'</div>
+                                                                    <div className={`text-[10px] ${active ? 'text-white/90' : 'text-slate-500'}`}>{marker.label}</div>
+                                                                </button>
                                                             );
                                                         })}
-                                                    </select>
+                                                    </div>
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-2">
                                                     <button
-                                                        onClick={plannerApplySub}
-                                                        disabled={!plannerLiveActive || !plannerSubSlotId || !plannerSubIncomingId}
-                                                        className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerLiveActive || !plannerSubSlotId || !plannerSubIncomingId ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                                                        onClick={() => {
+                                                            setPlannerBoardMode('sub');
+                                                            setPlannerSwapSlotA('');
+                                                            setPlannerSwapSlotB('');
+                                                        }}
+                                                        disabled={!plannerLiveActive}
+                                                        className={`min-h-[44px] rounded-lg border text-sm font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerBoardMode === 'sub' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}
                                                     >
-                                                        Commit substitution
+                                                        Substitute
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            setPlannerBoardMode('swap');
+                                                            setPlannerSubIncomingId('');
+                                                        }}
+                                                        disabled={!plannerLiveActive}
+                                                        className={`min-h-[44px] rounded-lg border text-sm font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerBoardMode === 'swap' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}
+                                                    >
+                                                        Swap
                                                     </button>
                                                 </div>
 
-                                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
-                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">Swap Positions</div>
-                                                    <select className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={plannerSwapSlotA} onChange={e => {
-                                                        setPlannerBoardMode('swap');
-                                                        setPlannerSwapSlotA(e.target.value);
-                                                    }}>
-                                                        <option value="">Slot A</option>
-                                                        {plannerOnPitchSlots.map((slot) => (
-                                                            <option key={`planner-swap-a-${slot.id}`} value={slot.id}>
-                                                                {slot.label} - {plannerPlayerName(plannerCurrentOnPitch[slot.id])}
-                                                            </option>
+                                                <div className="rounded-xl border border-slate-200 bg-white p-3 text-[11px] text-slate-600">
+                                                    {!plannerLiveActive
+                                                        ? 'Start live tracking when kick-off begins.'
+                                                        : plannerBoardMode === 'swap'
+                                                            ? `Tap 2 pitch slots to swap.${plannerSwapSlotA ? ` Slot A: ${plannerSlotLookup[plannerSwapSlotA]?.label || plannerSwapSlotA.toUpperCase()}` : ''}${plannerSwapSlotB ? ` · Slot B: ${plannerSlotLookup[plannerSwapSlotB]?.label || plannerSwapSlotB.toUpperCase()}` : ''}`
+                                                            : `Tap the player on pitch you want to sub out.${plannerSubSlotId ? ` Selected: ${plannerSlotLookup[plannerSubSlotId]?.label || plannerSubSlotId.toUpperCase()} (${plannerPlayerName(plannerCurrentOnPitch[plannerSubSlotId])})` : ''}`}
+                                                </div>
+
+                                                <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-100/60 to-emerald-50/40 p-3">
+                                                    <div className="space-y-3">
+                                                        {plannerPitchLines.map((row) => (
+                                                            <div key={`planner-live-pitch-row-${row.key}`} className="space-y-2">
+                                                                <div className="flex items-center justify-between">
+                                                                    <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-900/80">{row.label}</div>
+                                                                    <div className="text-[10px] text-emerald-900/60">{row.slots.length} slot{row.slots.length === 1 ? '' : 's'}</div>
+                                                                </div>
+                                                                <div
+                                                                    className="grid gap-2"
+                                                                    style={{ gridTemplateColumns: `repeat(${row.slots.length}, minmax(0, 1fr))` }}
+                                                                >
+                                                                    {row.slots.map((slot) => {
+                                                                        const onPitchPlayerId = normalizePlayerIdValue(plannerCurrentOnPitch[slot.id]);
+                                                                        const starterPlayerId = normalizePlayerIdValue(matchdayPlanner?.starters?.[slot.id]);
+                                                                        const shownPlayerId = plannerLiveActive ? onPitchPlayerId : starterPlayerId;
+                                                                        const hasPlayer = !!shownPlayerId;
+                                                                        const isSelectedSub = plannerLiveActive && plannerBoardMode === 'sub' && plannerSubSlotId === slot.id;
+                                                                        const isSelectedSwapA = plannerLiveActive && plannerBoardMode === 'swap' && plannerSwapSlotA === slot.id;
+                                                                        const isSelectedSwapB = plannerLiveActive && plannerBoardMode === 'swap' && plannerSwapSlotB === slot.id;
+                                                                        const toneClass = hasPlayer
+                                                                            ? 'border-emerald-300 bg-white text-slate-900'
+                                                                            : 'border-slate-200 bg-white/70 text-slate-500';
+                                                                        const selectedClass = isSelectedSub
+                                                                            ? 'ring-2 ring-amber-400 border-amber-300'
+                                                                            : isSelectedSwapA
+                                                                                ? 'ring-2 ring-sky-400 border-sky-300'
+                                                                                : isSelectedSwapB
+                                                                                    ? 'ring-2 ring-violet-400 border-violet-300'
+                                                                                    : '';
+                                                                        return (
+                                                                            <button
+                                                                                key={`planner-live-slot-${slot.id}`}
+                                                                                onClick={() => plannerHandlePitchSlotTap(slot.id)}
+                                                                                className={`min-h-[84px] rounded-xl border px-2 py-2 text-left transition ${toneClass} ${selectedClass}`}
+                                                                            >
+                                                                                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{slot.label}</div>
+                                                                                <div className={`mt-1 text-sm font-bold ${hasPlayer ? 'text-slate-900' : 'text-slate-400'}`}>
+                                                                                    {plannerPlayerShortName(shownPlayerId)}
+                                                                                </div>
+                                                                                <div className={`text-[10px] mt-0.5 leading-tight ${hasPlayer ? 'text-slate-600' : 'text-slate-400'}`}>
+                                                                                    {hasPlayer ? plannerPlayerName(shownPlayerId) : 'No player'}
+                                                                                </div>
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
                                                         ))}
-                                                    </select>
-                                                    <select className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={plannerSwapSlotB} onChange={e => {
-                                                        setPlannerBoardMode('swap');
-                                                        setPlannerSwapSlotB(e.target.value);
-                                                    }}>
-                                                        <option value="">Slot B</option>
-                                                        {plannerOnPitchSlots.map((slot) => (
-                                                            <option key={`planner-swap-b-${slot.id}`} value={slot.id}>
-                                                                {slot.label} - {plannerPlayerName(plannerCurrentOnPitch[slot.id])}
-                                                            </option>
-                                                        ))}
-                                                    </select>
+                                                    </div>
+                                                </div>
+
+                                                {plannerBoardMode === 'swap' && (
                                                     <button
                                                         onClick={plannerApplySwap}
                                                         disabled={!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB}
-                                                        className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-white border border-slate-200 text-slate-700'}`}
+                                                        className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
                                                     >
                                                         Commit swap
                                                     </button>
-                                                </div>
-                                            </div>
-                                        )}
+                                                )}
 
-                                        {matchdayLiveView === 'map' && (
-                                            <div className="space-y-2">
-                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Current On-pitch Map</div>
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                                    {plannerSlots.map((slot) => {
-                                                        const onPitchPlayerId = normalizePlayerIdValue(plannerCurrentOnPitch[slot.id]);
-                                                        const toneClass = onPitchPlayerId ? 'border-emerald-200 bg-emerald-50/60' : 'border-slate-200 bg-slate-50';
+                                                <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">Available Subs</div>
+                                                    <div className="text-[11px] text-slate-500">
+                                                        {plannerLiveActive
+                                                            ? (plannerSubSlotId ? `Tap a sub to replace ${plannerPlayerName(plannerCurrentOnPitch[plannerSubSlotId])}.` : 'Tap a player on the pitch first, then tap a sub below.')
+                                                            : 'Start live tracking to activate substitutions.'}
+                                                    </div>
+                                                    {['defence', 'midfield', 'forward', 'reserve'].map((group) => {
+                                                        const ids = plannerLiveIncomingGroups[group] || [];
+                                                        const groupLabel = group === 'reserve' ? 'Reserve' : getBenchGroupLabel(group);
                                                         return (
-                                                            <div key={`planner-live-slot-${slot.id}`} className={`rounded-xl border p-2 ${toneClass}`}>
-                                                                <div className="text-[11px] font-bold text-slate-500 uppercase">{slot.label}</div>
-                                                                <div className={`text-sm font-semibold ${onPitchPlayerId ? 'text-slate-900' : 'text-slate-400'}`}>
-                                                                    {onPitchPlayerId ? plannerPlayerName(onPitchPlayerId) : 'Empty'}
-                                                                </div>
+                                                            <div key={`planner-live-subs-group-${group}`} className="space-y-1">
+                                                                <div className="text-[10px] font-bold uppercase text-slate-500">{groupLabel}</div>
+                                                                {ids.length === 0 ? (
+                                                                    <div className="text-[11px] text-slate-400">None available.</div>
+                                                                ) : (
+                                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                                        {ids.map((playerId) => {
+                                                                            const player = plannerPlayerLookup[playerId];
+                                                                            if (!player) return null;
+                                                                            const isSelectedIncoming = plannerSubIncomingId === playerId;
+                                                                            return (
+                                                                                <button
+                                                                                    key={`planner-live-sub-player-${group}-${playerId}`}
+                                                                                    onClick={() => plannerSubIncomingFromBench(playerId)}
+                                                                                    disabled={!plannerLiveActive}
+                                                                                    className={`min-h-[48px] rounded-lg border px-3 py-2 text-left ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : isSelectedIncoming ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-white border-slate-200 text-slate-700'}`}
+                                                                                >
+                                                                                    <div className="text-sm font-bold">{player.firstName} {player.lastName}</div>
+                                                                                    <div className="text-[11px] text-slate-500">{player.position || 'Player'}</div>
+                                                                                </button>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         );
                                                     })}
+                                                </div>
+
+                                                <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">Pitch Time</div>
+                                                    {plannerLiveTimeRows.length === 0 ? (
+                                                        <div className="text-sm text-slate-400">No mapped players yet.</div>
+                                                    ) : (
+                                                        <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+                                                            {plannerLiveTimeRows.map((row) => (
+                                                                <div key={`planner-live-time-${row.playerId}`} className="rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5 flex items-center justify-between gap-2">
+                                                                    <div className="min-w-0">
+                                                                        <div className="text-sm font-semibold text-slate-900 truncate">{row.playerName}</div>
+                                                                        <div className="text-[11px] text-slate-500">{row.isOnPitch ? 'On pitch now' : 'Off pitch'}</div>
+                                                                    </div>
+                                                                    <div className="text-right">
+                                                                        <div className="text-sm font-bold text-emerald-700">On {row.onMinutes}m</div>
+                                                                        <div className="text-[11px] text-slate-500">Off {row.offMinutes}m</div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         )}
@@ -5564,13 +6160,23 @@
                                                 {plannerRecentEvents.length === 0 ? (
                                                     <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No live events yet.</div>
                                                 ) : (
-                                                    <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
-                                                        {plannerRecentEvents.map((event) => (
-                                                            <div key={`planner-event-${event.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-                                                                <div className="text-[11px] text-slate-500">{new Date(event.at || Date.now()).toLocaleTimeString()}</div>
-                                                                <div className="text-sm font-medium text-slate-800">{event.note || 'Event logged'}</div>
-                                                            </div>
-                                                        ))}
+                                                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                                                        {plannerRecentEvents.map((event) => {
+                                                            const eventMinute = clampMatchMinute(event?.minute);
+                                                            const eventPhase = MATCHDAY_LIVE_PHASE_LABELS[normalizeLivePhase(event?.phase)] || MATCHDAY_LIVE_PHASE_LABELS.PRE;
+                                                            return (
+                                                                <div key={`planner-event-${event.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1">
+                                                                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                                                                        <div className="text-slate-500">{new Date(event.at || Date.now()).toLocaleTimeString()}</div>
+                                                                        <div className="flex items-center gap-1">
+                                                                            <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 font-semibold">{eventMinute}'</span>
+                                                                            <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 font-semibold">{eventPhase}</span>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="text-sm font-medium text-slate-800">{event.note || 'Event logged'}</div>
+                                                                </div>
+                                                            );
+                                                        })}
                                                     </div>
                                                 )}
                                             </div>
@@ -5852,7 +6458,7 @@
                                                     onClick={() => {
                                                         setMatchdayFlowTab(id);
                                                         if (id === 'lineup') setMatchdayLineupView('positions');
-                                                        if (id === 'live') setMatchdayLiveView('actions');
+                                                        if (id === 'live') setMatchdayLiveView('pitch');
                                                     }}
                                                     className={`min-h-[38px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === id ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}
                                                 >
@@ -14977,6 +15583,7 @@
             const [kitQueue, setKitQueue] = useState([]);
             const [kitNumberLimit, setKitNumberLimit] = useState(loadKitNumberLimit());
             const [kitSizeOptions, setKitSizeOptions] = useState(loadKitSizeOptions());
+            const [playerNameMatchHistory, setPlayerNameMatchHistory] = useState({});
             const [hasLocalVersionMismatch, setHasLocalVersionMismatch] = useState(false);
             const [hasRemoteVersionMismatch, setHasRemoteVersionMismatch] = useState(false);
             const [availableBuildVersion, setAvailableBuildVersion] = useState(APP_VERSION);
@@ -14992,7 +15599,11 @@
                 return window.gafferAuthUser !== undefined;
             });
             const settingsLoadedRef = useRef(false);
+            const playerNameMatchHistoryRef = useRef({});
             const isVersionMismatch = hasLocalVersionMismatch || hasRemoteVersionMismatch;
+            useEffect(() => {
+                playerNameMatchHistoryRef.current = playerNameMatchHistory || {};
+            }, [playerNameMatchHistory]);
             useEffect(() => {
                 if (typeof document === 'undefined') return undefined;
                 const styleId = 'gaffer-mobile-form-font-fix';
@@ -15031,6 +15642,27 @@
                     // Keep last 8 items so the overlay stays compact.
                     return next.slice(Math.max(next.length - 8, 0));
                 });
+            }, []);
+            const rememberPlayerNameMatches = useCallback(async (pairs = []) => {
+                if (!Array.isArray(pairs) || !pairs.length) return;
+                let next = playerNameMatchHistoryRef.current || {};
+                let changed = false;
+                pairs.forEach((pair) => {
+                    const nameKey = normalizePersonNameKey(pair?.name || '');
+                    const playerId = (pair?.playerId ?? '').toString().trim();
+                    if (!nameKey || !playerId) return;
+                    const prevCount = Number(next?.[nameKey]?.[playerId] || 0);
+                    const updated = recordPlayerNameMatch(next, nameKey, playerId);
+                    const nextCount = Number(updated?.[nameKey]?.[playerId] || 0);
+                    if (nextCount !== prevCount) changed = true;
+                    next = updated;
+                });
+                if (!changed) return;
+                playerNameMatchHistoryRef.current = next;
+                setPlayerNameMatchHistory(next);
+                if (!READ_ONLY) {
+                    await saveSettingsPatch({ playerNameMatchHistory: next });
+                }
             }, []);
             const importProgressContext = useMemo(() => ({
                 startImportProgress,
@@ -15117,6 +15749,7 @@
                     setPositionDefinitions(settings.positionDefinitions);
                     setKitNumberLimit(settings.kitNumberLimit);
                     setKitSizeOptions(settings.kitSizeOptions);
+                    setPlayerNameMatchHistory(settings.playerNameMatchHistory || {});
                 };
                 const handleRemoteBuildVersion = async (rawSettings = {}) => {
                     const remoteVersion = extractBuildVersion(rawSettings);
@@ -15441,12 +16074,12 @@
                             )}
                             {activeTab === 'fixtures' && (
                                 <div data-tab-container="fixtures">
-                                    <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={navigate} launchMode="schedule" />
+                                    <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={navigate} launchMode="schedule" playerNameMatchHistory={playerNameMatchHistory} onRememberPlayerNameMatches={rememberPlayerNameMatches} />
                                 </div>
                             )}
                             {activeTab === 'matchday' && (
                                 <div data-tab-container="matchday">
-                                    <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={navigate} launchMode="matchday" />
+                                    <Fixtures categories={categories} opponents={opponents} venues={venues} referees={referees} refDefaults={refDefaults} seasonCategories={seasonCategories} setOpponents={setOpponents} setVenues={setVenues} onNavigate={navigate} launchMode="matchday" playerNameMatchHistory={playerNameMatchHistory} onRememberPlayerNameMatches={rememberPlayerNameMatches} />
                                 </div>
                             )}
                             {activeTab === 'players' && (
