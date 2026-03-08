@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.08-38';
+        const MASTER_BUILD_VERSION = '2026.03.08-44';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -2400,6 +2400,7 @@
             forward: 'Forward'
         };
         const MATCHDAY_TOTAL_MINUTES = 80;
+        const MATCHDAY_CLOCK_MAX_MINUTES = 120;
         const MATCHDAY_LIVE_PHASES = ['PRE', 'LIVE_1H', 'WB_1H', 'HT', 'LIVE_2H', 'WB_2H', 'FT'];
         const MATCHDAY_LIVE_PHASE_LABELS = {
             PRE: 'Pre-match',
@@ -2410,26 +2411,69 @@
             WB_2H: 'Water break (2H)',
             FT: 'Full-time'
         };
-        const MATCHDAY_CLOCK_MARKERS = [
-            { key: 'ko', minute: 0, phase: 'LIVE_1H', label: 'Kick-off' },
-            { key: 'wb1', minute: 20, phase: 'WB_1H', label: 'Water break 1' },
-            { key: 'ht', minute: 40, phase: 'HT', label: 'Half-time' },
-            { key: 'wb2', minute: 60, phase: 'WB_2H', label: 'Water break 2' },
-            { key: 'ft', minute: 80, phase: 'FT', label: 'Full-time' }
+        const MATCHDAY_FLOW_STEPS = [
+            { id: 'roster', label: 'Roster' },
+            { id: 'lineup', label: 'Lineup' },
+            { id: 'live', label: 'Live' },
+            { id: 'squad', label: 'Squad' }
         ];
+        const MATCHDAY_LINEUP_STEPS = [
+            { id: 'positions', label: 'Positions' },
+            { id: 'pitch', label: 'Pitch' },
+            { id: 'subs', label: 'Subs' }
+        ];
+        const MATCHDAY_DECLARED_PLAYER_PREFIX = 'declared:';
+        const MATCHDAY_DECLARED_TYPES = ['temp', 'new'];
         const clampMatchMinute = (value) => {
             const num = Number(value);
             if (!Number.isFinite(num)) return 0;
-            return Math.max(0, Math.min(MATCHDAY_TOTAL_MINUTES, Math.round(num)));
+            return Math.max(0, Math.min(MATCHDAY_CLOCK_MAX_MINUTES, Math.round(num)));
+        };
+        const normalizeFixtureScoreValue = (value) => {
+            if (value === undefined || value === null || value === '') return null;
+            const num = Number(value);
+            if (!Number.isFinite(num)) return null;
+            return Math.max(0, Math.round(num));
+        };
+        const normalizeClockTimestamp = (value) => {
+            const parsed = value ? Date.parse(value) : NaN;
+            if (!Number.isFinite(parsed)) return new Date().toISOString();
+            return new Date(parsed).toISOString();
         };
         const normalizeLivePhase = (value) => {
             const clean = (value || '').toString().trim().toUpperCase();
             return MATCHDAY_LIVE_PHASES.includes(clean) ? clean : 'PRE';
         };
+        const isLiveClockRunning = (phase = '') => ['LIVE_1H', 'LIVE_2H'].includes(normalizeLivePhase(phase));
         const normalizeLiveClock = (value = {}) => ({
             currentMinute: clampMatchMinute(value?.currentMinute),
-            phase: normalizeLivePhase(value?.phase)
+            phase: normalizeLivePhase(value?.phase),
+            updatedAt: normalizeClockTimestamp(value?.updatedAt)
         });
+        const getLiveClockMinute = (clockRaw = {}, nowMs = Date.now()) => {
+            const clock = normalizeLiveClock(clockRaw);
+            if (!isLiveClockRunning(clock.phase)) return clock.currentMinute;
+            const baselineMs = Date.parse(clock.updatedAt);
+            if (!Number.isFinite(baselineMs)) return clock.currentMinute;
+            const elapsedMinutes = Math.floor(Math.max(0, nowMs - baselineMs) / 60000);
+            return clampMatchMinute(clock.currentMinute + elapsedMinutes);
+        };
+        const getLiveClockDisplay = (clockRaw = {}, nowMs = Date.now()) => {
+            const clock = normalizeLiveClock(clockRaw);
+            if (!isLiveClockRunning(clock.phase)) {
+                return `${String(clock.currentMinute).padStart(2, '0')}:00`;
+            }
+            const baselineMs = Date.parse(clock.updatedAt);
+            if (!Number.isFinite(baselineMs)) {
+                return `${String(clock.currentMinute).padStart(2, '0')}:00`;
+            }
+            const elapsedSeconds = Math.floor(Math.max(0, nowMs - baselineMs) / 1000);
+            const maxSeconds = (MATCHDAY_CLOCK_MAX_MINUTES * 60) + 59;
+            const totalSeconds = Math.min(maxSeconds, (clock.currentMinute * 60) + elapsedSeconds);
+            const mins = Math.floor(totalSeconds / 60);
+            const secs = totalSeconds % 60;
+            return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        };
         const createLivePlayerStat = (value = {}) => {
             const totalOn = Math.max(0, Number(value?.totalOn) || 0);
             const currentOnMinute = value?.currentOnMinute === null || value?.currentOnMinute === undefined || value?.currentOnMinute === ''
@@ -2561,6 +2605,34 @@
             if (value === undefined || value === null || value === '') return '';
             return String(value);
         };
+        const normalizePlannerDeclaredType = (value = '') => {
+            const clean = (value || '').toString().trim().toLowerCase();
+            return MATCHDAY_DECLARED_TYPES.includes(clean) ? clean : '';
+        };
+        const buildPlannerDeclaredPlayerId = (rawName = '', declaredType = '') => {
+            const normalizedType = normalizePlannerDeclaredType(declaredType);
+            if (!normalizedType) return '';
+            const key = encodeURIComponent(normalizePersonNameKey(rawName) || 'unnamed');
+            return `${MATCHDAY_DECLARED_PLAYER_PREFIX}${normalizedType}:${key}`;
+        };
+        const parsePlannerDeclaredPlayerId = (value = '') => {
+            const normalized = normalizePlayerIdValue(value);
+            if (!normalized || !normalized.startsWith(MATCHDAY_DECLARED_PLAYER_PREFIX)) return null;
+            const payload = normalized.slice(MATCHDAY_DECLARED_PLAYER_PREFIX.length);
+            const separatorIndex = payload.indexOf(':');
+            if (separatorIndex === -1) return null;
+            const declaredType = normalizePlannerDeclaredType(payload.slice(0, separatorIndex));
+            if (!declaredType) return null;
+            const nameKey = payload.slice(separatorIndex + 1);
+            return { declaredType, nameKey };
+        };
+        const getPlannerEntryResolution = (entry = {}) => {
+            const normalizedPlayerId = normalizePlayerIdValue(entry?.playerId);
+            const declaredFromId = parsePlannerDeclaredPlayerId(normalizedPlayerId);
+            if (declaredFromId) return declaredFromId.declaredType;
+            if (normalizedPlayerId) return 'matched';
+            return normalizePlannerDeclaredType(entry?.declaredAs);
+        };
         const uniquePlayerIds = (list = []) => {
             const seen = new Set();
             return list.map(normalizePlayerIdValue).filter((id) => {
@@ -2586,11 +2658,23 @@
                 if (normalized) starters[slotId] = normalized;
             });
             const matchedEntries = Array.isArray(raw?.matchedEntries)
-                ? raw.matchedEntries.map((entry) => ({
-                    rawName: (entry?.rawName || '').toString().trim(),
-                    playerId: normalizePlayerIdValue(entry?.playerId),
-                    suggestionIds: uniquePlayerIds(Array.isArray(entry?.suggestionIds) ? entry.suggestionIds : [])
-                })).filter(entry => entry.rawName)
+                ? raw.matchedEntries.map((entry) => {
+                    const rawName = (entry?.rawName || '').toString().trim();
+                    const normalizedPlayerId = normalizePlayerIdValue(entry?.playerId);
+                    const declaredTypeFromId = parsePlannerDeclaredPlayerId(normalizedPlayerId)?.declaredType || '';
+                    const declaredAs = declaredTypeFromId
+                        ? declaredTypeFromId
+                        : (normalizedPlayerId ? '' : normalizePlannerDeclaredType(entry?.declaredAs));
+                    const playerId = normalizedPlayerId
+                        ? normalizedPlayerId
+                        : (declaredAs ? buildPlannerDeclaredPlayerId(rawName, declaredAs) : '');
+                    return {
+                        rawName,
+                        playerId,
+                        declaredAs,
+                        suggestionIds: uniquePlayerIds(Array.isArray(entry?.suggestionIds) ? entry.suggestionIds : [])
+                    };
+                }).filter(entry => entry.rawName)
                 : [];
             const bench = normalizeBenchState(raw?.bench || {});
             const liveRaw = raw?.live || {};
@@ -2701,6 +2785,7 @@
                 return {
                     rawName,
                     playerId,
+                    declaredAs: '',
                     suggestionIds
                 };
             });
@@ -2952,7 +3037,6 @@
                 setShowAvailablePlayers(false);
                 setIsPaymentsOpen(false);
                 setIsSquadPanelOpen(launchMode !== 'matchday');
-                setIsMatchdayDetailsOpen(launchMode !== 'matchday');
                 setFixtureDetailTab('overview');
                 setIsFixtureAdvancedOpen(false);
                 setPaymentAmountEditor({ open: false, playerId: null, playerName: '', amount: '' });
@@ -2960,6 +3044,8 @@
                 setMatchdayLineupView('positions');
                 setMatchdayLiveView('pitch');
                 setMatchdayShowAllRosterRows(false);
+                setPlannerLiveActionModal({ open: false, slotId: '', action: '' });
+                setPlannerSwapFlash({ slotA: '', slotB: '', token: 0 });
             }, [selectedFixture?.id, launchMode]);
             useEffect(() => {
                 if (fixtureDetailTab === 'payments') {
@@ -2981,6 +3067,8 @@
                     setPlannerBoardMode('assign');
                     setPlannerBoardSelectedSlotId('');
                     setPlannerBoardAssignPlayerId('');
+                    setPlannerLiveActionModal({ open: false, slotId: '', action: '' });
+                    setPlannerSwapFlash({ slotA: '', slotB: '', token: 0 });
                     return;
                 }
                 const normalized = sanitizePlannerAssignments(selectedFixture.matchdayPlan || {});
@@ -2993,6 +3081,8 @@
                 setPlannerBoardMode('assign');
                 setPlannerBoardSelectedSlotId('');
                 setPlannerBoardAssignPlayerId('');
+                setPlannerLiveActionModal({ open: false, slotId: '', action: '' });
+                setPlannerSwapFlash({ slotA: '', slotB: '', token: 0 });
             }, [selectedFixture?.id]);
             useEffect(() => {
                 if (!selectedFixture) return;
@@ -3027,11 +3117,13 @@
             const [plannerBoardMode, setPlannerBoardMode] = useState('assign');
             const [plannerBoardSelectedSlotId, setPlannerBoardSelectedSlotId] = useState('');
             const [plannerBoardAssignPlayerId, setPlannerBoardAssignPlayerId] = useState('');
+            const [plannerLiveActionModal, setPlannerLiveActionModal] = useState({ open: false, slotId: '', action: '' });
+            const [plannerSwapFlash, setPlannerSwapFlash] = useState({ slotA: '', slotB: '', token: 0 });
+            const [plannerLiveNowMs, setPlannerLiveNowMs] = useState(() => Date.now());
             const [matchdayFlowTab, setMatchdayFlowTab] = useState('roster');
             const [matchdayLineupView, setMatchdayLineupView] = useState('positions');
             const [matchdayLiveView, setMatchdayLiveView] = useState('pitch');
             const [matchdayShowAllRosterRows, setMatchdayShowAllRosterRows] = useState(false);
-            const [isMatchdayDetailsOpen, setIsMatchdayDetailsOpen] = useState(launchMode !== 'matchday');
             const magicFixtureOptions = useMemo(() => {
                 const allowed = showScheduledMagic ? ['PLAYED', 'SCHEDULED'] : ['PLAYED'];
                 return fixtures.filter(f => allowed.includes(f.status));
@@ -3067,13 +3159,36 @@
                     .filter(Boolean);
                 return uniquePlayerIds(ids);
             }, [matchdayPlanner.matchedEntries]);
+            const plannerDeclaredPlayerLookup = useMemo(() => {
+                const lookup = {};
+                (matchdayPlanner?.matchedEntries || []).forEach((entry) => {
+                    const playerId = normalizePlayerIdValue(entry?.playerId);
+                    const declaredInfo = parsePlannerDeclaredPlayerId(playerId);
+                    if (!declaredInfo) return;
+                    const fullName = (entry?.rawName || '').toString().trim() || 'Unnamed';
+                    const tokens = fullName.split(/\s+/).filter(Boolean);
+                    const firstName = tokens.shift() || fullName;
+                    const lastName = tokens.join(' ');
+                    lookup[playerId] = {
+                        id: playerId,
+                        firstName,
+                        lastName,
+                        position: declaredInfo.declaredType === 'new' ? 'New player' : 'Temp player',
+                        isDeclared: true
+                    };
+                });
+                return lookup;
+            }, [matchdayPlanner?.matchedEntries]);
             const plannerPlayerLookup = useMemo(() => {
                 const lookup = {};
                 players.forEach(player => {
                     lookup[String(player.id)] = player;
                 });
+                Object.entries(plannerDeclaredPlayerLookup).forEach(([playerId, player]) => {
+                    lookup[playerId] = player;
+                });
                 return lookup;
-            }, [players]);
+            }, [players, plannerDeclaredPlayerLookup]);
             const plannerAvailablePool = useMemo(() => {
                 return plannerRosterIds.map((id) => plannerPlayerLookup[id]).filter(Boolean);
             }, [plannerRosterIds, plannerPlayerLookup]);
@@ -3130,17 +3245,69 @@
                 });
                 return grouped;
             }, [plannerSubIncomingIds, plannerBenchLookup]);
+            const plannerLiveActionSlotId = (plannerLiveActionModal?.slotId || '').trim();
+            const plannerLiveActionSlot = plannerSlotLookup[plannerLiveActionSlotId] || null;
+            const plannerLiveActionOutgoingId = normalizePlayerIdValue(plannerCurrentOnPitch?.[plannerLiveActionSlotId]);
+            const plannerLiveActionPreferredGroup = getBenchGroupFromLine(plannerLiveActionSlot?.line);
+            const plannerLiveActionSubOptions = useMemo(() => {
+                if (!plannerLiveActionSlotId) return [];
+                const preferred = [];
+                const otherBench = [];
+                const reserve = [];
+                plannerSubIncomingIds.forEach((playerId) => {
+                    const benchGroup = plannerBenchLookup[playerId];
+                    if (benchGroup && benchGroup === plannerLiveActionPreferredGroup) {
+                        preferred.push(playerId);
+                        return;
+                    }
+                    if (benchGroup) {
+                        otherBench.push(playerId);
+                        return;
+                    }
+                    reserve.push(playerId);
+                });
+                return [...preferred, ...otherBench, ...reserve];
+            }, [plannerLiveActionSlotId, plannerSubIncomingIds, plannerBenchLookup, plannerLiveActionPreferredGroup]);
+            const isPlannerSwapTargetMode = plannerLiveActive && plannerBoardMode === 'swap' && !!plannerSwapSlotA;
             const plannerBenchAssignableIds = useMemo(() => {
                 return plannerRosterIds.filter(id => !plannerStarterIds.includes(id));
             }, [plannerRosterIds, plannerStarterIds]);
-            const plannerMatchedCount = useMemo(() => {
-                return (matchdayPlanner?.matchedEntries || []).filter(entry => normalizePlayerIdValue(entry.playerId)).length;
+            const plannerResolutionSummary = useMemo(() => {
+                const entries = matchdayPlanner?.matchedEntries || [];
+                let matched = 0;
+                let temp = 0;
+                let addedNew = 0;
+                let unresolved = 0;
+                entries.forEach((entry) => {
+                    const resolution = getPlannerEntryResolution(entry);
+                    if (resolution === 'matched') matched += 1;
+                    else if (resolution === 'temp') temp += 1;
+                    else if (resolution === 'new') addedNew += 1;
+                    else unresolved += 1;
+                });
+                return {
+                    total: entries.length,
+                    matched,
+                    temp,
+                    newCount: addedNew,
+                    unresolved,
+                    resolved: entries.length - unresolved
+                };
             }, [matchdayPlanner?.matchedEntries]);
+            const plannerCanAdvanceFromRoster = plannerResolutionSummary.total > 0 && plannerResolutionSummary.unresolved === 0;
+            const matchdayStepIndex = Math.max(0, MATCHDAY_FLOW_STEPS.findIndex((step) => step.id === matchdayFlowTab));
+            const matchdayCurrentStepLabel = MATCHDAY_FLOW_STEPS[matchdayStepIndex]?.label || 'Roster';
+            const lineupStepIndex = Math.max(0, MATCHDAY_LINEUP_STEPS.findIndex((step) => step.id === matchdayLineupView));
+            const lineupCurrentStepLabel = MATCHDAY_LINEUP_STEPS[lineupStepIndex]?.label || 'Positions';
             const plannerLiveClock = useMemo(() => {
                 return normalizeLiveClock(matchdayPlanner?.live?.clock || {});
             }, [matchdayPlanner?.live?.clock]);
-            const plannerLiveMinute = plannerLiveClock.currentMinute;
+            const plannerLiveMinute = getLiveClockMinute(plannerLiveClock, plannerLiveNowMs);
             const plannerLivePhaseLabel = MATCHDAY_LIVE_PHASE_LABELS[plannerLiveClock.phase] || MATCHDAY_LIVE_PHASE_LABELS.PRE;
+            const plannerClockIsPaused = !isLiveClockRunning(plannerLiveClock.phase);
+            const matchdayHomeScore = normalizeFixtureScoreValue(selectedFixture?.homeScore);
+            const matchdayAwayScore = normalizeFixtureScoreValue(selectedFixture?.awayScore);
+            const matchdayClockDisplay = getLiveClockDisplay(plannerLiveClock, plannerLiveNowMs);
             const plannerLivePlayerStats = useMemo(() => {
                 return normalizeLivePlayerStats(matchdayPlanner?.live?.playerStats || {});
             }, [matchdayPlanner?.live?.playerStats]);
@@ -3157,7 +3324,7 @@
                         } else if (!stat && isOnPitch && plannerLiveMinute > 0) {
                             onMinutes += plannerLiveMinute;
                         }
-                        onMinutes = Math.min(MATCHDAY_TOTAL_MINUTES, Math.round(onMinutes));
+                        onMinutes = Math.min(MATCHDAY_CLOCK_MAX_MINUTES, Math.round(onMinutes));
                         const offMinutes = Math.max(0, plannerLiveMinute - onMinutes);
                         return {
                             playerId,
@@ -3603,9 +3770,8 @@
                 setPlannerBoardSelectedSlotId('');
                 setPlannerBoardAssignPlayerId('');
                 setMatchdayShowAllRosterRows(false);
-                setMatchdayFlowTab('lineup');
-                setMatchdayLineupView('positions');
-                pushFixtureToast(`Planner loaded ${entries.length} players (${matchedCount} matched).`, 'success');
+                setMatchdayFlowTab('roster');
+                pushFixtureToast(`Planner loaded ${entries.length} players (${matchedCount} matched). Resolve any unmatched as Temp/New before Next.`, 'success');
             };
 
             const plannerLoadSelectedSquad = async () => {
@@ -3617,7 +3783,7 @@
                 const entries = selectedIds.map((id) => {
                     const player = plannerPlayerLookup[id];
                     const rawName = player ? `${player.firstName || ''} ${player.lastName || ''}`.trim() : `Player ${id}`;
-                    return { rawName, playerId: id, suggestionIds: [id] };
+                    return { rawName, playerId: id, declaredAs: '', suggestionIds: [id] };
                 });
                 const pasteText = entries.map(entry => entry.rawName).join('\n');
                 await updatePlanner(prev => ({
@@ -3631,25 +3797,58 @@
             };
 
             const plannerSetEntryPlayer = async (entryIndex, nextPlayerId) => {
-                const normalized = normalizePlayerIdValue(nextPlayerId);
+                const selection = (nextPlayerId || '').toString().trim();
                 const entry = (matchdayPlanner?.matchedEntries || [])[entryIndex];
+                const declaredAs = selection.startsWith('__declare:')
+                    ? normalizePlannerDeclaredType(selection.replace('__declare:', ''))
+                    : '';
+                const normalized = declaredAs
+                    ? buildPlannerDeclaredPlayerId(entry?.rawName, declaredAs)
+                    : normalizePlayerIdValue(selection);
                 await updatePlanner(prev => {
                     const matchedEntries = (prev.matchedEntries || []).map((entry, idx) => {
                         if (idx !== entryIndex) return entry;
                         return {
                             ...entry,
                             playerId: normalized,
+                            declaredAs,
                             suggestionIds: uniquePlayerIds([
                                 ...(entry.suggestionIds || []),
-                                normalized
+                                !declaredAs && normalized ? normalized : ''
                             ].filter(Boolean))
                         };
                     });
                     return { ...prev, matchedEntries };
                 }, { silent: true });
-                if (normalized && entry?.rawName) {
+                if (normalized && !declaredAs && entry?.rawName) {
                     void rememberPlayerNameMatches([{ name: entry.rawName, playerId: normalized }]);
                 }
+            };
+            const plannerGoToLineupStep = () => {
+                if (!plannerCanAdvanceFromRoster) {
+                    if ((plannerResolutionSummary.total || 0) === 0) {
+                        pushFixtureToast('Paste and map your player list first.', 'warning');
+                        return;
+                    }
+                    const unresolved = plannerResolutionSummary.unresolved || 0;
+                    pushFixtureToast(
+                        `Resolve all pasted players before continuing (${unresolved} unresolved). Match each name or declare Temp/New.`,
+                        'warning'
+                    );
+                    return;
+                }
+                setMatchdayFlowTab('lineup');
+                setMatchdayLineupView('positions');
+            };
+            const plannerGoToNextLineupView = () => {
+                const next = MATCHDAY_LINEUP_STEPS[lineupStepIndex + 1];
+                if (!next) return;
+                setMatchdayLineupView(next.id);
+            };
+            const plannerGoToPreviousLineupView = () => {
+                const prev = MATCHDAY_LINEUP_STEPS[lineupStepIndex - 1];
+                if (!prev) return;
+                setMatchdayLineupView(prev.id);
             };
 
             const plannerSetFormation = async (formation) => {
@@ -3740,6 +3939,7 @@
                 const shouldLog = !!options.note;
                 const hasChange = nextMinute !== currentClock.currentMinute || nextPhase !== currentClock.phase || shouldLog;
                 if (!hasChange) return;
+                const nowIso = new Date().toISOString();
                 let events = Array.isArray(liveCurrent.events) ? [...liveCurrent.events] : [];
                 if (shouldLog) {
                     events = [...events, createPlannerLiveEvent({
@@ -3755,19 +3955,67 @@
                         ...liveCurrent,
                         clock: {
                             currentMinute: nextMinute,
-                            phase: nextPhase
+                            phase: nextPhase,
+                            updatedAt: nowIso
                         },
                         events
                     }
                 }, { silent: true });
             };
 
-            const plannerSetLiveMarker = async (marker = {}) => {
-                await plannerSetLiveMinute(marker.minute, {
-                    phase: marker.phase,
-                    note: marker.label ? `${marker.label} (${clampMatchMinute(marker.minute)}')` : '',
-                    eventType: 'clock-marker'
-                });
+            const plannerHandleClockAction = async (actionKey = '') => {
+                const current = plannerRef.current || matchdayPlanner;
+                const clock = normalizeLiveClock(current?.live?.clock || {});
+                const minute = getLiveClockMinute(clock, Date.now());
+                if (actionKey === 'ko') {
+                    await plannerSetLiveMinute(0, {
+                        phase: 'LIVE_1H',
+                        note: 'Kick-off (0\')',
+                        eventType: 'clock-marker'
+                    });
+                    return;
+                }
+                if (actionKey === 'wb1') {
+                    const resume = clock.phase === 'WB_1H';
+                    await plannerSetLiveMinute(minute, {
+                        phase: resume ? 'LIVE_1H' : 'WB_1H',
+                        note: resume ? `Resume 1st half (${minute}')` : `Water break 1 (${minute}')`,
+                        eventType: 'clock-marker'
+                    });
+                    return;
+                }
+                if (actionKey === 'ht') {
+                    await plannerSetLiveMinute(minute, {
+                        phase: 'HT',
+                        note: `Half-time (${minute}')`,
+                        eventType: 'clock-marker'
+                    });
+                    return;
+                }
+                if (actionKey === 'start2h') {
+                    await plannerSetLiveMinute(40, {
+                        phase: 'LIVE_2H',
+                        note: '2nd half start (40\')',
+                        eventType: 'clock-marker'
+                    });
+                    return;
+                }
+                if (actionKey === 'wb2') {
+                    const resume = clock.phase === 'WB_2H';
+                    await plannerSetLiveMinute(minute, {
+                        phase: resume ? 'LIVE_2H' : 'WB_2H',
+                        note: resume ? `Resume 2nd half (${minute}')` : `Water break 2 (${minute}')`,
+                        eventType: 'clock-marker'
+                    });
+                    return;
+                }
+                if (actionKey === 'ft') {
+                    await plannerSetLiveMinute(minute, {
+                        phase: 'FT',
+                        note: `Full-time (${minute}')`,
+                        eventType: 'clock-marker'
+                    });
+                }
             };
 
             const plannerStartLive = async () => {
@@ -3782,8 +4030,17 @@
                     return;
                 }
                 const clock = normalizeLiveClock(current?.live?.clock || {});
-                const minute = clampMatchMinute(clock.currentMinute || 0);
-                const phase = clock.phase === 'PRE' ? 'LIVE_1H' : clock.phase;
+                const minute = getLiveClockMinute(clock, Date.now());
+                const phase = clock.phase === 'PRE'
+                    ? 'LIVE_1H'
+                    : clock.phase === 'HT'
+                        ? 'LIVE_2H'
+                        : clock.phase === 'WB_1H'
+                            ? 'LIVE_1H'
+                            : clock.phase === 'WB_2H'
+                                ? 'LIVE_2H'
+                                : clock.phase;
+                const nowIso = new Date().toISOString();
                 const onPitchIds = uniquePlayerIds(Object.values(onPitch || {}));
                 let playerStats = normalizeLivePlayerStats(current?.live?.playerStats || {});
                 const previousOnPitchIds = uniquePlayerIds(Object.values(current?.live?.onPitch || {}));
@@ -3810,7 +4067,8 @@
                         events,
                         clock: {
                             currentMinute: minute,
-                            phase
+                            phase,
+                            updatedAt: nowIso
                         },
                         playerStats
                     }
@@ -3818,6 +4076,7 @@
                 setPlannerBoardMode('sub');
                 setPlannerBoardSelectedSlotId('');
                 setPlannerBoardAssignPlayerId('');
+                closePlannerLiveActionModal();
                 pushFixtureToast('Live tracking started.', 'success');
             };
 
@@ -3825,8 +4084,9 @@
                 const current = plannerRef.current || matchdayPlanner;
                 if (!current?.live?.active) return;
                 const clock = normalizeLiveClock(current?.live?.clock || {});
-                const minute = clampMatchMinute(clock.currentMinute);
+                const minute = getLiveClockMinute(clock, Date.now());
                 const phase = clock.phase === 'PRE' ? 'FT' : clock.phase;
+                const nowIso = new Date().toISOString();
                 const onPitch = current?.live?.onPitch || {};
                 const playerStats = liveStatsFinalizeOnPitch(current?.live?.playerStats || {}, onPitch, minute);
                 const events = [...(current?.live?.events || []), createPlannerLiveEvent({
@@ -3843,7 +4103,8 @@
                         events,
                         clock: {
                             currentMinute: minute,
-                            phase
+                            phase,
+                            updatedAt: nowIso
                         },
                         playerStats
                     }
@@ -3855,6 +4116,7 @@
                 setPlannerBoardMode('assign');
                 setPlannerBoardSelectedSlotId('');
                 setPlannerBoardAssignPlayerId('');
+                closePlannerLiveActionModal();
                 pushFixtureToast('Live tracking stopped.', 'info');
             };
 
@@ -3866,7 +4128,7 @@
                     if (playerId) onPitch[slot.id] = playerId;
                 });
                 const clock = normalizeLiveClock(current?.live?.clock || {});
-                const minute = clampMatchMinute(clock.currentMinute);
+                const minute = getLiveClockMinute(clock, Date.now());
                 const onPitchIds = uniquePlayerIds(Object.values(onPitch || {}));
                 const previousOnPitchIds = uniquePlayerIds(Object.values(current?.live?.onPitch || {}));
                 let playerStats = normalizeLivePlayerStats(current?.live?.playerStats || {});
@@ -3902,6 +4164,7 @@
                 setPlannerSwapSlotA('');
                 setPlannerSwapSlotB('');
                 setPlannerBoardSelectedSlotId('');
+                closePlannerLiveActionModal();
                 pushFixtureToast('On-pitch lineup reset to starters.', 'success');
             };
 
@@ -3918,7 +4181,7 @@
                     return false;
                 }
                 const clock = normalizeLiveClock(current?.live?.clock || {});
-                const minute = clampMatchMinute(clock.currentMinute);
+                const minute = getLiveClockMinute(clock, Date.now());
                 const onPitch = { ...(current.live?.onPitch || {}) };
                 const outgoingId = normalizePlayerIdValue(onPitch[slotId]);
                 if (!outgoingId) {
@@ -3985,7 +4248,7 @@
                     return false;
                 }
                 const clock = normalizeLiveClock(current?.live?.clock || {});
-                const minute = clampMatchMinute(clock.currentMinute);
+                const minute = getLiveClockMinute(clock, Date.now());
                 const onPitch = { ...(current.live?.onPitch || {}) };
                 const playerA = normalizePlayerIdValue(onPitch[slotA]);
                 const playerB = normalizePlayerIdValue(onPitch[slotB]);
@@ -4030,13 +4293,13 @@
                     setPlannerSwapSlotA('');
                     setPlannerSwapSlotB('');
                 }
+                setPlannerSwapFlash({ slotA, slotB, token: Date.now() });
+                if (options.returnToSubMode) {
+                    setPlannerBoardMode('sub');
+                }
                 setPlannerBoardSelectedSlotId('');
                 pushFixtureToast('On-pitch positions updated.', 'success');
                 return true;
-            };
-
-            const plannerApplySwap = async () => {
-                await plannerApplySwapBetweenSlots(plannerSwapSlotA, plannerSwapSlotB);
             };
 
             const plannerSubIncomingFromBench = async (incomingIdRaw) => {
@@ -4051,6 +4314,51 @@
                 await plannerApplySubAtSlot(slotId, incomingId);
             };
 
+            const closePlannerLiveActionModal = () => {
+                setPlannerLiveActionModal({ open: false, slotId: '', action: '' });
+            };
+
+            const openPlannerLiveActionModalForSlot = (slotIdRaw) => {
+                const slotId = (slotIdRaw || '').trim();
+                if (!slotId) return;
+                const onPitchPlayerId = normalizePlayerIdValue(plannerCurrentOnPitch?.[slotId]);
+                if (!onPitchPlayerId) {
+                    pushFixtureToast('Tap a player card on the pitch.', 'warning');
+                    return;
+                }
+                setPlannerSubSlotId(slotId);
+                setPlannerBoardSelectedSlotId(slotId);
+                setPlannerBoardMode('sub');
+                setPlannerSwapSlotA('');
+                setPlannerSwapSlotB('');
+                setPlannerLiveActionModal({
+                    open: true,
+                    slotId,
+                    action: ''
+                });
+            };
+
+            const plannerChooseSwapFromModal = () => {
+                const slotId = (plannerLiveActionModal?.slotId || '').trim();
+                if (!slotId) return;
+                setPlannerBoardMode('swap');
+                setPlannerSwapSlotA(slotId);
+                setPlannerSwapSlotB('');
+                closePlannerLiveActionModal();
+                pushFixtureToast(`Tap another on-pitch player to swap with ${plannerSlotLookup[slotId]?.label || slotId.toUpperCase()}.`, 'info');
+            };
+
+            const plannerChooseSubFromModal = async (incomingIdRaw) => {
+                const slotId = (plannerLiveActionModal?.slotId || '').trim();
+                const incomingId = normalizePlayerIdValue(incomingIdRaw);
+                if (!slotId || !incomingId) return;
+                setPlannerSubIncomingId(incomingId);
+                const ok = await plannerApplySubAtSlot(slotId, incomingId);
+                if (ok) {
+                    closePlannerLiveActionModal();
+                }
+            };
+
             const plannerHandlePitchSlotTap = (slotId) => {
                 const normalizedSlotId = (slotId || '').trim();
                 if (!normalizedSlotId) return;
@@ -4062,21 +4370,24 @@
                     setPlannerSwapSlotB('');
                     return;
                 }
-                if (plannerBoardMode === 'sub') {
-                    setPlannerBoardSelectedSlotId(normalizedSlotId);
-                    setPlannerSubSlotId(normalizedSlotId);
+                const onPitchPlayerId = normalizePlayerIdValue(plannerCurrentOnPitch?.[normalizedSlotId]);
+                if (!onPitchPlayerId) {
+                    pushFixtureToast('Select a player already on the pitch.', 'warning');
                     return;
                 }
-                if (!plannerSwapSlotA || plannerSwapSlotA === normalizedSlotId) {
-                    setPlannerSwapSlotA(normalizedSlotId);
-                    setPlannerSwapSlotB('');
+                if (plannerBoardMode === 'swap' && plannerSwapSlotA) {
+                    if (plannerSwapSlotA === normalizedSlotId) {
+                        setPlannerSwapSlotA('');
+                        setPlannerSwapSlotB('');
+                        setPlannerBoardMode('sub');
+                        pushFixtureToast('Swap cancelled.', 'info');
+                        return;
+                    }
+                    setPlannerSwapSlotB(normalizedSlotId);
+                    void plannerApplySwapBetweenSlots(plannerSwapSlotA, normalizedSlotId, { returnToSubMode: true });
                     return;
                 }
-                if (plannerSwapSlotB === normalizedSlotId) {
-                    setPlannerSwapSlotB('');
-                    return;
-                }
-                setPlannerSwapSlotB(normalizedSlotId);
+                openPlannerLiveActionModalForSlot(normalizedSlotId);
             };
 
             const plannerAssignStarterFromBoard = async () => {
@@ -4562,6 +4873,23 @@
                     setPlannerBoardAssignPlayerId(selectedStarterId);
                 }
             }, [plannerBoardSelectedSlotId, plannerLiveActive, matchdayPlanner?.starters, plannerBoardAssignPlayerId]);
+            useEffect(() => {
+                if (!plannerSwapFlash?.token) return undefined;
+                const timer = window.setTimeout(() => {
+                    setPlannerSwapFlash({ slotA: '', slotB: '', token: 0 });
+                }, 850);
+                return () => window.clearTimeout(timer);
+            }, [plannerSwapFlash?.token]);
+            useEffect(() => {
+                setPlannerLiveNowMs(Date.now());
+            }, [plannerLiveClock.currentMinute, plannerLiveClock.phase, plannerLiveClock.updatedAt, plannerLiveActive]);
+            useEffect(() => {
+                if (!plannerLiveActive || !isLiveClockRunning(plannerLiveClock.phase)) return undefined;
+                const tick = () => setPlannerLiveNowMs(Date.now());
+                tick();
+                const timer = window.setInterval(tick, 1000);
+                return () => window.clearInterval(timer);
+            }, [plannerLiveActive, plannerLiveClock.phase, plannerLiveClock.updatedAt]);
             const paymentsSettled = !!selectedFixture?.paymentsSettled;
             const shouldShowAvailablePlayers = showAvailablePlayers || !selectedPlayersList.length;
             const fixtureSaveLabel = fixtureSaveStatus === 'saving'
@@ -5458,10 +5786,27 @@
                                                 )}
                                             </div>
                                         </div>
-                                        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:justify-end">
-                                            <button onClick={() => setSelectedFixture(null)} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
-                                            <button onClick={() => deleteFixture(selectedFixture)} className="min-h-[46px] px-4 py-2 rounded-lg border border-rose-200 bg-rose-50 text-sm font-bold text-rose-700">Delete</button>
-                                        </div>
+                                        {isMatchdayWorkspace ? (
+                                            <div className="flex items-center gap-2 sm:justify-end">
+                                                <button
+                                                    onClick={() => setSelectedFixture(null)}
+                                                    className="min-h-[34px] px-3 rounded-md border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
+                                                >
+                                                    Back
+                                                </button>
+                                                <button
+                                                    onClick={() => deleteFixture(selectedFixture)}
+                                                    className="min-h-[34px] px-3 rounded-md border border-rose-200 bg-rose-50 text-[11px] font-bold text-rose-700"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:justify-end">
+                                                <button onClick={() => setSelectedFixture(null)} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
+                                                <button onClick={() => deleteFixture(selectedFixture)} className="min-h-[46px] px-4 py-2 rounded-lg border border-rose-200 bg-rose-50 text-sm font-bold text-rose-700">Delete</button>
+                                            </div>
+                                        )}
                                     </div>
                                     {!isMatchdayWorkspace && (
                                         <div className="grid grid-cols-4 gap-2">
@@ -5477,23 +5822,7 @@
                                     )}
                                 </div>
 
-                                {isMatchdayWorkspace && (
-                                    <div className="bg-white p-3 rounded-2xl border border-slate-100">
-                                        <button
-                                            type="button"
-                                            onClick={() => setIsMatchdayDetailsOpen(v => !v)}
-                                            className="w-full min-h-[46px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 flex items-center justify-between"
-                                        >
-                                            <span>Match details</span>
-                                            <span className="inline-flex items-center gap-1 text-xs text-slate-500">
-                                                {isMatchdayDetailsOpen ? 'Hide' : 'Show'}
-                                                <Icon name={isMatchdayDetailsOpen ? 'ChevronUp' : 'ChevronDown'} size={14} />
-                                            </span>
-                                        </button>
-                                    </div>
-                                )}
-
-                                {((isMatchdayWorkspace && isMatchdayDetailsOpen) || (!isMatchdayWorkspace && fixtureDetailTab === 'overview')) && (
+                                {!isMatchdayWorkspace && fixtureDetailTab === 'overview' && (
                                 <div className="bg-slate-50 p-4 rounded-2xl space-y-3">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                                         <select className={touchPanelSelectClass} value={selectedFixture.opponent} onChange={e => setSelectedFixture({ ...selectedFixture, opponent: e.target.value })}>
@@ -5575,31 +5904,26 @@
                                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                         <div>
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Match Day</div>
-                                            <div className="text-[11px] text-slate-500 mt-1">Use tabs to move fast: Roster -> Lineup -> Live.</div>
+                                            <div className="text-[11px] text-slate-500 mt-1">Step {matchdayStepIndex + 1} of {MATCHDAY_FLOW_STEPS.length}: {matchdayCurrentStepLabel}</div>
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-4 gap-2">
-                                        <button onClick={() => setMatchdayFlowTab('roster')} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'roster' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
-                                            Roster
-                                        </button>
-                                        <button onClick={() => { setMatchdayFlowTab('lineup'); setMatchdayLineupView('positions'); }} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'lineup' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
-                                            Lineup
-                                        </button>
-                                        <button onClick={() => { setMatchdayFlowTab('live'); setMatchdayLiveView('pitch'); }} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'live' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
-                                            Live
-                                        </button>
-                                        <button onClick={() => setMatchdayFlowTab('squad')} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'squad' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
-                                            Squad
-                                        </button>
-                                    </div>
-
-                                    <div className="flex flex-wrap gap-2 text-[11px]">
-                                        <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Mapped {plannerMatchedCount}/{(matchdayPlanner?.matchedEntries || []).length}</span>
-                                        <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Starters {plannerStarterIds.length}/{plannerSlots.length}</span>
-                                        <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Bench {plannerBenchAllIds.length}</span>
-                                        <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">On pitch {plannerOnPitchIds.length}</span>
-                                    </div>
+                                    {matchdayFlowTab !== 'live' && (
+                                        <div className="flex flex-wrap gap-2 text-[11px]">
+                                            <span className={`px-2 py-1 rounded-full border font-semibold ${plannerCanAdvanceFromRoster ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                                                Ready {plannerResolutionSummary.resolved}/{plannerResolutionSummary.total || 0}
+                                            </span>
+                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Matched {plannerResolutionSummary.matched}</span>
+                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Temp {plannerResolutionSummary.temp}</span>
+                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">New {plannerResolutionSummary.newCount}</span>
+                                            {plannerResolutionSummary.unresolved > 0 && (
+                                                <span className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700 font-semibold">Unresolved {plannerResolutionSummary.unresolved}</span>
+                                            )}
+                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Starters {plannerStarterIds.length}/{plannerSlots.length}</span>
+                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Bench {plannerBenchAllIds.length}</span>
+                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">On pitch {plannerOnPitchIds.length}</span>
+                                        </div>
+                                    )}
 
                                     {matchdayFlowTab === 'roster' && (
                                     <>
@@ -5643,7 +5967,9 @@
                                     <div className="space-y-2">
                                         <div className="flex items-center justify-between">
                                             <div className="text-[11px] font-bold text-slate-600 uppercase">Roster Review</div>
-                                            <div className="text-[11px] text-slate-500">Matched {plannerMatchedCount} of {(matchdayPlanner?.matchedEntries || []).length}</div>
+                                            <div className="text-[11px] text-slate-500">
+                                                Resolved {plannerResolutionSummary.resolved} of {plannerResolutionSummary.total}
+                                            </div>
                                         </div>
                                         {(matchdayPlanner?.matchedEntries || []).length === 0 ? (
                                             <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No players mapped yet. Paste names and tap Map Names.</div>
@@ -5652,21 +5978,54 @@
                                                 {(matchdayShowAllRosterRows
                                                     ? (matchdayPlanner?.matchedEntries || [])
                                                     : (matchdayPlanner?.matchedEntries || []).slice(0, 8)
-                                                ).map((entry, index) => (
-                                                    <div key={`planner-entry-${index}-${entry.rawName}`} className={`rounded-xl border p-2 ${entry.playerId ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40'}`}>
-                                                        <div className="text-sm font-semibold text-slate-900">{entry.rawName}</div>
+                                                ).map((entry, index) => {
+                                                    const resolution = getPlannerEntryResolution(entry);
+                                                    const selectValue = resolution === 'temp' || resolution === 'new'
+                                                        ? `__declare:${resolution}`
+                                                        : (entry.playerId || '');
+                                                    const cardTone = resolution === 'matched'
+                                                        ? 'border-emerald-200 bg-emerald-50/40'
+                                                        : (resolution === 'temp' || resolution === 'new')
+                                                            ? 'border-sky-200 bg-sky-50/40'
+                                                            : 'border-amber-200 bg-amber-50/40';
+                                                    const badgeTone = resolution === 'matched'
+                                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                        : (resolution === 'temp' || resolution === 'new')
+                                                            ? 'border-sky-200 bg-sky-50 text-sky-700'
+                                                            : 'border-amber-200 bg-amber-50 text-amber-700';
+                                                    const badgeLabel = resolution === 'matched'
+                                                        ? 'Matched'
+                                                        : resolution === 'temp'
+                                                            ? 'Temp'
+                                                            : resolution === 'new'
+                                                                ? 'New'
+                                                                : 'Unresolved';
+                                                    return (
+                                                    <div key={`planner-entry-${index}-${entry.rawName}`} className={`rounded-xl border p-2 ${cardTone}`}>
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <div className="text-sm font-semibold text-slate-900">{entry.rawName}</div>
+                                                            <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wide ${badgeTone}`}>{badgeLabel}</span>
+                                                        </div>
                                                         <select
                                                             className="mt-2 w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
-                                                            value={entry.playerId || ''}
+                                                            value={selectValue}
                                                             onChange={e => plannerSetEntryPlayer(index, e.target.value)}
                                                         >
-                                                            <option value="">Unmatched (manual choice)</option>
+                                                            <option value="">Unresolved (choose player/temp/new)</option>
+                                                            <option value="__declare:temp">Declare temporary player</option>
+                                                            <option value="__declare:new">Declare new player</option>
                                                             {plannerPlayerOptions.map(player => (
                                                                 <option key={`planner-entry-player-${entry.rawName}-${player.id}`} value={String(player.id)}>
                                                                     {player.firstName} {player.lastName}
                                                                 </option>
                                                             ))}
                                                         </select>
+                                                        {resolution === 'temp' && (
+                                                            <div className="mt-1 text-[11px] text-sky-700">Declared temporary player for this match day plan.</div>
+                                                        )}
+                                                        {resolution === 'new' && (
+                                                            <div className="mt-1 text-[11px] text-sky-700">Declared new player (not yet in master squad).</div>
+                                                        )}
                                                         {(entry.suggestionIds || []).length > 0 && (
                                                             <div className="mt-1 text-[11px] text-slate-500">
                                                                 Suggested: {(entry.suggestionIds || [])
@@ -5676,7 +6035,8 @@
                                                             </div>
                                                         )}
                                                     </div>
-                                                ))}
+                                                );
+                                                })}
                                                 {(matchdayPlanner?.matchedEntries || []).length > 8 && (
                                                     <button
                                                         type="button"
@@ -5693,8 +6053,14 @@
                                     </div>
 
                                     <div className="flex justify-end">
-                                        <button onClick={() => { setMatchdayFlowTab('lineup'); setMatchdayLineupView('positions'); }} className="min-h-[42px] px-4 rounded-lg bg-slate-900 text-white text-sm font-bold">
-                                            Next: Lineup
+                                        <button
+                                            onClick={plannerGoToLineupStep}
+                                            disabled={!plannerCanAdvanceFromRoster}
+                                            className={`min-h-[42px] px-4 rounded-lg text-sm font-bold ${plannerCanAdvanceFromRoster ? 'bg-slate-900 text-white' : 'bg-slate-100 border border-slate-200 text-slate-400 cursor-not-allowed'}`}
+                                        >
+                                            {plannerCanAdvanceFromRoster
+                                                ? 'Next: Lineup'
+                                                : (plannerResolutionSummary.total === 0 ? 'Map players first' : `Resolve ${plannerResolutionSummary.unresolved} first`)}
                                         </button>
                                     </div>
                                     </>
@@ -5702,16 +6068,8 @@
 
                                     {matchdayFlowTab === 'lineup' && (
                                     <>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        <button onClick={() => setMatchdayLineupView('positions')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLineupView === 'positions' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
-                                            Positions
-                                        </button>
-                                        <button onClick={() => setMatchdayLineupView('pitch')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLineupView === 'pitch' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
-                                            Pitch
-                                        </button>
-                                        <button onClick={() => setMatchdayLineupView('subs')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLineupView === 'subs' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
-                                            Subs
-                                        </button>
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-600">
+                                        Lineup step {lineupStepIndex + 1} of {MATCHDAY_LINEUP_STEPS.length}: {lineupCurrentStepLabel}
                                     </div>
 
                                     {matchdayLineupView === 'positions' && (
@@ -5908,11 +6266,32 @@
                                     )}
 
                                     <div className="flex justify-between gap-2">
-                                        <button onClick={() => setMatchdayFlowTab('roster')} className="min-h-[42px] px-4 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-bold">
-                                            Back: Roster
+                                        <button
+                                            onClick={() => {
+                                                if (lineupStepIndex === 0) {
+                                                    setMatchdayFlowTab('roster');
+                                                    return;
+                                                }
+                                                plannerGoToPreviousLineupView();
+                                            }}
+                                            className="min-h-[42px] px-4 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-bold"
+                                        >
+                                            {lineupStepIndex === 0 ? 'Back: Roster' : `Back: ${MATCHDAY_LINEUP_STEPS[lineupStepIndex - 1]?.label || 'Roster'}`}
                                         </button>
-                                        <button onClick={() => { setMatchdayFlowTab('live'); setMatchdayLiveView('pitch'); }} className="min-h-[42px] px-4 rounded-lg bg-slate-900 text-white text-sm font-bold">
-                                            Next: Live
+                                        <button
+                                            onClick={() => {
+                                                if (lineupStepIndex < MATCHDAY_LINEUP_STEPS.length - 1) {
+                                                    plannerGoToNextLineupView();
+                                                    return;
+                                                }
+                                                setMatchdayFlowTab('live');
+                                                setMatchdayLiveView('pitch');
+                                            }}
+                                            className="min-h-[42px] px-4 rounded-lg bg-slate-900 text-white text-sm font-bold"
+                                        >
+                                            {lineupStepIndex < MATCHDAY_LINEUP_STEPS.length - 1
+                                                ? `Next: ${MATCHDAY_LINEUP_STEPS[lineupStepIndex + 1]?.label || 'Next'}`
+                                                : 'Next: Live'}
                                         </button>
                                     </div>
 
@@ -5922,6 +6301,31 @@
                                     {matchdayFlowTab === 'live' && (
                                     <>
                                     <div className="space-y-3">
+                                        <div className="rounded-2xl border border-slate-900 bg-slate-950 text-white p-4 space-y-3 shadow-sm">
+                                            <div className="flex items-center justify-between gap-2 text-[11px] uppercase tracking-wider text-slate-300">
+                                                <span>Live Scoreboard</span>
+                                                <span>{plannerLivePhaseLabel}</span>
+                                            </div>
+                                            <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+                                                <div className="text-center min-w-0">
+                                                    <div className="text-[11px] uppercase tracking-wide text-slate-300">Exiles</div>
+                                                    <div className="text-4xl leading-none font-black">{matchdayHomeScore === null ? '-' : matchdayHomeScore}</div>
+                                                </div>
+                                                <div className="text-2xl font-bold text-slate-500 pb-1">:</div>
+                                                <div className="text-center min-w-0">
+                                                    <div className="text-[11px] uppercase tracking-wide text-slate-300 truncate">{selectedFixture?.opponent || 'Opponent'}</div>
+                                                    <div className="text-4xl leading-none font-black">{matchdayAwayScore === null ? '-' : matchdayAwayScore}</div>
+                                                </div>
+                                            </div>
+                                            <div className="rounded-xl border border-white/20 bg-white/5 px-3 py-2 flex items-center justify-between gap-3">
+                                                <div className="font-mono text-3xl leading-none font-bold tracking-wider">{matchdayClockDisplay}</div>
+                                                <div className="text-right">
+                                                    <div className="text-[10px] uppercase tracking-wider text-slate-300">Match Clock</div>
+                                                    <div className="text-sm font-semibold">{plannerLiveMinute}' / {MATCHDAY_TOTAL_MINUTES}'</div>
+                                                </div>
+                                            </div>
+                                        </div>
+
                                         <div className="flex flex-wrap items-center justify-between gap-2">
                                             <div className="flex flex-wrap items-center gap-2">
                                                 {!plannerLiveActive ? (
@@ -5941,6 +6345,9 @@
                                             </div>
                                             <div className="flex flex-wrap items-center gap-2 text-[11px]">
                                                 <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-700 font-semibold">{plannerLivePhaseLabel}</span>
+                                                <span className="px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-700 font-semibold font-mono">
+                                                    {matchdayClockDisplay}
+                                                </span>
                                                 <span className="px-2 py-1 rounded-full border border-brand-200 bg-brand-50 text-brand-700 font-semibold">{plannerLiveMinute}' / {MATCHDAY_TOTAL_MINUTES}'</span>
                                                 <span className="px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-600 font-semibold">On pitch {plannerOnPitchIds.length}</span>
                                             </div>
@@ -5962,70 +6369,98 @@
                                                     <div className="grid grid-cols-3 gap-2">
                                                         <button
                                                             onClick={() => plannerSetLiveMinute(plannerLiveMinute - 1)}
-                                                            className="min-h-[44px] rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700"
+                                                            disabled={!plannerLiveActive || plannerClockIsPaused}
+                                                            className={`min-h-[44px] rounded-lg border text-sm font-bold ${!plannerLiveActive || plannerClockIsPaused ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'border-slate-200 bg-white text-slate-700'}`}
                                                         >
                                                             -1 min
                                                         </button>
-                                                        <button
-                                                            onClick={() => plannerSetLiveMinute(plannerLiveMinute)}
-                                                            className="min-h-[44px] rounded-lg border border-brand-200 bg-brand-50 text-sm font-bold text-brand-700"
-                                                        >
-                                                            {plannerLiveMinute}'
-                                                        </button>
+                                                        <div className="min-h-[44px] rounded-lg border border-brand-200 bg-brand-50 text-sm font-bold text-brand-700 flex items-center justify-center font-mono">
+                                                            {matchdayClockDisplay}
+                                                        </div>
                                                         <button
                                                             onClick={() => plannerSetLiveMinute(plannerLiveMinute + 1)}
-                                                            className="min-h-[44px] rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700"
+                                                            disabled={!plannerLiveActive || plannerClockIsPaused}
+                                                            className={`min-h-[44px] rounded-lg border text-sm font-bold ${!plannerLiveActive || plannerClockIsPaused ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'border-slate-200 bg-white text-slate-700'}`}
                                                         >
                                                             +1 min
                                                         </button>
                                                     </div>
-                                                    <div className="grid grid-cols-5 gap-2">
-                                                        {MATCHDAY_CLOCK_MARKERS.map((marker) => {
-                                                            const active = plannerLiveMinute === clampMatchMinute(marker.minute) && plannerLiveClock.phase === normalizeLivePhase(marker.phase);
-                                                            return (
-                                                                <button
-                                                                    key={`planner-live-marker-${marker.key}`}
-                                                                    onClick={() => plannerSetLiveMarker(marker)}
-                                                                    className={`min-h-[44px] rounded-lg border px-2 text-[11px] font-bold ${active ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200'}`}
-                                                                >
-                                                                    <div>{marker.minute}'</div>
-                                                                    <div className={`text-[10px] ${active ? 'text-white/90' : 'text-slate-500'}`}>{marker.label}</div>
-                                                                </button>
-                                                            );
-                                                        })}
+                                                    <div className="text-[11px] text-slate-500">
+                                                        {!plannerLiveActive
+                                                            ? 'Start live tracking first.'
+                                                            : plannerClockIsPaused
+                                                                ? 'Clock paused by match state. Resume play to continue +1/-1.'
+                                                                : 'Clock running. Ref decides time; use +1/-1 only during live play.'}
+                                                    </div>
+                                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                                        <button
+                                                            onClick={() => plannerHandleClockAction('ko')}
+                                                            disabled={!plannerLiveActive}
+                                                            className={`min-h-[44px] rounded-lg border px-2 text-[11px] font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : (plannerLiveClock.phase === 'LIVE_1H' && plannerLiveMinute === 0) ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                                                        >
+                                                            Kick-off
+                                                        </button>
+                                                        <button
+                                                            onClick={() => plannerHandleClockAction('wb1')}
+                                                            disabled={!plannerLiveActive}
+                                                            className={`min-h-[44px] rounded-lg border px-2 text-[11px] font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerLiveClock.phase === 'WB_1H' ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                                                        >
+                                                            {plannerLiveClock.phase === 'WB_1H' ? 'Resume 1H' : 'Water break 1'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => plannerHandleClockAction('ht')}
+                                                            disabled={!plannerLiveActive}
+                                                            className={`min-h-[44px] rounded-lg border px-2 text-[11px] font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerLiveClock.phase === 'HT' ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                                                        >
+                                                            Half-time
+                                                        </button>
+                                                        <button
+                                                            onClick={() => plannerHandleClockAction('start2h')}
+                                                            disabled={!plannerLiveActive}
+                                                            className={`min-h-[44px] rounded-lg border px-2 text-[11px] font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerLiveClock.phase === 'LIVE_2H' ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                                                        >
+                                                            Start 2H (40')
+                                                        </button>
+                                                        <button
+                                                            onClick={() => plannerHandleClockAction('wb2')}
+                                                            disabled={!plannerLiveActive}
+                                                            className={`min-h-[44px] rounded-lg border px-2 text-[11px] font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerLiveClock.phase === 'WB_2H' ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                                                        >
+                                                            {plannerLiveClock.phase === 'WB_2H' ? 'Resume 2H' : 'Water break 2'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => plannerHandleClockAction('ft')}
+                                                            disabled={!plannerLiveActive}
+                                                            className={`min-h-[44px] rounded-lg border px-2 text-[11px] font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerLiveClock.phase === 'FT' ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                                                        >
+                                                            Full-time
+                                                        </button>
                                                     </div>
                                                 </div>
 
-                                                <div className="grid grid-cols-2 gap-2">
+                                                {isPlannerSwapTargetMode ? (
                                                     <button
                                                         onClick={() => {
-                                                            setPlannerBoardMode('sub');
                                                             setPlannerSwapSlotA('');
                                                             setPlannerSwapSlotB('');
+                                                            setPlannerBoardMode('sub');
                                                         }}
-                                                        disabled={!plannerLiveActive}
-                                                        className={`min-h-[44px] rounded-lg border text-sm font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerBoardMode === 'sub' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}
+                                                        className="w-full min-h-[44px] rounded-lg border border-amber-200 bg-amber-50 text-amber-700 text-sm font-bold"
                                                     >
-                                                        Substitute
+                                                        Cancel swap targeting
                                                     </button>
-                                                    <button
-                                                        onClick={() => {
-                                                            setPlannerBoardMode('swap');
-                                                            setPlannerSubIncomingId('');
-                                                        }}
-                                                        disabled={!plannerLiveActive}
-                                                        className={`min-h-[44px] rounded-lg border text-sm font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerBoardMode === 'swap' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}
-                                                    >
-                                                        Swap
-                                                    </button>
-                                                </div>
+                                                ) : (
+                                                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600">
+                                                        Tap any on-pitch player card to open actions.
+                                                    </div>
+                                                )}
 
                                                 <div className="rounded-xl border border-slate-200 bg-white p-3 text-[11px] text-slate-600">
                                                     {!plannerLiveActive
                                                         ? 'Start live tracking when kick-off begins.'
                                                         : plannerBoardMode === 'swap'
-                                                            ? `Tap 2 pitch slots to swap.${plannerSwapSlotA ? ` Slot A: ${plannerSlotLookup[plannerSwapSlotA]?.label || plannerSwapSlotA.toUpperCase()}` : ''}${plannerSwapSlotB ? ` · Slot B: ${plannerSlotLookup[plannerSwapSlotB]?.label || plannerSwapSlotB.toUpperCase()}` : ''}`
-                                                            : `Tap the player on pitch you want to sub out.${plannerSubSlotId ? ` Selected: ${plannerSlotLookup[plannerSubSlotId]?.label || plannerSubSlotId.toUpperCase()} (${plannerPlayerName(plannerCurrentOnPitch[plannerSubSlotId])})` : ''}`}
+                                                            ? `Swap mode: tap a player, choose Swap in the popup, then tap the highlighted target.${plannerSwapSlotA ? ` Source: ${plannerSlotLookup[plannerSwapSlotA]?.label || plannerSwapSlotA.toUpperCase()}` : ''}`
+                                                            : `Tap a player card to open actions (Substitute / Swap).`}
                                                 </div>
 
                                                 <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-100/60 to-emerald-50/40 p-3">
@@ -6048,21 +6483,27 @@
                                                                         const isSelectedSub = plannerLiveActive && plannerBoardMode === 'sub' && plannerSubSlotId === slot.id;
                                                                         const isSelectedSwapA = plannerLiveActive && plannerBoardMode === 'swap' && plannerSwapSlotA === slot.id;
                                                                         const isSelectedSwapB = plannerLiveActive && plannerBoardMode === 'swap' && plannerSwapSlotB === slot.id;
+                                                                        const isSwapTargetCandidate = isPlannerSwapTargetMode && slot.id !== plannerSwapSlotA && !!onPitchPlayerId;
+                                                                        const isSwapFlashSlot = !!plannerSwapFlash?.token && (plannerSwapFlash.slotA === slot.id || plannerSwapFlash.slotB === slot.id);
                                                                         const toneClass = hasPlayer
                                                                             ? 'border-emerald-300 bg-white text-slate-900'
                                                                             : 'border-slate-200 bg-white/70 text-slate-500';
-                                                                        const selectedClass = isSelectedSub
+                                                                        const selectedClass = isSwapFlashSlot
+                                                                            ? 'ring-2 ring-violet-400 border-violet-400 bg-violet-50 scale-[1.02] shadow-lg shadow-violet-200/60'
+                                                                            : isSelectedSub
                                                                             ? 'ring-2 ring-amber-400 border-amber-300'
                                                                             : isSelectedSwapA
                                                                                 ? 'ring-2 ring-sky-400 border-sky-300'
-                                                                                : isSelectedSwapB
-                                                                                    ? 'ring-2 ring-violet-400 border-violet-300'
+                                                                            : isSelectedSwapB
+                                                                                ? 'ring-2 ring-violet-400 border-violet-300'
+                                                                                : isSwapTargetCandidate
+                                                                                    ? 'ring-2 ring-sky-200 border-sky-300 bg-sky-50/70 animate-pulse'
                                                                                     : '';
                                                                         return (
                                                                             <button
                                                                                 key={`planner-live-slot-${slot.id}`}
                                                                                 onClick={() => plannerHandlePitchSlotTap(slot.id)}
-                                                                                className={`min-h-[84px] rounded-xl border px-2 py-2 text-left transition ${toneClass} ${selectedClass}`}
+                                                                                className={`min-h-[84px] rounded-xl border px-2 py-2 text-left transition-all duration-300 ${toneClass} ${selectedClass}`}
                                                                             >
                                                                                 <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{slot.label}</div>
                                                                                 <div className={`mt-1 text-sm font-bold ${hasPlayer ? 'text-slate-900' : 'text-slate-400'}`}>
@@ -6079,16 +6520,6 @@
                                                         ))}
                                                     </div>
                                                 </div>
-
-                                                {plannerBoardMode === 'swap' && (
-                                                    <button
-                                                        onClick={plannerApplySwap}
-                                                        disabled={!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB}
-                                                        className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
-                                                    >
-                                                        Commit swap
-                                                    </button>
-                                                )}
 
                                                 <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
                                                     <div className="text-[11px] font-bold text-slate-600 uppercase">Available Subs</div>
@@ -6183,7 +6614,7 @@
                                         )}
 
                                         <div className="flex justify-between gap-2">
-                                            <button onClick={() => { setMatchdayFlowTab('lineup'); setMatchdayLineupView('positions'); }} className="min-h-[42px] px-4 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-bold">
+                                            <button onClick={() => { setMatchdayFlowTab('lineup'); setMatchdayLineupView('subs'); }} className="min-h-[42px] px-4 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-bold">
                                                 Back: Lineup
                                             </button>
                                             <button onClick={() => setMatchdayFlowTab('squad')} className="min-h-[42px] px-4 rounded-lg bg-slate-900 text-white text-sm font-bold">
@@ -6445,28 +6876,6 @@
                             </div>
                             <div className="fixed inset-x-0 bottom-0 z-[72] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-white via-white/95 to-white/0">
                                 <div className="max-w-4xl mx-auto space-y-2">
-                                    {isMatchdayWorkspace && (
-                                        <div className="grid grid-cols-4 gap-2">
-                                            {[
-                                                ['roster', 'Roster'],
-                                                ['lineup', 'Lineup'],
-                                                ['live', 'Live'],
-                                                ['squad', 'Squad']
-                                            ].map(([id, label]) => (
-                                                <button
-                                                    key={`matchday-floating-tab-${id}`}
-                                                    onClick={() => {
-                                                        setMatchdayFlowTab(id);
-                                                        if (id === 'lineup') setMatchdayLineupView('positions');
-                                                        if (id === 'live') setMatchdayLiveView('pitch');
-                                                    }}
-                                                    className={`min-h-[38px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === id ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}
-                                                >
-                                                    {label}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
                                     <div className={`grid gap-2 ${isMatchdayWorkspace ? 'grid-cols-2' : 'grid-cols-3'}`}>
                                         <button onClick={() => setSelectedFixture(null)} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
                                             Back
@@ -6490,6 +6899,91 @@
                             </button>
                         </div>
                     )}
+
+                    <Modal
+                        isOpen={plannerLiveActionModal.open}
+                        onClose={closePlannerLiveActionModal}
+                        title={plannerLiveActionOutgoingId ? `${plannerSlotLookup[plannerLiveActionSlotId]?.label || plannerLiveActionSlotId.toUpperCase()} · ${plannerPlayerShortName(plannerLiveActionOutgoingId)}` : 'Player Action'}
+                        placement="center"
+                    >
+                        <div className="space-y-3">
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <div className="text-[11px] font-bold uppercase text-slate-500">Selected Player</div>
+                                <div className="text-base font-bold text-slate-900 mt-1">
+                                    {plannerLiveActionOutgoingId ? plannerPlayerName(plannerLiveActionOutgoingId) : 'No player selected'}
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-1">
+                                    Slot {plannerLiveActionSlot?.label || '-'} · Preferred subs: {getBenchGroupLabel(plannerLiveActionPreferredGroup)}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    onClick={() => setPlannerLiveActionModal((prev) => ({ ...prev, action: 'substitute' }))}
+                                    className={`min-h-[46px] rounded-lg border text-sm font-bold ${plannerLiveActionModal.action === 'substitute' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
+                                >
+                                    Substitute
+                                </button>
+                                <button
+                                    onClick={() => setPlannerLiveActionModal((prev) => ({ ...prev, action: 'swap' }))}
+                                    className={`min-h-[46px] rounded-lg border text-sm font-bold ${plannerLiveActionModal.action === 'swap' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
+                                >
+                                    Swap
+                                </button>
+                            </div>
+
+                            {plannerLiveActionModal.action === 'substitute' && (
+                                <div className="space-y-2">
+                                    <div className="text-[11px] text-slate-500">
+                                        Suggested first: {getBenchGroupLabel(plannerLiveActionPreferredGroup)} subs.
+                                    </div>
+                                    {plannerLiveActionSubOptions.length === 0 ? (
+                                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">No available subs right now.</div>
+                                    ) : (
+                                        <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                                            {plannerLiveActionSubOptions.map((playerId) => {
+                                                const player = plannerPlayerLookup[playerId];
+                                                if (!player) return null;
+                                                const group = plannerBenchLookup[playerId] || 'reserve';
+                                                const isPreferred = group === plannerLiveActionPreferredGroup;
+                                                return (
+                                                    <button
+                                                        key={`planner-live-action-sub-${playerId}`}
+                                                        onClick={() => plannerChooseSubFromModal(playerId)}
+                                                        className={`w-full min-h-[48px] rounded-lg border px-3 py-2 text-left ${isPreferred ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-slate-200 bg-white text-slate-700'}`}
+                                                    >
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <div className="min-w-0">
+                                                                <div className="text-sm font-bold truncate">{player.firstName} {player.lastName}</div>
+                                                                <div className="text-[11px] text-slate-500">{player.position || 'Player'}</div>
+                                                            </div>
+                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isPreferred ? 'border-emerald-200 bg-white text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                                                                {group === 'reserve' ? 'Reserve' : getBenchGroupLabel(group)}
+                                                            </span>
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {plannerLiveActionModal.action === 'swap' && (
+                                <div className="space-y-2">
+                                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                                        Enable swap mode and tap one highlighted player on the pitch to complete the swap.
+                                    </div>
+                                    <button
+                                        onClick={plannerChooseSwapFromModal}
+                                        className="w-full min-h-[46px] rounded-lg bg-slate-900 text-white text-sm font-bold"
+                                    >
+                                        Highlight swap targets
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </Modal>
 
                     <Modal isOpen={isScoreOpen} onClose={() => setIsScoreOpen(false)} title="Scoreboard">
                         <div className="space-y-4">
