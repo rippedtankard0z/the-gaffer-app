@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.07-29';
+        const MASTER_BUILD_VERSION = '2026.03.08-30';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -2474,6 +2474,8 @@
             const [showAvailablePlayers, setShowAvailablePlayers] = useState(false);
             const [isSquadPanelOpen, setIsSquadPanelOpen] = useState(false);
             const [isPaymentsOpen, setIsPaymentsOpen] = useState(false);
+            const [fixtureDetailTab, setFixtureDetailTab] = useState('overview');
+            const [isFixtureAdvancedOpen, setIsFixtureAdvancedOpen] = useState(false);
             const [openSeasonTags, setOpenSeasonTags] = useState([]);
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const matchDayRef = useRef(null);
@@ -2610,7 +2612,14 @@
                 setShowAvailablePlayers(false);
                 setIsPaymentsOpen(false);
                 setIsSquadPanelOpen(launchMode !== 'matchday');
+                setFixtureDetailTab('overview');
+                setIsFixtureAdvancedOpen(false);
             }, [selectedFixture?.id]);
+            useEffect(() => {
+                if (fixtureDetailTab === 'payments') {
+                    setIsPaymentsOpen(true);
+                }
+            }, [fixtureDetailTab]);
             useEffect(() => {
                 plannerRef.current = matchdayPlanner;
             }, [matchdayPlanner]);
@@ -4034,6 +4043,10 @@
                 if(!selectedFixture) return 0;
                 return fixtureTx.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
             }, [fixtureTx, selectedFixture]);
+            const nonPlayerFixtureTx = useMemo(() => {
+                if (!selectedFixture?.id) return [];
+                return fixtureTx.filter(tx => tx.fixtureId === selectedFixture.id && !isPlayerFeeCategory(tx.category));
+            }, [fixtureTx, selectedFixture?.id]);
 
             const copySquadToClipboard = async () => {
                 if(!selectedFixture) return;
@@ -4654,28 +4667,35 @@
                     />
 
                     {!isMatchdayWorkspace && (
-                        <>
-                    <div className="grid grid-cols-2 gap-2">
-                        <div className="bg-white p-3 rounded-2xl border border-slate-100">
-                            <div className="text-[11px] font-bold text-slate-500 uppercase">Total Games</div>
-                            <div className="text-xl font-display font-bold text-slate-900">{gamesStats.total}</div>
-                            <div className="text-[11px] text-slate-500">This year: {gamesStats.thisYear} · Last year: {gamesStats.lastYear}</div>
-                        </div>
-                        <div className="bg-white p-3 rounded-2xl border border-slate-100">
-                            <div className="text-[11px] font-bold text-slate-500 uppercase">Record</div>
-                            <div className="text-xl font-display font-bold text-emerald-700">W {gamesStats.wins}</div>
-                            <div className="text-sm font-display font-bold text-amber-600">D {gamesStats.draws}</div>
-                            <div className="text-sm font-display font-bold text-rose-600">L {gamesStats.losses}</div>
-                        </div>
-                        {Object.entries(gamesStats.bySeason).slice(0,2).map(([season, info]) => (
-                            <div key={season} className="bg-white p-3 rounded-2xl border border-slate-100">
-                                <div className="text-[11px] font-bold text-slate-500 uppercase truncate">{season}</div>
-                                <div className="text-sm text-slate-700">Games: {info.games}</div>
-                                <div className="text-[11px] text-slate-500">W {info.wins} · D {info.draws} · L {info.losses}</div>
+                        <div className="bg-white p-3 rounded-2xl border border-slate-100 space-y-2">
+                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Season Snapshot</div>
+                            <div className="flex flex-wrap gap-2">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                                    Total <span className="font-bold text-slate-900">{gamesStats.total}</span>
+                                </span>
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                                    This year <span className="font-bold text-slate-900">{gamesStats.thisYear}</span>
+                                </span>
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] font-semibold text-emerald-700">
+                                    W <span className="font-bold">{gamesStats.wins}</span>
+                                </span>
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] font-semibold text-amber-700">
+                                    D <span className="font-bold">{gamesStats.draws}</span>
+                                </span>
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-[11px] font-semibold text-rose-700">
+                                    L <span className="font-bold">{gamesStats.losses}</span>
+                                </span>
                             </div>
-                        ))}
-                    </div>
-                        </>
+                            {Object.entries(gamesStats.bySeason).slice(0, 2).length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                    {Object.entries(gamesStats.bySeason).slice(0, 2).map(([season, info]) => (
+                                        <span key={season} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-600">
+                                            <span className="font-semibold text-slate-700">{season}:</span> {info.games} games
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     )}
 
                     <div className="space-y-4">
@@ -4744,35 +4764,48 @@
                                                 <div className="space-y-3">
                                                     {seasonFixtures.map(f => {
                                                         const forfeitLabel = getFixtureForfeitLabel(f);
+                                                        const hasScore = typeof f.homeScore === 'number' && typeof f.awayScore === 'number';
+                                                        const outcome = getFixtureOutcome(f);
+                                                        const statusLabel = outcome.played ? 'Played' : 'Upcoming';
+                                                        const statusTone = outcome.played
+                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                            : 'bg-sky-50 text-sky-700 border-sky-200';
                                                         return (
-                                                        <div key={f.id} onClick={() => openMatchMode(f)} className="relative bg-white p-5 rounded-2xl shadow-soft border border-slate-100 flex flex-col gap-3 cursor-pointer hover:border-brand-200 transition-colors group">
-                                                            <div className="flex justify-between items-start">
-                                                                <div>
-                                                                    <div className="text-xs font-bold text-brand-600 uppercase tracking-wider mb-1">{(f.competitionType || 'LEAGUE').replace('_',' ')}</div>
-                                                                    <div className="text-lg font-bold text-slate-900 group-hover:text-brand-600 transition-colors">vs {f.opponent}</div>
-                                                                    <div className="text-sm text-slate-500 flex items-center gap-1 mt-1"><Icon name="MapPin" size={12} /> {f.venue || 'TBC'}</div>
-                                                                    {forfeitLabel && (
-                                                                        <div className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-700">
-                                                                            {forfeitLabel}
-                                                                        </div>
-                                                                    )}
-                                                                    {(typeof f.homeScore === 'number' || typeof f.awayScore === 'number') && (
-                                                                        <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-800">
-                                                                            <span>Exiles</span>
-                                                                            <span className="text-lg font-display">{f.homeScore ?? '-'}</span>
-                                                                            <span className="text-xs text-slate-400">:</span>
-                                                                            <span className="text-lg font-display">{f.awayScore ?? '-'}</span>
-                                                                            <span className="text-slate-500">{f.opponent}</span>
-                                                                        </div>
-                                                                    )}
+                                                        <div
+                                                            key={f.id}
+                                                            onClick={() => openMatchMode(f)}
+                                                            className="relative bg-white p-4 rounded-2xl shadow-soft border border-slate-100 cursor-pointer hover:border-brand-200 transition-colors group"
+                                                        >
+                                                            <div className="flex items-start justify-between gap-3">
+                                                                <div className="min-w-0">
+                                                                    <div className="flex flex-wrap items-center gap-2">
+                                                                        <span className="text-[10px] font-bold text-brand-600 uppercase tracking-wider">{(f.competitionType || 'LEAGUE').replace('_', ' ')}</span>
+                                                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusTone}`}>{statusLabel}</span>
+                                                                    </div>
+                                                                    <div className="mt-1 text-base font-bold text-slate-900 group-hover:text-brand-600 transition-colors truncate">vs {f.opponent || 'Opponent'}</div>
+                                                                    <div className="mt-1 text-[11px] text-slate-500 flex items-center gap-1 truncate">
+                                                                        <Icon name="MapPin" size={12} /> {f.venue || 'Venue TBC'}
+                                                                    </div>
                                                                 </div>
-                                                                    <div className="text-right">
-                                                                    <div className="text-2xl font-display font-bold text-slate-900 bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">{renderTimeLabel(f.time)}</div>
-                                                                    <div className="text-xs text-slate-400 font-medium mt-1">{new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</div>
+                                                                <div className="text-right shrink-0">
+                                                                    <div className="text-base font-display font-bold text-slate-900">{renderTimeLabel(f.time)}</div>
+                                                                    <div className="text-[11px] text-slate-500">{new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</div>
                                                                 </div>
                                                             </div>
+                                                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                                                                {forfeitLabel ? (
+                                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-700">
+                                                                        {forfeitLabel}
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                                                                        {hasScore ? `Exiles ${f.homeScore ?? '-'}-${f.awayScore ?? '-'} ${f.opponent || ''}` : 'Score TBC'}
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                    );})}
+                                                    );
+                                                    })}
                                                 </div>
                                             )}
                                         </div>
@@ -4846,31 +4879,48 @@
                     {selectedFixture && (
                         <div ref={matchDayRef} className="fixed inset-0 z-[60] bg-white overflow-y-auto overflow-x-hidden overscroll-contain pb-20 sm:pb-10">
                             <div className="max-w-4xl mx-auto px-4 py-6 space-y-5">
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                    <div>
-                                        <div className="text-xs uppercase font-bold text-slate-400">{isMatchdayWorkspace ? 'Match Day' : 'Game'}</div>
-                                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                                            <div className="text-xl font-display font-bold text-slate-900">vs {selectedFixture.opponent}</div>
+                                <div className="sticky top-0 z-[70] -mx-4 px-4 py-3 bg-white/95 backdrop-blur border-b border-slate-100 space-y-3">
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                        <div>
+                                            <div className="text-xs uppercase font-bold text-slate-400">{isMatchdayWorkspace ? 'Match Day' : 'Game'}</div>
+                                            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                                                <div className="text-xl font-display font-bold text-slate-900">vs {selectedFixture.opponent}</div>
+                                                {!isMatchdayWorkspace && (
+                                                    <div className={`text-[11px] font-bold px-3 py-1 rounded-full border ${selectedFixtureNet > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : selectedFixtureNet < 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                                        P/L {formatNetValue(selectedFixtureNet)}
+                                                    </div>
+                                                )}
+                                                {fixtureSaveLabel && (
+                                                    <div className={`text-[11px] font-bold px-3 py-1 rounded-full border ${fixtureSaveTone}`}>{fixtureSaveLabel}</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:justify-end">
                                             {!isMatchdayWorkspace && (
-                                                <div className={`text-[11px] font-bold px-3 py-1 rounded-full border ${selectedFixtureNet > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : selectedFixtureNet < 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                                                    P/L {formatNetValue(selectedFixtureNet)}
-                                                </div>
+                                                <button onClick={() => setIsScoreOpen(true)} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Score</button>
                                             )}
+                                            <button onClick={() => setSelectedFixture(null)} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
+                                            <button onClick={() => deleteFixture(selectedFixture)} className="min-h-[46px] px-4 py-2 rounded-lg border border-rose-200 bg-rose-50 text-sm font-bold text-rose-700">Delete</button>
+                                            <button onClick={() => saveFixtureDetails({ closeOnSave: true })} className="min-h-[46px] px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold">
+                                                {isMatchdayWorkspace ? 'Save Plan & Close' : 'Save & Close'}
+                                            </button>
                                         </div>
                                     </div>
-                                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                                        {!isMatchdayWorkspace && (
-                                            <button onClick={() => setIsScoreOpen(true)} className="min-h-[44px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Score</button>
-                                        )}
-                                        <button onClick={() => setSelectedFixture(null)} className="min-h-[44px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
-                                        <button onClick={() => deleteFixture(selectedFixture)} className="min-h-[44px] px-4 py-2 rounded-lg border border-rose-200 bg-rose-50 text-sm font-bold text-rose-700">Delete</button>
-                                        {fixtureSaveLabel && (
-                                            <div className={`text-[11px] font-bold px-3 py-1 rounded-full border ${fixtureSaveTone}`}>{fixtureSaveLabel}</div>
-                                        )}
-                                        <button onClick={() => saveFixtureDetails({ closeOnSave: true })} className="min-h-[44px] px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold">{isMatchdayWorkspace ? 'Save Plan' : 'Save'}</button>
-                                    </div>
+                                    {!isMatchdayWorkspace && (
+                                        <div className="grid grid-cols-4 gap-2">
+                                            <button onClick={() => setFixtureDetailTab('overview')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${fixtureDetailTab === 'overview' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>Overview</button>
+                                            <button onClick={() => setFixtureDetailTab('squad')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${fixtureDetailTab === 'squad' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>Squad</button>
+                                            <button onClick={() => setFixtureDetailTab('payments')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${fixtureDetailTab === 'payments' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                                Payments ({paymentSummary.unpaid})
+                                            </button>
+                                            <button onClick={() => setFixtureDetailTab('costs')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${fixtureDetailTab === 'costs' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                                Costs ({nonPlayerFixtureTx.length})
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
 
+                                {(isMatchdayWorkspace || fixtureDetailTab === 'overview') && (
                                 <div className="bg-slate-50 p-4 rounded-2xl space-y-3">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                                         <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.opponent} onChange={e => setSelectedFixture({ ...selectedFixture, opponent: e.target.value })}>
@@ -4899,22 +4949,35 @@
                                         )}
                             {!isMatchdayWorkspace && (
                                 <>
-                                    <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.competitionType || 'LEAGUE'} onChange={e => setSelectedFixture({ ...selectedFixture, competitionType: e.target.value })}>
-                                        {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
-                                    </select>
-                                    <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={normalizeForfeitResult(selectedFixture.forfeitResult)} onChange={e => setSelectedFixture({ ...selectedFixture, forfeitResult: e.target.value })}>
-                                        {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                                    </select>
-                                    <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.seasonTag || (seasonCategories?.[0] || '2025/2026 Season')} onChange={e => setSelectedFixture({ ...selectedFixture, seasonTag: e.target.value })}>
-                                        {seasonCategories.map(s => <option key={s} value={s}>{s}</option>)}
-                                    </select>
-                                    <input className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" type="number" min="0" step="1" value={selectedFixture.feeAmount || 20} onChange={e => setSelectedFixture({ ...selectedFixture, feeAmount: Number(e.target.value) })} placeholder="Player fee" />
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsFixtureAdvancedOpen(v => !v)}
+                                        className="min-h-[44px] col-span-1 sm:col-span-2 md:col-span-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 flex items-center justify-between"
+                                    >
+                                        <span>Advanced game fields</span>
+                                        <Icon name={isFixtureAdvancedOpen ? 'ChevronUp' : 'ChevronDown'} size={14} />
+                                    </button>
+                                    {isFixtureAdvancedOpen && (
+                                        <>
+                                            <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.competitionType || 'LEAGUE'} onChange={e => setSelectedFixture({ ...selectedFixture, competitionType: e.target.value })}>
+                                                {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
+                                            </select>
+                                            <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={normalizeForfeitResult(selectedFixture.forfeitResult)} onChange={e => setSelectedFixture({ ...selectedFixture, forfeitResult: e.target.value })}>
+                                                {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                            </select>
+                                            <select className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" value={selectedFixture.seasonTag || (seasonCategories?.[0] || '2025/2026 Season')} onChange={e => setSelectedFixture({ ...selectedFixture, seasonTag: e.target.value })}>
+                                                {seasonCategories.map(s => <option key={s} value={s}>{s}</option>)}
+                                            </select>
+                                            <input className="min-h-[48px] bg-white border border-slate-200 rounded-lg p-3 text-base" type="number" min="0" step="1" value={selectedFixture.feeAmount || 20} onChange={e => setSelectedFixture({ ...selectedFixture, feeAmount: Number(e.target.value) })} placeholder="Player fee" />
+                                        </>
+                                    )}
                                 </>
                             )}
                         </div>
                                 </div>
+                                )}
 
-                                {!isMatchdayWorkspace && (
+                                {!isMatchdayWorkspace && fixtureDetailTab === 'overview' && (
                                     <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Accolades</div>
                                         <div className="space-y-2">
@@ -5422,6 +5485,7 @@
                                 </div>
                                 )}
 
+                                {(isMatchdayWorkspace || fixtureDetailTab === 'squad') && (
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
                                     <div className="flex justify-between items-start gap-3">
                                         <div>
@@ -5496,8 +5560,9 @@
                                         </div>
                                     )}
                                 </div>
+                                )}
 
-                                {!isMatchdayWorkspace && (
+                                {!isMatchdayWorkspace && fixtureDetailTab === 'payments' && (
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
                                     <div className="flex justify-between items-start gap-3">
                                         <div>
@@ -5561,7 +5626,7 @@
                                 </div>
                                 )}
 
-                                {!isMatchdayWorkspace && (
+                                {!isMatchdayWorkspace && fixtureDetailTab === 'costs' && (
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
                                     <div className="flex items-center justify-between">
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fees & Costs</div>
@@ -5621,7 +5686,7 @@
                                         )}
                                     </div>
                                     <div className="space-y-2">
-                                        {fixtureTx.filter(tx => tx.fixtureId === selectedFixture?.id && !isPlayerFeeCategory(tx.category)).map(tx => {
+                                        {nonPlayerFixtureTx.map(tx => {
                                             const outstanding = !tx.isReconciled;
                                             const flowLabel = (tx.flow === 'receivable' || tx.type === 'INCOME') ? 'Receivable' : 'Payable';
                                             return (
@@ -5643,7 +5708,7 @@
                                                 </div>
                                             );
                                         })}
-                                        {fixtureTx.filter(tx => tx.fixtureId === selectedFixture?.id && !isPlayerFeeCategory(tx.category)).length === 0 && (
+                                        {nonPlayerFixtureTx.length === 0 && (
                                             <div className="text-sm text-slate-400 text-center">No fees added yet.</div>
                                         )}
                                     </div>
@@ -5651,9 +5716,6 @@
                                 )}
 
                                 <div className="flex flex-col md:flex-row gap-2 pb-6">
-                                    <button onClick={() => saveFixtureDetails({ closeOnSave: true })} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
-                                        <Icon name="Save" size={18} /> {isMatchdayWorkspace ? 'Save Plan & Close' : 'Save & Close'}
-                                    </button>
                                     <button onClick={copySquadToClipboard} className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
                                         <Icon name="Copy" size={18} /> Copy Squad (WhatsApp)
                                     </button>
