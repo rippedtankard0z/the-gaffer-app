@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.08-33';
+        const MASTER_BUILD_VERSION = '2026.03.08-34';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -8168,6 +8168,9 @@
             const [fixtureRows, setFixtureRows] = useState([]);
             const [collectionSummary, setCollectionSummary] = useState({ billed: 0, collected: 0, writtenOff: 0, outstanding: 0, rate: 0 });
             const [cashSummary, setCashSummary] = useState({ income: 0, expense: 0, net: 0, avgNet: 0 });
+            const [auditRows, setAuditRows] = useState([]);
+            const [auditSummary, setAuditSummary] = useState({ scanned: 0, flagged: 0, billed: 0, collected: 0, outstanding: 0, overCollected: 0 });
+            const [showAllAuditRows, setShowAllAuditRows] = useState(false);
 
             const loadReports = useCallback(async () => {
                 setIsLoading(true);
@@ -8242,6 +8245,86 @@
                             };
                         })
                         .sort((a, b) => b.parsedDate - a.parsedDate);
+                    const fixtureAuditRows = fixturesWithDates
+                        .filter((fixture) => (fixture.status || 'SCHEDULED') !== 'ARCHIVED')
+                        .map((fixture) => {
+                            const txList = txByFixture[String(fixture.id)] || [];
+                            const playerCharges = txList.filter(tx => isPlayerFeeCategory(tx.category) && Number(tx.amount || 0) < 0 && tx.playerId !== undefined && tx.playerId !== null);
+                            const playerPayments = txList.filter(tx => isPlayerFeeCategory(tx.category) && Number(tx.amount || 0) > 0 && !tx.isWriteOff && tx.playerId !== undefined && tx.playerId !== null);
+                            const playerWriteOffs = txList.filter(tx => isPlayerFeeCategory(tx.category) && Number(tx.amount || 0) > 0 && !!tx.isWriteOff && tx.playerId !== undefined && tx.playerId !== null);
+
+                            const billedFixture = playerCharges.reduce((sum, tx) => sum + Math.abs(Number(tx.amount || 0)), 0);
+                            const collectedFixture = playerPayments.reduce((sum, tx) => sum + Math.abs(Number(tx.amount || 0)), 0);
+                            const writtenOffFixture = playerWriteOffs.reduce((sum, tx) => sum + Math.abs(Number(tx.amount || 0)), 0);
+                            const outstandingFixture = Math.max(0, billedFixture - collectedFixture - writtenOffFixture);
+                            const overCollectedFixture = Math.max(0, (collectedFixture + writtenOffFixture) - billedFixture);
+
+                            const matchedPaymentIds = new Set();
+                            const matchedWriteOffIds = new Set();
+                            let unresolvedChargeCount = 0;
+                            let conflictingCoverageCount = 0;
+                            let mismatchedCoverageCount = 0;
+                            playerCharges.forEach((charge) => {
+                                const payment = findPaymentForCharge(charge, txList);
+                                const writeOff = findWriteOffForCharge(charge, txList);
+                                if (payment?.id !== undefined && payment?.id !== null) matchedPaymentIds.add(String(payment.id));
+                                if (writeOff?.id !== undefined && writeOff?.id !== null) matchedWriteOffIds.add(String(writeOff.id));
+                                const covers = [payment, writeOff].filter(Boolean);
+                                if (!covers.length) unresolvedChargeCount += 1;
+                                if (covers.length > 1) conflictingCoverageCount += 1;
+                                const chargeAmount = Math.abs(Number(charge.amount || 0));
+                                covers.forEach((coverTx) => {
+                                    const coveredAmount = Math.abs(Number(coverTx.amount || 0));
+                                    if (Math.abs(coveredAmount - chargeAmount) > 0.009) mismatchedCoverageCount += 1;
+                                });
+                            });
+                            const orphanPaymentCount = playerPayments.filter(tx => !matchedPaymentIds.has(String(tx.id))).length;
+                            const orphanWriteOffCount = playerWriteOffs.filter(tx => !matchedWriteOffIds.has(String(tx.id))).length;
+
+                            const fixtureCashPL = txList.reduce((sum, tx) => sum + getTxCashImpact(tx), 0);
+                            const nonPlayerCash = txList
+                                .filter(tx => !isPlayerFeeCategory(tx.category))
+                                .reduce((sum, tx) => sum + getTxCashImpact(tx), 0);
+                            const expectedCashPL = collectedFixture + nonPlayerCash;
+                            const cashVariance = Number((fixtureCashPL - expectedCashPL).toFixed(2));
+
+                            const issues = [];
+                            if (unresolvedChargeCount > 0) issues.push(`${unresolvedChargeCount} unpaid fee${unresolvedChargeCount === 1 ? '' : 's'}`);
+                            if (orphanPaymentCount > 0) issues.push(`${orphanPaymentCount} orphan payment${orphanPaymentCount === 1 ? '' : 's'}`);
+                            if (orphanWriteOffCount > 0) issues.push(`${orphanWriteOffCount} orphan write-off${orphanWriteOffCount === 1 ? '' : 's'}`);
+                            if (conflictingCoverageCount > 0) issues.push(`${conflictingCoverageCount} fee${conflictingCoverageCount === 1 ? '' : 's'} marked paid and write-off`);
+                            if (mismatchedCoverageCount > 0) issues.push(`${mismatchedCoverageCount} amount mismatch${mismatchedCoverageCount === 1 ? '' : 'es'}`);
+                            if (overCollectedFixture > 0.009) issues.push(`Over-covered ${formatCurrency(overCollectedFixture)}`);
+                            if (Math.abs(cashVariance) > 0.009) issues.push(`Cash variance ${formatCurrency(cashVariance)}`);
+
+                            return {
+                                fixtureId: fixture.id,
+                                opponent: fixture.opponent || 'Opponent',
+                                date: fixture.date,
+                                parsedDate: fixture.parsedDate,
+                                billed: billedFixture,
+                                collected: collectedFixture,
+                                writtenOff: writtenOffFixture,
+                                outstanding: outstandingFixture,
+                                overCollected: overCollectedFixture,
+                                cashPL: fixtureCashPL,
+                                issues
+                            };
+                        })
+                        .sort((a, b) => {
+                            const aFlag = a.issues.length ? 1 : 0;
+                            const bFlag = b.issues.length ? 1 : 0;
+                            if (aFlag !== bFlag) return bFlag - aFlag;
+                            return (b.parsedDate || 0) - (a.parsedDate || 0);
+                        });
+                    const flaggedFixtureRows = fixtureAuditRows.filter(row => row.issues.length > 0);
+                    const auditTotals = fixtureAuditRows.reduce((acc, row) => {
+                        acc.billed += Number(row.billed || 0);
+                        acc.collected += Number(row.collected || 0);
+                        acc.outstanding += Number(row.outstanding || 0);
+                        acc.overCollected += Number(row.overCollected || 0);
+                        return acc;
+                    }, { billed: 0, collected: 0, outstanding: 0, overCollected: 0 });
 
                     const billed = txs
                         .filter(tx => Number(tx.amount || 0) < 0 && isPlayerFeeCategory(tx.category))
@@ -8271,6 +8354,16 @@
                     setFixtureRows(fixtureProfitability);
                     setCollectionSummary({ billed, collected, writtenOff, outstanding, rate });
                     setCashSummary({ income: totalIncome, expense: totalExpense, net: totalNet, avgNet });
+                    setAuditRows(flaggedFixtureRows);
+                    setAuditSummary({
+                        scanned: fixtureAuditRows.length,
+                        flagged: flaggedFixtureRows.length,
+                        billed: auditTotals.billed,
+                        collected: auditTotals.collected,
+                        outstanding: auditTotals.outstanding,
+                        overCollected: auditTotals.overCollected
+                    });
+                    setShowAllAuditRows(false);
                 } finally {
                     setIsLoading(false);
                 }
@@ -8330,6 +8423,25 @@
                     Number(collectionSummary.outstanding || 0).toFixed(2),
                     Number(collectionSummary.rate || 0).toFixed(2)
                 ].map(escapeCsv).join(','));
+                lines.push('');
+                lines.push(['Reconciliation Audit (Flagged Fixtures)'].map(escapeCsv).join(','));
+                lines.push(['Date', 'Opponent', 'Billed', 'Collected', 'Written off', 'Outstanding', 'Cash P/L', 'Issues'].map(escapeCsv).join(','));
+                if (auditRows.length) {
+                    auditRows.forEach((row) => {
+                        lines.push([
+                            row.date ? new Date(row.date).toISOString().split('T')[0] : '',
+                            row.opponent || 'Opponent',
+                            Number(row.billed || 0).toFixed(2),
+                            Number(row.collected || 0).toFixed(2),
+                            Number(row.writtenOff || 0).toFixed(2),
+                            Number(row.outstanding || 0).toFixed(2),
+                            Number(row.cashPL || 0).toFixed(2),
+                            (row.issues || []).join(' | ')
+                        ].map(escapeCsv).join(','));
+                    });
+                } else {
+                    lines.push(['', 'No flagged fixtures', '', '', '', '', '', ''].map(escapeCsv).join(','));
+                }
 
                 const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
@@ -8349,6 +8461,11 @@
                 const fixtureHtml = fixtureRows.slice(0, 20).map((row) => (
                     `<tr><td>${row.date ? new Date(row.date).toLocaleDateString('en-GB') : '—'}</td><td>${row.opponent}</td><td>${row.resultLabel}</td><td>${formatCurrency(row.income)}</td><td>${formatCurrency(row.expense)}</td><td>${formatCurrency(row.net)}</td></tr>`
                 )).join('');
+                const auditHtml = auditRows.length
+                    ? auditRows.slice(0, 25).map((row) => (
+                        `<tr><td>${row.date ? new Date(row.date).toLocaleDateString('en-GB') : '—'}</td><td>${row.opponent}</td><td>${formatCurrency(row.billed)}</td><td>${formatCurrency(row.collected)}</td><td>${formatCurrency(row.outstanding)}</td><td>${formatCurrency(row.cashPL)}</td><td>${(row.issues || []).join(', ')}</td></tr>`
+                    )).join('')
+                    : '<tr><td colspan="7">No flagged fixtures.</td></tr>';
                 const docHtml = `<!DOCTYPE html>
                 <html><head><meta charset="utf-8"/><title>Reports</title>
                 <style>
@@ -8372,6 +8489,8 @@
                 <table><thead><tr><th>Month</th><th>Income</th><th>Expense</th><th>Net</th><th>Closing</th></tr></thead><tbody>${monthlyHtml}</tbody></table>
                 <h2>Fixture Profitability</h2>
                 <table><thead><tr><th>Date</th><th>Opponent</th><th>Result</th><th>Income</th><th>Expense</th><th>Net</th></tr></thead><tbody>${fixtureHtml}</tbody></table>
+                <h2>Reconciliation Audit (Flagged Fixtures)</h2>
+                <table><thead><tr><th>Date</th><th>Opponent</th><th>Billed</th><th>Collected</th><th>Outstanding</th><th>Cash P/L</th><th>Issues</th></tr></thead><tbody>${auditHtml}</tbody></table>
                 </body></html>`;
                 const printWindow = window.open('', '_blank', 'noopener,noreferrer');
                 if (!printWindow) return;
@@ -8384,6 +8503,14 @@
             const averageFixtureNet = fixtureRows.length
                 ? fixtureRows.reduce((sum, row) => sum + Number(row.net || 0), 0) / fixtureRows.length
                 : 0;
+            const visibleAuditRows = showAllAuditRows ? auditRows : auditRows.slice(0, 8);
+            const hiddenAuditRowsCount = Math.max(0, auditRows.length - 8);
+            const openAuditFixture = (row) => {
+                if (!row?.fixtureId || !onNavigate) return;
+                localStorage.setItem('gaffer:focusFixtureId', String(row.fixtureId));
+                if (row.opponent) localStorage.setItem('gaffer:focusFixtureOpponent', row.opponent);
+                onNavigate('fixtures');
+            };
 
             return (
                 <div className="space-y-5 pb-20 animate-fade-in">
@@ -8426,6 +8553,68 @@
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Written off: <span className="font-bold text-amber-700">{formatCurrency(collectionSummary.writtenOff)}</span></div>
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Outstanding: <span className="font-bold text-rose-700">{formatCurrency(collectionSummary.outstanding)}</span></div>
                         </div>
+                    </div>
+                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                            <div>
+                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Reconciliation Audit</div>
+                                <div className="text-[11px] text-slate-500 mt-1">Flags fixtures where player fee billing, collection, and cash P/L do not align.</div>
+                            </div>
+                            <button onClick={loadReports} className="min-h-[40px] px-3 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                                Rescan
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-[12px]">
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Scanned: <span className="font-bold text-slate-900">{auditSummary.scanned}</span></div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Flagged: <span className={`font-bold ${auditSummary.flagged ? 'text-rose-700' : 'text-emerald-700'}`}>{auditSummary.flagged}</span></div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Outstanding: <span className="font-bold text-amber-700">{formatCurrency(auditSummary.outstanding)}</span></div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Over-covered: <span className="font-bold text-rose-700">{formatCurrency(auditSummary.overCollected)}</span></div>
+                        </div>
+                        {isLoading ? (
+                            <div className="text-sm text-slate-400">Scanning fixtures...</div>
+                        ) : auditRows.length ? (
+                            <div className="space-y-2">
+                                {visibleAuditRows.map((row) => (
+                                    <button
+                                        key={`audit-fixture-${row.fixtureId}`}
+                                        onClick={() => openAuditFixture(row)}
+                                        className="w-full rounded-lg border border-rose-200 bg-rose-50/30 p-3 text-left hover:bg-rose-50"
+                                    >
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="text-sm font-bold text-slate-900">vs {row.opponent}</div>
+                                            <div className="text-xs font-bold text-rose-700">{row.issues.length} issue{row.issues.length === 1 ? '' : 's'}</div>
+                                        </div>
+                                        <div className="mt-1 text-[11px] text-slate-600">
+                                            {row.date ? new Date(row.date).toLocaleDateString('en-GB') : 'Date TBC'} · Billed {formatCurrency(row.billed)} · Collected {formatCurrency(row.collected)} · Cash {formatCurrency(row.cashPL)}
+                                        </div>
+                                        <div className="mt-2 flex flex-wrap gap-1">
+                                            {row.issues.slice(0, 3).map((issue, idx) => (
+                                                <span key={`audit-issue-${row.fixtureId}-${idx}`} className="px-2 py-1 rounded-full bg-white border border-rose-200 text-[10px] font-semibold text-rose-700">
+                                                    {issue}
+                                                </span>
+                                            ))}
+                                            {row.issues.length > 3 && (
+                                                <span className="px-2 py-1 rounded-full bg-white border border-slate-200 text-[10px] font-semibold text-slate-600">
+                                                    +{row.issues.length - 3} more
+                                                </span>
+                                            )}
+                                        </div>
+                                    </button>
+                                ))}
+                                {hiddenAuditRowsCount > 0 && (
+                                    <button
+                                        onClick={() => setShowAllAuditRows(prev => !prev)}
+                                        className="w-full min-h-[42px] rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700"
+                                    >
+                                        {showAllAuditRows ? 'Show fewer flagged fixtures' : `Show ${hiddenAuditRowsCount} more flagged fixture${hiddenAuditRowsCount === 1 ? '' : 's'}`}
+                                    </button>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 font-semibold">
+                                No fixture reconciliation issues found.
+                            </div>
+                        )}
                     </div>
                     <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
                         <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Monthly P&L</div>
