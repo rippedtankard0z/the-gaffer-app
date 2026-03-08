@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.08-44';
+        const MASTER_BUILD_VERSION = '2026.03.08-45';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -8044,6 +8044,8 @@
         const Dashboard = ({ onNavigate, kitDetails = [], kitQueue = [], kitNumberLimit = DEFAULT_KIT_NUMBER_LIMIT }) => {
             const [stats, setStats] = useState({
                 balance: 0,
+                accrualBalance: 0,
+                nonCashDelta: 0,
                 playerCt: 0,
                 fixtureCt: 0,
                 history: [],
@@ -8159,6 +8161,7 @@
                         running += getTxCashImpact(t);
                         return running;
                     });
+                    const accrualBalance = sortedTxs.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
                     const chartData = history.slice(-20);
                     const { receivable, payable } = summarizeOutstanding(txs);
 
@@ -8185,6 +8188,8 @@
 
                     setStats({
                         balance: running,
+                        accrualBalance,
+                        nonCashDelta: running - accrualBalance,
                         playerCt: playerList.length,
                         fixtureCt: fixtures.length,
                         history: chartData,
@@ -8549,8 +8554,16 @@
                     <div className="rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft space-y-3 backdrop-blur-sm">
                         <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Money Snapshot</div>
+                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Cash Snapshot (Settled)</div>
                                 <div className="text-3xl font-display font-bold text-slate-900 leading-none mt-1">{formatCurrency(stats.balance, { minimumFractionDigits: 0 })}</div>
+                                <div className="mt-1 text-[11px] text-slate-500">
+                                    Ledger total {formatCurrency(stats.accrualBalance, { minimumFractionDigits: 0 })}
+                                    {Math.abs(Number(stats.nonCashDelta || 0)) >= 0.01 && (
+                                        <span className={`ml-1 font-semibold ${stats.nonCashDelta >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                            ({stats.nonCashDelta >= 0 ? '+' : ''}{formatCurrency(stats.nonCashDelta, { maximumFractionDigits: 0 })} non-cash adjustment)
+                                        </span>
+                                    )}
+                                </div>
                                 <div className={`mt-2 text-[11px] font-semibold ${netOpenExposure >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                     Net open exposure {netOpenExposure >= 0 ? '+' : ''}{formatCurrency(netOpenExposure, { maximumFractionDigits: 0 })}
                                 </div>
