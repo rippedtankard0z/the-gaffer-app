@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.08-31';
+        const MASTER_BUILD_VERSION = '2026.03.08-33';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -365,13 +365,41 @@
             return !!(match?.writeOff || match?.payment);
         };
 
+        const isPlayerFeeChargeTx = (tx = {}) => {
+            const amount = Number(tx.amount || 0);
+            return tx.playerId !== undefined
+                && tx.playerId !== null
+                && isPlayerFeeCategory(tx.category)
+                && amount < 0;
+        };
+
         const getTxFlowDirection = (tx = {}) => {
+            if (isPlayerFeeChargeTx(tx)) return 'receivable';
             const flow = (tx.flow || '').toString().trim().toLowerCase();
             if (flow === 'receivable' || flow === 'payable') return flow;
             const amount = Number(tx.amount || 0);
             if (amount > 0) return 'receivable';
             if (amount < 0) return 'payable';
             return deriveFlow(tx.type || '');
+        };
+
+        const isPlayerFeePaymentTx = (tx = {}) => {
+            const amount = Number(tx.amount || 0);
+            return tx.playerId !== undefined
+                && tx.playerId !== null
+                && isPlayerFeeCategory(tx.category)
+                && amount > 0
+                && !isWriteOffTx(tx);
+        };
+
+        const getTxCashImpact = (tx = {}) => {
+            const amount = Number(tx.amount || 0);
+            if (!Number.isFinite(amount) || amount === 0) return 0;
+            if (isPlayerFeeChargeTx(tx)) return 0;
+            if (isWriteOffTx(tx)) return 0;
+            if (isPlayerFeePaymentTx(tx)) return amount;
+            if (!tx.isReconciled) return 0;
+            return amount;
         };
 
         const isCoveredPlayerCharge = (tx = {}, txList = []) => {
@@ -2616,6 +2644,10 @@
                 setFixtureDetailTab('overview');
                 setIsFixtureAdvancedOpen(false);
                 setPaymentAmountEditor({ open: false, playerId: null, playerName: '', amount: '' });
+                setMatchdayFlowTab('roster');
+                setMatchdayLineupView('positions');
+                setMatchdayLiveView('actions');
+                setMatchdayShowAllRosterRows(false);
             }, [selectedFixture?.id]);
             useEffect(() => {
                 if (fixtureDetailTab === 'payments') {
@@ -2683,6 +2715,10 @@
             const [plannerBoardMode, setPlannerBoardMode] = useState('assign');
             const [plannerBoardSelectedSlotId, setPlannerBoardSelectedSlotId] = useState('');
             const [plannerBoardAssignPlayerId, setPlannerBoardAssignPlayerId] = useState('');
+            const [matchdayFlowTab, setMatchdayFlowTab] = useState('roster');
+            const [matchdayLineupView, setMatchdayLineupView] = useState('positions');
+            const [matchdayLiveView, setMatchdayLiveView] = useState('actions');
+            const [matchdayShowAllRosterRows, setMatchdayShowAllRosterRows] = useState(false);
             const magicFixtureOptions = useMemo(() => {
                 const allowed = showScheduledMagic ? ['PLAYED', 'SCHEDULED'] : ['PLAYED'];
                 return fixtures.filter(f => allowed.includes(f.status));
@@ -2861,7 +2897,7 @@
                 if(!allTx.length) return {};
                 return allTx.reduce((acc, tx) => {
                     if(!tx.fixtureId) return acc;
-                    acc[tx.fixtureId] = (acc[tx.fixtureId] || 0) + (Number(tx.amount) || 0);
+                    acc[tx.fixtureId] = (acc[tx.fixtureId] || 0) + getTxCashImpact(tx);
                     return acc;
                 }, {});
             }, [allTx]);
@@ -3205,6 +3241,9 @@
                 setPlannerSwapSlotB('');
                 setPlannerBoardSelectedSlotId('');
                 setPlannerBoardAssignPlayerId('');
+                setMatchdayShowAllRosterRows(false);
+                setMatchdayFlowTab('lineup');
+                setMatchdayLineupView('positions');
                 pushFixtureToast(`Planner loaded ${entries.length} players (${matchedCount} matched).`, 'success');
             };
 
@@ -3974,11 +4013,10 @@
                 const fixtureId = selectedFixture.id;
                 return players.filter(p => squad[p.id]).map(p => {
                     const feeTx = fixtureTx.find(tx => tx.playerId === p.id && tx.fixtureId === fixtureId && isPlayerFeeCategory(tx.category) && tx.amount < 0);
-                    const payTx = feeTx ? findPaymentForCharge(feeTx, fixtureTx) : null;
-                    const writeOffTx = feeTx ? findWriteOffForCharge(feeTx, fixtureTx) : null;
-                    const fallbackPay = allTx.find(tx => tx.playerId === p.id && isPlayerFeeCategory(tx.category) && tx.amount > 0 && !tx.isWriteOff);
+                    const payTx = feeTx ? (findPaymentForCharge(feeTx, fixtureTx) || allTx.find(tx => paymentCoversCharge(feeTx, tx))) : null;
+                    const writeOffTx = feeTx ? (findWriteOffForCharge(feeTx, fixtureTx) || allTx.find(tx => writeOffCoversCharge(feeTx, tx))) : null;
                     const due = feeTx ? Math.abs(feeTx.amount) : (selectedFixture.feeAmount || 20);
-                    const paid = payTx ? payTx.amount : (fallbackPay ? fallbackPay.amount : 0);
+                    const paid = payTx ? payTx.amount : 0;
                     const writeOffAmount = writeOffTx ? Math.abs(writeOffTx.amount) : 0;
                     const isWrittenOff = !!writeOffTx;
                     const isPaid = !isWrittenOff && paid >= due;
@@ -4007,11 +4045,37 @@
                 const total = participantRows.length;
                 return { paid, writtenOff, unpaid: total - paid - writtenOff, total };
             }, [participantRows]);
+            const playerFeeSummary = useMemo(() => {
+                const billed = participantRows.reduce((sum, row) => sum + Math.max(0, Number(row.due || 0)), 0);
+                const collected = participantRows
+                    .filter(row => !row.isWrittenOff)
+                    .reduce((sum, row) => sum + Math.max(0, Number(row.paid || 0)), 0);
+                const writtenOff = participantRows
+                    .filter(row => row.isWrittenOff)
+                    .reduce((sum, row) => sum + Math.max(0, Number(row.writeOffAmount || row.due || 0)), 0);
+                const outstanding = Math.max(0, billed - collected - writtenOff);
+                return { billed, collected, writtenOff, outstanding };
+            }, [participantRows]);
             const isMatchdayWorkspace = launchMode === 'matchday';
             const plannerLiveActive = !!matchdayPlanner?.live?.active;
             const plannerRecentEvents = useMemo(() => {
                 return [...(matchdayPlanner?.live?.events || [])].slice(-8).reverse();
             }, [matchdayPlanner?.live?.events]);
+            useEffect(() => {
+                if (!isMatchdayWorkspace) return;
+                if (plannerLiveActive && matchdayFlowTab !== 'live') {
+                    setMatchdayFlowTab('live');
+                }
+                if (plannerLiveActive && matchdayLiveView !== 'actions') {
+                    setMatchdayLiveView('actions');
+                }
+            }, [isMatchdayWorkspace, plannerLiveActive, matchdayFlowTab, matchdayLiveView]);
+            useEffect(() => {
+                if (!isMatchdayWorkspace) return;
+                if (matchdayFlowTab === 'squad' && !isSquadPanelOpen) {
+                    setIsSquadPanelOpen(true);
+                }
+            }, [isMatchdayWorkspace, matchdayFlowTab, isSquadPanelOpen]);
             useEffect(() => {
                 if (plannerLiveActive) {
                     if (plannerBoardMode === 'assign') {
@@ -4055,14 +4119,14 @@
 
             const fixtureTotals = useMemo(() => {
                 if(!selectedFixture) return { cost: 0, ref: 0 };
-                const fxTx = fixtureTx.filter(tx => tx.fixtureId === selectedFixture.id && tx.amount < 0);
+                const fxTx = fixtureTx.filter(tx => tx.fixtureId === selectedFixture.id && tx.amount < 0 && !isPlayerFeeCategory(tx.category));
                 const cost = fxTx.reduce((a,b)=>a+b.amount,0);
                 const ref = fxTx.filter(tx => (tx.category || '').toUpperCase().includes('REF')).reduce((a,b)=>a+b.amount,0);
                 return { cost, ref };
             }, [fixtureTx, selectedFixture]);
             const selectedFixtureNet = useMemo(() => {
                 if(!selectedFixture) return 0;
-                return fixtureTx.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+                return fixtureTx.reduce((sum, tx) => sum + getTxCashImpact(tx), 0);
             }, [fixtureTx, selectedFixture]);
             const nonPlayerFixtureTx = useMemo(() => {
                 if (!selectedFixture?.id) return [];
@@ -4908,7 +4972,7 @@
                                                 <div className="text-xl font-display font-bold text-slate-900">vs {selectedFixture.opponent}</div>
                                                 {!isMatchdayWorkspace && (
                                                     <div className={`text-[11px] font-bold px-3 py-1 rounded-full border ${selectedFixtureNet > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : selectedFixtureNet < 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
-                                                        P/L {formatNetValue(selectedFixtureNet)}
+                                                        Cash P/L {formatNetValue(selectedFixtureNet)}
                                                     </div>
                                                 )}
                                                 {fixtureSaveLabel && (
@@ -5017,9 +5081,34 @@
                                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                         <div>
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Match Day</div>
+                                            <div className="text-[11px] text-slate-500 mt-1">Use tabs to move fast: Roster -> Lineup -> Live.</div>
                                         </div>
                                     </div>
 
+                                    <div className="grid grid-cols-4 gap-2">
+                                        <button onClick={() => setMatchdayFlowTab('roster')} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'roster' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            Roster
+                                        </button>
+                                        <button onClick={() => { setMatchdayFlowTab('lineup'); setMatchdayLineupView('positions'); }} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'lineup' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            Lineup
+                                        </button>
+                                        <button onClick={() => { setMatchdayFlowTab('live'); setMatchdayLiveView('actions'); }} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'live' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            Live
+                                        </button>
+                                        <button onClick={() => setMatchdayFlowTab('squad')} className={`min-h-[42px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === 'squad' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            Squad
+                                        </button>
+                                    </div>
+
+                                    <div className="flex flex-wrap gap-2 text-[11px]">
+                                        <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Mapped {plannerMatchedCount}/{(matchdayPlanner?.matchedEntries || []).length}</span>
+                                        <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Starters {plannerStarterIds.length}/{plannerSlots.length}</span>
+                                        <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Bench {plannerBenchAllIds.length}</span>
+                                        <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">On pitch {plannerOnPitchIds.length}</span>
+                                    </div>
+
+                                    {matchdayFlowTab === 'roster' && (
+                                    <>
                                     <div className="space-y-2">
                                         <label className="text-[11px] font-bold text-slate-500 uppercase">Paste Player List</label>
                                         <textarea
@@ -5047,6 +5136,8 @@
                                                     setPlannerSwapSlotB('');
                                                     setPlannerBoardSelectedSlotId('');
                                                     setPlannerBoardAssignPlayerId('');
+                                                    setMatchdayShowAllRosterRows(false);
+                                                    setMatchdayFlowTab('roster');
                                                 }}
                                                 className="min-h-[48px] bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-base"
                                             >
@@ -5064,7 +5155,10 @@
                                             <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No players mapped yet. Paste names and tap Map Names.</div>
                                         ) : (
                                             <div className="space-y-2">
-                                                {(matchdayPlanner?.matchedEntries || []).map((entry, index) => (
+                                                {(matchdayShowAllRosterRows
+                                                    ? (matchdayPlanner?.matchedEntries || [])
+                                                    : (matchdayPlanner?.matchedEntries || []).slice(0, 8)
+                                                ).map((entry, index) => (
                                                     <div key={`planner-entry-${index}-${entry.rawName}`} className={`rounded-xl border p-2 ${entry.playerId ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40'}`}>
                                                         <div className="text-sm font-semibold text-slate-900">{entry.rawName}</div>
                                                         <select
@@ -5089,283 +5183,250 @@
                                                         )}
                                                     </div>
                                                 ))}
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <select
-                                                className={`min-h-[48px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-base ${plannerLiveActive ? 'text-slate-400 cursor-not-allowed' : ''}`}
-                                                value={matchdayPlanner.formation || '4-3-3'}
-                                                onChange={e => plannerSetFormation(e.target.value)}
-                                                disabled={plannerLiveActive}
-                                            >
-                                                {MATCHDAY_FORMATIONS.map((formation) => (
-                                                    <option key={`planner-formation-${formation}`} value={formation}>{formation}</option>
-                                                ))}
-                                            </select>
-                                            <button
-                                                onClick={plannerAutoFillStarters}
-                                                disabled={plannerLiveActive || !plannerRosterIds.length}
-                                                className={`min-h-[48px] px-4 rounded-lg text-base font-bold border ${plannerLiveActive || !plannerRosterIds.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white text-slate-700 border-slate-200'}`}
-                                            >
-                                                Auto-fill starters
-                                            </button>
-                                            <div className="text-[11px] text-slate-500">
-                                                Starters {plannerStarterIds.length} / {plannerSlots.length}
-                                            </div>
-                                        </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                            {plannerSlots.map((slot) => (
-                                                <div key={`planner-slot-${slot.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
-                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">{slot.label} · {getBenchGroupLabel(getBenchGroupFromLine(slot.line))}</div>
-                                                    <select
-                                                        className={`mt-1 w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base ${plannerLiveActive ? 'text-slate-400 cursor-not-allowed' : ''}`}
-                                                        value={matchdayPlanner?.starters?.[slot.id] || ''}
-                                                        onChange={e => plannerSetStarter(slot.id, e.target.value)}
-                                                        disabled={plannerLiveActive}
+                                                {(matchdayPlanner?.matchedEntries || []).length > 8 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setMatchdayShowAllRosterRows(prev => !prev)}
+                                                        className="w-full min-h-[42px] rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700"
                                                     >
-                                                        <option value="">Unassigned</option>
-                                                        {plannerRosterIds.map((playerId) => {
-                                                            const player = plannerPlayerLookup[playerId];
-                                                            if (!player) return null;
-                                                            return (
-                                                                <option key={`planner-slot-player-${slot.id}-${playerId}`} value={playerId}>
-                                                                    {player.firstName} {player.lastName}
-                                                                </option>
-                                                            );
-                                                        })}
-                                                    </select>
-                                                </div>
-                                            ))}
-                                        </div>
+                                                        {matchdayShowAllRosterRows
+                                                            ? 'Show fewer mapped rows'
+                                                            : `Show all ${(matchdayPlanner?.matchedEntries || []).length} mapped rows`}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
 
-                                    <div className="space-y-3 rounded-2xl border border-emerald-100 bg-emerald-50/30 p-3">
-                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <div className="text-[11px] font-bold text-slate-600 uppercase">Pitch Board</div>
-                                            <div className="text-[11px] text-slate-500">
-                                                {plannerLiveActive
-                                                    ? (plannerBoardMode === 'swap' ? 'Tap mode: swap' : 'Tap mode: substitute')
-                                                    : 'Preview lineup'}
-                                            </div>
-                                        </div>
-                                        {plannerLiveActive ? (
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <button
-                                                    onClick={() => {
-                                                        setPlannerBoardMode('sub');
-                                                        setPlannerSwapSlotA('');
-                                                        setPlannerSwapSlotB('');
-                                                    }}
-                                                    className={`min-h-[48px] rounded-lg text-base font-bold border ${plannerBoardMode === 'sub' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
-                                                >
-                                                    Sub mode
-                                                </button>
-                                                <button
-                                                    onClick={() => {
-                                                        setPlannerBoardMode('swap');
-                                                        setPlannerBoardSelectedSlotId('');
-                                                        setPlannerSubSlotId('');
-                                                    }}
-                                                    className={`min-h-[48px] rounded-lg text-base font-bold border ${plannerBoardMode === 'swap' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
-                                                >
-                                                    Swap mode
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <div className="text-[11px] text-slate-500">Set your starting positions above, then start live tracking.</div>
-                                        )}
+                                    <div className="flex justify-end">
+                                        <button onClick={() => { setMatchdayFlowTab('lineup'); setMatchdayLineupView('positions'); }} className="min-h-[42px] px-4 rounded-lg bg-slate-900 text-white text-sm font-bold">
+                                            Next: Lineup
+                                        </button>
+                                    </div>
+                                    </>
+                                    )}
 
-                                        <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-100/60 to-emerald-50/40 p-3">
-                                            <div className="space-y-3">
-                                                {plannerPitchLines.map((row) => (
-                                                    <div key={`planner-pitch-row-${row.key}`} className="space-y-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-900/80">{row.label}</div>
-                                                            <div className="text-[10px] text-emerald-900/60">{row.slots.length} slot{row.slots.length === 1 ? '' : 's'}</div>
-                                                        </div>
-                                                        <div
-                                                            className="grid gap-2"
-                                                            style={{ gridTemplateColumns: `repeat(${row.slots.length}, minmax(0, 1fr))` }}
+                                    {matchdayFlowTab === 'lineup' && (
+                                    <>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <button onClick={() => setMatchdayLineupView('positions')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLineupView === 'positions' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            Positions
+                                        </button>
+                                        <button onClick={() => setMatchdayLineupView('pitch')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLineupView === 'pitch' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            Pitch
+                                        </button>
+                                        <button onClick={() => setMatchdayLineupView('subs')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLineupView === 'subs' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            Subs
+                                        </button>
+                                    </div>
+
+                                    {matchdayLineupView === 'positions' && (
+                                        <div className="space-y-2">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <select
+                                                    className={`min-h-[48px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-base ${plannerLiveActive ? 'text-slate-400 cursor-not-allowed' : ''}`}
+                                                    value={matchdayPlanner.formation || '4-3-3'}
+                                                    onChange={e => plannerSetFormation(e.target.value)}
+                                                    disabled={plannerLiveActive}
+                                                >
+                                                    {MATCHDAY_FORMATIONS.map((formation) => (
+                                                        <option key={`planner-formation-${formation}`} value={formation}>{formation}</option>
+                                                    ))}
+                                                </select>
+                                                <button
+                                                    onClick={plannerAutoFillStarters}
+                                                    disabled={plannerLiveActive || !plannerRosterIds.length}
+                                                    className={`min-h-[48px] px-4 rounded-lg text-base font-bold border ${plannerLiveActive || !plannerRosterIds.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white text-slate-700 border-slate-200'}`}
+                                                >
+                                                    Auto-fill starters
+                                                </button>
+                                                <div className="text-[11px] text-slate-500">
+                                                    Starters {plannerStarterIds.length} / {plannerSlots.length}
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                                {plannerSlots.map((slot) => (
+                                                    <div key={`planner-slot-${slot.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
+                                                        <div className="text-[11px] font-bold text-slate-600 uppercase">{slot.label} · {getBenchGroupLabel(getBenchGroupFromLine(slot.line))}</div>
+                                                        <select
+                                                            className={`mt-1 w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base ${plannerLiveActive ? 'text-slate-400 cursor-not-allowed' : ''}`}
+                                                            value={matchdayPlanner?.starters?.[slot.id] || ''}
+                                                            onChange={e => plannerSetStarter(slot.id, e.target.value)}
+                                                            disabled={plannerLiveActive}
                                                         >
-                                                            {row.slots.map((slot) => {
-                                                                const onPitchPlayerId = normalizePlayerIdValue(plannerCurrentOnPitch[slot.id]);
-                                                                const starterPlayerId = normalizePlayerIdValue(matchdayPlanner?.starters?.[slot.id]);
-                                                                const shownPlayerId = plannerLiveActive ? onPitchPlayerId : starterPlayerId;
-                                                                const hasPlayer = !!shownPlayerId;
-                                                                const isSelectedAssign = !plannerLiveActive && plannerBoardSelectedSlotId === slot.id;
-                                                                const isSelectedSub = plannerLiveActive && plannerBoardMode === 'sub' && plannerSubSlotId === slot.id;
-                                                                const isSelectedSwapA = plannerLiveActive && plannerBoardMode === 'swap' && plannerSwapSlotA === slot.id;
-                                                                const isSelectedSwapB = plannerLiveActive && plannerBoardMode === 'swap' && plannerSwapSlotB === slot.id;
-                                                                const toneClass = hasPlayer
-                                                                    ? 'border-emerald-300 bg-white text-slate-900'
-                                                                    : 'border-slate-200 bg-white/70 text-slate-500';
-                                                                const selectedClass = isSelectedAssign
-                                                                    ? 'ring-2 ring-brand-500 border-brand-400'
-                                                                    : isSelectedSub
-                                                                        ? 'ring-2 ring-amber-400 border-amber-300'
-                                                                        : isSelectedSwapA
-                                                                            ? 'ring-2 ring-sky-400 border-sky-300'
-                                                                            : isSelectedSwapB
-                                                                                ? 'ring-2 ring-violet-400 border-violet-300'
-                                                                                : '';
+                                                            <option value="">Unassigned</option>
+                                                            {plannerRosterIds.map((playerId) => {
+                                                                const player = plannerPlayerLookup[playerId];
+                                                                if (!player) return null;
                                                                 return (
-                                                                    <button
-                                                                        key={`planner-pitch-slot-${slot.id}`}
-                                                                        onClick={() => plannerHandlePitchSlotTap(slot.id)}
-                                                                        className={`min-h-[82px] rounded-xl border px-2 py-2 text-left transition ${toneClass} ${selectedClass}`}
-                                                                    >
-                                                                        <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{slot.label}</div>
-                                                                        <div className={`mt-1 text-sm font-bold ${hasPlayer ? 'text-slate-900' : 'text-slate-400'}`}>
-                                                                            {plannerPlayerShortName(shownPlayerId)}
-                                                                        </div>
-                                                                        <div className={`text-[10px] mt-0.5 leading-tight ${hasPlayer ? 'text-slate-600' : 'text-slate-400'}`}>
-                                                                            {hasPlayer ? plannerPlayerName(shownPlayerId) : 'No player'}
-                                                                        </div>
-                                                                    </button>
+                                                                    <option key={`planner-slot-player-${slot.id}-${playerId}`} value={playerId}>
+                                                                        {player.firstName} {player.lastName}
+                                                                    </option>
                                                                 );
                                                             })}
-                                                        </div>
+                                                        </select>
                                                     </div>
                                                 ))}
                                             </div>
                                         </div>
+                                    )}
 
-                                        {plannerLiveActive ? (plannerBoardMode === 'sub' ? (
-                                            <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Quick substitution</div>
+                                    {matchdayLineupView === 'pitch' && (
+                                        <div className="space-y-3 rounded-2xl border border-emerald-100 bg-emerald-50/30 p-3">
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Pitch Board</div>
                                                 <div className="text-[11px] text-slate-500">
-                                                    {plannerSubSlotId
-                                                        ? `Outgoing: ${plannerSlotLookup[plannerSubSlotId]?.label || plannerSubSlotId.toUpperCase()}`
-                                                        : 'Tap the outgoing slot on the pitch'}
+                                                    {plannerLiveActive
+                                                        ? (plannerBoardMode === 'swap' ? 'Tap mode: swap' : 'Tap mode: substitute')
+                                                        : 'Preview lineup'}
                                                 </div>
-                                                <select
-                                                    className="w-full min-h-[48px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-base"
-                                                    value={plannerSubIncomingId}
-                                                    onChange={e => setPlannerSubIncomingId(e.target.value)}
-                                                >
-                                                    <option value="">Incoming player</option>
-                                                    {plannerSubIncomingIds.map((playerId) => {
+                                            </div>
+                                            <div className="text-[11px] text-slate-500">
+                                                {plannerLiveActive
+                                                    ? 'Live mode is running. Use the Live tab for substitutions and swaps.'
+                                                    : 'Set your starting positions here, then move to Live when the game starts.'}
+                                            </div>
+
+                                            <div className="rounded-2xl border border-emerald-200 bg-gradient-to-b from-emerald-100/60 to-emerald-50/40 p-3">
+                                                <div className="space-y-3">
+                                                    {plannerPitchLines.map((row) => (
+                                                        <div key={`planner-pitch-row-${row.key}`} className="space-y-2">
+                                                            <div className="flex items-center justify-between">
+                                                                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-900/80">{row.label}</div>
+                                                                <div className="text-[10px] text-emerald-900/60">{row.slots.length} slot{row.slots.length === 1 ? '' : 's'}</div>
+                                                            </div>
+                                                            <div
+                                                                className="grid gap-2"
+                                                                style={{ gridTemplateColumns: `repeat(${row.slots.length}, minmax(0, 1fr))` }}
+                                                            >
+                                                                {row.slots.map((slot) => {
+                                                                    const onPitchPlayerId = normalizePlayerIdValue(plannerCurrentOnPitch[slot.id]);
+                                                                    const starterPlayerId = normalizePlayerIdValue(matchdayPlanner?.starters?.[slot.id]);
+                                                                    const shownPlayerId = plannerLiveActive ? onPitchPlayerId : starterPlayerId;
+                                                                    const hasPlayer = !!shownPlayerId;
+                                                                    const isSelectedAssign = !plannerLiveActive && plannerBoardSelectedSlotId === slot.id;
+                                                                    const isSelectedSub = plannerLiveActive && plannerBoardMode === 'sub' && plannerSubSlotId === slot.id;
+                                                                    const isSelectedSwapA = plannerLiveActive && plannerBoardMode === 'swap' && plannerSwapSlotA === slot.id;
+                                                                    const isSelectedSwapB = plannerLiveActive && plannerBoardMode === 'swap' && plannerSwapSlotB === slot.id;
+                                                                    const toneClass = hasPlayer
+                                                                        ? 'border-emerald-300 bg-white text-slate-900'
+                                                                        : 'border-slate-200 bg-white/70 text-slate-500';
+                                                                    const selectedClass = isSelectedAssign
+                                                                        ? 'ring-2 ring-brand-500 border-brand-400'
+                                                                        : isSelectedSub
+                                                                            ? 'ring-2 ring-amber-400 border-amber-300'
+                                                                            : isSelectedSwapA
+                                                                                ? 'ring-2 ring-sky-400 border-sky-300'
+                                                                                : isSelectedSwapB
+                                                                                    ? 'ring-2 ring-violet-400 border-violet-300'
+                                                                                    : '';
+                                                                    return (
+                                                                        <button
+                                                                            key={`planner-pitch-slot-${slot.id}`}
+                                                                            onClick={() => plannerHandlePitchSlotTap(slot.id)}
+                                                                            className={`min-h-[82px] rounded-xl border px-2 py-2 text-left transition ${toneClass} ${selectedClass}`}
+                                                                        >
+                                                                            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{slot.label}</div>
+                                                                            <div className={`mt-1 text-sm font-bold ${hasPlayer ? 'text-slate-900' : 'text-slate-400'}`}>
+                                                                                {plannerPlayerShortName(shownPlayerId)}
+                                                                            </div>
+                                                                            <div className={`text-[10px] mt-0.5 leading-tight ${hasPlayer ? 'text-slate-600' : 'text-slate-400'}`}>
+                                                                                {hasPlayer ? plannerPlayerName(shownPlayerId) : 'No player'}
+                                                                            </div>
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <div className="rounded-xl border border-slate-200 bg-white p-3 text-[11px] text-slate-500">
+                                                {plannerLiveActive
+                                                    ? 'Live controls have moved to the Live tab for a cleaner setup screen.'
+                                                    : 'Set your setup here. Use Live tab during the game for substitutions and swaps.'}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {matchdayLineupView === 'subs' && (
+                                        <div className="space-y-2">
+                                            <div className="text-[11px] font-bold text-slate-600 uppercase">Bench Groups</div>
+                                            <div className="text-[11px] text-slate-500">Pick each player's sub line. This is where you set defence/midfield/forward substitutes.</div>
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                                {MATCHDAY_BENCH_GROUPS.map((group) => (
+                                                    <div key={`planner-bench-summary-${group}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
+                                                        <div className="text-[11px] font-bold text-slate-600 uppercase">{getBenchGroupLabel(group)}</div>
+                                                        {(matchdayPlanner?.bench?.[group] || []).length ? (
+                                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                                {(matchdayPlanner?.bench?.[group] || []).map((playerId) => (
+                                                                    <span key={`planner-bench-summary-chip-${group}-${playerId}`} className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-[11px] text-slate-700">
+                                                                        {plannerPlayerShortName(playerId)}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            <div className="mt-1 text-[11px] text-slate-400">No subs assigned</div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            {plannerBenchAssignableIds.length === 0 ? (
+                                                <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No bench candidates yet. Add more roster players or leave some starter slots unassigned.</div>
+                                            ) : (
+                                                <div className="space-y-2">
+                                                    {plannerBenchAssignableIds.map((playerId) => {
                                                         const player = plannerPlayerLookup[playerId];
                                                         if (!player) return null;
-                                                        const group = plannerBenchLookup[playerId];
+                                                        const benchGroup = plannerBenchLookup[playerId] || '';
                                                         return (
-                                                            <option key={`planner-board-sub-in-${playerId}`} value={playerId}>
-                                                                {player.firstName} {player.lastName}{group ? ` (${getBenchGroupLabel(group)})` : ' (Reserve)'}
-                                                            </option>
+                                                            <div key={`planner-bench-player-${playerId}`} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="text-sm font-semibold text-slate-900 truncate">{player.firstName} {player.lastName}</div>
+                                                                    <div className="text-[11px] text-slate-500">{player.position || 'Player'}</div>
+                                                                </div>
+                                                                <select
+                                                                    className="w-40 min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
+                                                                    value={benchGroup}
+                                                                    onChange={e => plannerSetBenchGroup(playerId, e.target.value)}
+                                                                >
+                                                                    <option value="">Not on bench</option>
+                                                                    {MATCHDAY_BENCH_GROUPS.map((group) => (
+                                                                        <option key={`planner-bench-group-${playerId}-${group}`} value={group}>
+                                                                            {getBenchGroupLabel(group)}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            </div>
                                                         );
                                                     })}
-                                                </select>
-                                                <button
-                                                    onClick={plannerCommitBoardSub}
-                                                    disabled={!plannerSubSlotId || !plannerSubIncomingId}
-                                                    className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerSubSlotId || !plannerSubIncomingId ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
-                                                >
-                                                    Sub in selected player
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Quick swap</div>
-                                                <div className="text-[11px] text-slate-500">
-                                                    {plannerSwapSlotA
-                                                        ? `Slot A: ${plannerSlotLookup[plannerSwapSlotA]?.label || plannerSwapSlotA.toUpperCase()}`
-                                                        : 'Tap first slot'}
                                                 </div>
-                                                <div className="text-[11px] text-slate-500">
-                                                    {plannerSwapSlotB
-                                                        ? `Slot B: ${plannerSlotLookup[plannerSwapSlotB]?.label || plannerSwapSlotB.toUpperCase()}`
-                                                        : 'Tap second slot'}
-                                                </div>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <button
-                                                        onClick={plannerCommitBoardSwap}
-                                                        disabled={!plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB}
-                                                        className={`min-h-[48px] rounded-lg text-base font-bold ${!plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
-                                                    >
-                                                        Swap now
-                                                    </button>
-                                                    <button
-                                                        onClick={() => {
-                                                            setPlannerSwapSlotA('');
-                                                            setPlannerSwapSlotB('');
-                                                        }}
-                                                        className="min-h-[48px] rounded-lg text-base font-bold border border-slate-200 bg-white text-slate-700"
-                                                    >
-                                                        Clear taps
-                                                    </button>
-                                                </div>
+                                            )}
+                                            <div className="flex flex-wrap gap-2 text-[11px]">
+                                                {MATCHDAY_BENCH_GROUPS.map((group) => (
+                                                    <span key={`planner-bench-count-${group}`} className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">
+                                                        {getBenchGroupLabel(group)} subs: {(matchdayPlanner?.bench?.[group] || []).length}
+                                                    </span>
+                                                ))}
                                             </div>
-                                        )) : (
-                                            <div className="rounded-xl border border-slate-200 bg-white p-3 text-[11px] text-slate-500">
-                                                Live controls appear here after you start live tracking.
-                                            </div>
-                                        )}
+                                        </div>
+                                    )}
+
+                                    <div className="flex justify-between gap-2">
+                                        <button onClick={() => setMatchdayFlowTab('roster')} className="min-h-[42px] px-4 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-bold">
+                                            Back: Roster
+                                        </button>
+                                        <button onClick={() => { setMatchdayFlowTab('live'); setMatchdayLiveView('actions'); }} className="min-h-[42px] px-4 rounded-lg bg-slate-900 text-white text-sm font-bold">
+                                            Next: Live
+                                        </button>
                                     </div>
 
-                                    <div className="space-y-2">
-                                        <div className="text-[11px] font-bold text-slate-600 uppercase">Bench Groups</div>
-                                        <div className="text-[11px] text-slate-500">Pick each player's sub line. This is where you set defence/midfield/forward substitutes.</div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                            {MATCHDAY_BENCH_GROUPS.map((group) => (
-                                                <div key={`planner-bench-summary-${group}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
-                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">{getBenchGroupLabel(group)}</div>
-                                                    {(matchdayPlanner?.bench?.[group] || []).length ? (
-                                                        <div className="mt-1 flex flex-wrap gap-1">
-                                                            {(matchdayPlanner?.bench?.[group] || []).map((playerId) => (
-                                                                <span key={`planner-bench-summary-chip-${group}-${playerId}`} className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-[11px] text-slate-700">
-                                                                    {plannerPlayerShortName(playerId)}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    ) : (
-                                                        <div className="mt-1 text-[11px] text-slate-400">No subs assigned</div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                        {plannerBenchAssignableIds.length === 0 ? (
-                                            <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No bench candidates yet. Add more roster players or leave some starter slots unassigned.</div>
-                                        ) : (
-                                            <div className="space-y-2">
-                                                {plannerBenchAssignableIds.map((playerId) => {
-                                                    const player = plannerPlayerLookup[playerId];
-                                                    if (!player) return null;
-                                                    const benchGroup = plannerBenchLookup[playerId] || '';
-                                                    return (
-                                                        <div key={`planner-bench-player-${playerId}`} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
-                                                            <div className="flex-1 min-w-0">
-                                                                <div className="text-sm font-semibold text-slate-900 truncate">{player.firstName} {player.lastName}</div>
-                                                                <div className="text-[11px] text-slate-500">{player.position || 'Player'}</div>
-                                                            </div>
-                                                            <select
-                                                                className="w-40 min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
-                                                                value={benchGroup}
-                                                                onChange={e => plannerSetBenchGroup(playerId, e.target.value)}
-                                                            >
-                                                                <option value="">Not on bench</option>
-                                                                {MATCHDAY_BENCH_GROUPS.map((group) => (
-                                                                    <option key={`planner-bench-group-${playerId}-${group}`} value={group}>
-                                                                        {getBenchGroupLabel(group)}
-                                                                    </option>
-                                                                ))}
-                                                            </select>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        )}
-                                        <div className="flex flex-wrap gap-2 text-[11px]">
-                                            {MATCHDAY_BENCH_GROUPS.map((group) => (
-                                                <span key={`planner-bench-count-${group}`} className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">
-                                                    {getBenchGroupLabel(group)} subs: {(matchdayPlanner?.bench?.[group] || []).length}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
+                                    </>
+                                    )}
 
+                                    {matchdayFlowTab === 'live' && (
+                                    <>
                                     <div className="space-y-3">
                                         <div className="flex flex-wrap items-center gap-2">
                                             {!plannerLiveActive ? (
@@ -5385,122 +5446,151 @@
                                             <div className="text-[11px] text-slate-500">On pitch now: {plannerOnPitchIds.length}</div>
                                         </div>
 
-                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
-                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Substitute</div>
-                                                <select
-                                                    className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
-                                                    value={plannerSubSlotId}
-                                                    onChange={e => {
-                                                        setPlannerSubSlotId(e.target.value);
-                                                        setPlannerBoardSelectedSlotId(e.target.value);
-                                                    }}
-                                                >
-                                                    <option value="">Outgoing slot</option>
-                                                    {plannerOnPitchSlots.map((slot) => (
-                                                        <option key={`planner-sub-slot-${slot.id}`} value={slot.id}>
-                                                            {slot.label} - {plannerPlayerName(plannerCurrentOnPitch[slot.id])}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                                <select
-                                                    className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
-                                                    value={plannerSubIncomingId}
-                                                    onChange={e => setPlannerSubIncomingId(e.target.value)}
-                                                >
-                                                    <option value="">Incoming player</option>
-                                                    {plannerSubIncomingIds.map((playerId) => {
-                                                        const player = plannerPlayerLookup[playerId];
-                                                        if (!player) return null;
-                                                        const group = plannerBenchLookup[playerId];
-                                                        return (
-                                                            <option key={`planner-sub-player-${playerId}`} value={playerId}>
-                                                                {player.firstName} {player.lastName}{group ? ` (${getBenchGroupLabel(group)})` : ' (Reserve)'}
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <button onClick={() => setMatchdayLiveView('actions')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'actions' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                                Actions
+                                            </button>
+                                            <button onClick={() => setMatchdayLiveView('map')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'map' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                                On-pitch
+                                            </button>
+                                            <button onClick={() => setMatchdayLiveView('log')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'log' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                                Log
+                                            </button>
+                                        </div>
+
+                                        {matchdayLiveView === 'actions' && (
+                                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">Substitute</div>
+                                                    <select
+                                                        className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
+                                                        value={plannerSubSlotId}
+                                                        onChange={e => {
+                                                            setPlannerSubSlotId(e.target.value);
+                                                            setPlannerBoardSelectedSlotId(e.target.value);
+                                                        }}
+                                                    >
+                                                        <option value="">Outgoing slot</option>
+                                                        {plannerOnPitchSlots.map((slot) => (
+                                                            <option key={`planner-sub-slot-${slot.id}`} value={slot.id}>
+                                                                {slot.label} - {plannerPlayerName(plannerCurrentOnPitch[slot.id])}
                                                             </option>
+                                                        ))}
+                                                    </select>
+                                                    <select
+                                                        className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
+                                                        value={plannerSubIncomingId}
+                                                        onChange={e => setPlannerSubIncomingId(e.target.value)}
+                                                    >
+                                                        <option value="">Incoming player</option>
+                                                        {plannerSubIncomingIds.map((playerId) => {
+                                                            const player = plannerPlayerLookup[playerId];
+                                                            if (!player) return null;
+                                                            const group = plannerBenchLookup[playerId];
+                                                            return (
+                                                                <option key={`planner-sub-player-${playerId}`} value={playerId}>
+                                                                    {player.firstName} {player.lastName}{group ? ` (${getBenchGroupLabel(group)})` : ' (Reserve)'}
+                                                                </option>
+                                                            );
+                                                        })}
+                                                    </select>
+                                                    <button
+                                                        onClick={plannerApplySub}
+                                                        disabled={!plannerLiveActive || !plannerSubSlotId || !plannerSubIncomingId}
+                                                        className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerLiveActive || !plannerSubSlotId || !plannerSubIncomingId ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                                                    >
+                                                        Commit substitution
+                                                    </button>
+                                                </div>
+
+                                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">Swap Positions</div>
+                                                    <select className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={plannerSwapSlotA} onChange={e => {
+                                                        setPlannerBoardMode('swap');
+                                                        setPlannerSwapSlotA(e.target.value);
+                                                    }}>
+                                                        <option value="">Slot A</option>
+                                                        {plannerOnPitchSlots.map((slot) => (
+                                                            <option key={`planner-swap-a-${slot.id}`} value={slot.id}>
+                                                                {slot.label} - {plannerPlayerName(plannerCurrentOnPitch[slot.id])}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <select className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={plannerSwapSlotB} onChange={e => {
+                                                        setPlannerBoardMode('swap');
+                                                        setPlannerSwapSlotB(e.target.value);
+                                                    }}>
+                                                        <option value="">Slot B</option>
+                                                        {plannerOnPitchSlots.map((slot) => (
+                                                            <option key={`planner-swap-b-${slot.id}`} value={slot.id}>
+                                                                {slot.label} - {plannerPlayerName(plannerCurrentOnPitch[slot.id])}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <button
+                                                        onClick={plannerApplySwap}
+                                                        disabled={!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB}
+                                                        className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-white border border-slate-200 text-slate-700'}`}
+                                                    >
+                                                        Commit swap
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {matchdayLiveView === 'map' && (
+                                            <div className="space-y-2">
+                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Current On-pitch Map</div>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                                    {plannerSlots.map((slot) => {
+                                                        const onPitchPlayerId = normalizePlayerIdValue(plannerCurrentOnPitch[slot.id]);
+                                                        const toneClass = onPitchPlayerId ? 'border-emerald-200 bg-emerald-50/60' : 'border-slate-200 bg-slate-50';
+                                                        return (
+                                                            <div key={`planner-live-slot-${slot.id}`} className={`rounded-xl border p-2 ${toneClass}`}>
+                                                                <div className="text-[11px] font-bold text-slate-500 uppercase">{slot.label}</div>
+                                                                <div className={`text-sm font-semibold ${onPitchPlayerId ? 'text-slate-900' : 'text-slate-400'}`}>
+                                                                    {onPitchPlayerId ? plannerPlayerName(onPitchPlayerId) : 'Empty'}
+                                                                </div>
+                                                            </div>
                                                         );
                                                     })}
-                                                </select>
-                                                <button
-                                                    onClick={plannerApplySub}
-                                                    disabled={!plannerLiveActive || !plannerSubSlotId || !plannerSubIncomingId}
-                                                    className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerLiveActive || !plannerSubSlotId || !plannerSubIncomingId ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
-                                                >
-                                                    Commit substitution
-                                                </button>
-                                            </div>
-
-                                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
-                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Swap Positions</div>
-                                                <select className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={plannerSwapSlotA} onChange={e => {
-                                                    setPlannerBoardMode('swap');
-                                                    setPlannerSwapSlotA(e.target.value);
-                                                }}>
-                                                    <option value="">Slot A</option>
-                                                    {plannerOnPitchSlots.map((slot) => (
-                                                        <option key={`planner-swap-a-${slot.id}`} value={slot.id}>
-                                                            {slot.label} - {plannerPlayerName(plannerCurrentOnPitch[slot.id])}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                                <select className="w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base" value={plannerSwapSlotB} onChange={e => {
-                                                    setPlannerBoardMode('swap');
-                                                    setPlannerSwapSlotB(e.target.value);
-                                                }}>
-                                                    <option value="">Slot B</option>
-                                                    {plannerOnPitchSlots.map((slot) => (
-                                                        <option key={`planner-swap-b-${slot.id}`} value={slot.id}>
-                                                            {slot.label} - {plannerPlayerName(plannerCurrentOnPitch[slot.id])}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                                <button
-                                                    onClick={plannerApplySwap}
-                                                    disabled={!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB}
-                                                    className={`w-full min-h-[48px] rounded-lg text-base font-bold ${!plannerLiveActive || !plannerSwapSlotA || !plannerSwapSlotB || plannerSwapSlotA === plannerSwapSlotB ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-white border border-slate-200 text-slate-700'}`}
-                                                >
-                                                    Commit swap
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        <div className="space-y-2">
-                                            <div className="text-[11px] font-bold text-slate-600 uppercase">Current On-pitch Map</div>
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                                {plannerSlots.map((slot) => {
-                                                    const onPitchPlayerId = normalizePlayerIdValue(plannerCurrentOnPitch[slot.id]);
-                                                    const toneClass = onPitchPlayerId ? 'border-emerald-200 bg-emerald-50/60' : 'border-slate-200 bg-slate-50';
-                                                    return (
-                                                        <div key={`planner-live-slot-${slot.id}`} className={`rounded-xl border p-2 ${toneClass}`}>
-                                                            <div className="text-[11px] font-bold text-slate-500 uppercase">{slot.label}</div>
-                                                            <div className={`text-sm font-semibold ${onPitchPlayerId ? 'text-slate-900' : 'text-slate-400'}`}>
-                                                                {onPitchPlayerId ? plannerPlayerName(onPitchPlayerId) : 'Empty'}
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-
-                                        <div className="space-y-2">
-                                            <div className="text-[11px] font-bold text-slate-600 uppercase">Live Event Log</div>
-                                            {plannerRecentEvents.length === 0 ? (
-                                                <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No live events yet.</div>
-                                            ) : (
-                                                <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
-                                                    {plannerRecentEvents.map((event) => (
-                                                        <div key={`planner-event-${event.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-                                                            <div className="text-[11px] text-slate-500">{new Date(event.at || Date.now()).toLocaleTimeString()}</div>
-                                                            <div className="text-sm font-medium text-slate-800">{event.note || 'Event logged'}</div>
-                                                        </div>
-                                                    ))}
                                                 </div>
-                                            )}
+                                            </div>
+                                        )}
+
+                                        {matchdayLiveView === 'log' && (
+                                            <div className="space-y-2">
+                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Live Event Log</div>
+                                                {plannerRecentEvents.length === 0 ? (
+                                                    <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No live events yet.</div>
+                                                ) : (
+                                                    <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                                                        {plannerRecentEvents.map((event) => (
+                                                            <div key={`planner-event-${event.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                                                                <div className="text-[11px] text-slate-500">{new Date(event.at || Date.now()).toLocaleTimeString()}</div>
+                                                                <div className="text-sm font-medium text-slate-800">{event.note || 'Event logged'}</div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <div className="flex justify-between gap-2">
+                                            <button onClick={() => { setMatchdayFlowTab('lineup'); setMatchdayLineupView('positions'); }} className="min-h-[42px] px-4 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-bold">
+                                                Back: Lineup
+                                            </button>
+                                            <button onClick={() => setMatchdayFlowTab('squad')} className="min-h-[42px] px-4 rounded-lg bg-slate-900 text-white text-sm font-bold">
+                                                Next: Squad
+                                            </button>
                                         </div>
                                     </div>
+                                    </>
+                                    )}
                                 </div>
                                 )}
 
-                                {(isMatchdayWorkspace || fixtureDetailTab === 'squad') && (
+                                {((isMatchdayWorkspace && matchdayFlowTab === 'squad') || (!isMatchdayWorkspace && fixtureDetailTab === 'squad')) && (
                                 <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
                                     <div className="flex justify-between items-start gap-3">
                                         <div>
@@ -5584,6 +5674,9 @@
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments</div>
                                             <div className="text-[11px] text-slate-500">Mark received / write-off / adjust fee / remove</div>
                                             <div className="text-[11px] text-slate-600 mt-1">Paid {paymentSummary.paid} · Written off {paymentSummary.writtenOff} · Unpaid {paymentSummary.unpaid} · Total {paymentSummary.total}</div>
+                                            <div className="text-[11px] text-slate-500 mt-1">
+                                                Fees billed {formatCurrency(playerFeeSummary.billed)} · Collected {formatCurrency(playerFeeSummary.collected)} · Outstanding {formatCurrency(playerFeeSummary.outstanding)}
+                                            </div>
                                             <label className="mt-2 inline-flex items-center gap-2 text-[11px] font-semibold text-slate-600">
                                                 <input type="checkbox" checked={paymentsSettled} onChange={e => updatePaymentsSettled(e.target.checked)} />
                                                 Match Payments Settled
@@ -5594,9 +5687,9 @@
                                         </div>
                                         <div className="flex items-start gap-3">
                                             <div className="text-right">
-                                                <div className="text-xs text-slate-500">Total cost</div>
+                                                <div className="text-xs text-slate-500">Entered costs</div>
                                                 <div className="text-sm font-bold text-slate-900">{formatCurrency(Math.abs(fixtureTotals.cost))}</div>
-                                                <div className="text-[11px] text-slate-500">Ref: {formatCurrency(Math.abs(fixtureTotals.ref))}</div>
+                                                <div className="text-[11px] text-slate-500">Ref cost: {formatCurrency(Math.abs(fixtureTotals.ref))}</div>
                                             </div>
                                             <button onClick={() => setIsPaymentsOpen(v => !v)} className="text-xs font-bold bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-lg flex items-center gap-1">
                                                 <Icon name={isPaymentsOpen ? 'ChevronUp' : 'ChevronDown'} size={14} /> {isPaymentsOpen ? 'Hide' : 'Show'}
@@ -5745,21 +5838,45 @@
                                 </div>
                             </div>
                             <div className="fixed inset-x-0 bottom-0 z-[72] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-white via-white/95 to-white/0">
-                                <div className="max-w-4xl mx-auto grid grid-cols-3 gap-2">
-                                    <button onClick={() => setSelectedFixture(null)} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
-                                        Back
-                                    </button>
-                                    {!isMatchdayWorkspace && (
-                                        <button onClick={() => setIsScoreOpen(true)} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
-                                            Score
-                                        </button>
+                                <div className="max-w-4xl mx-auto space-y-2">
+                                    {isMatchdayWorkspace && (
+                                        <div className="grid grid-cols-4 gap-2">
+                                            {[
+                                                ['roster', 'Roster'],
+                                                ['lineup', 'Lineup'],
+                                                ['live', 'Live'],
+                                                ['squad', 'Squad']
+                                            ].map(([id, label]) => (
+                                                <button
+                                                    key={`matchday-floating-tab-${id}`}
+                                                    onClick={() => {
+                                                        setMatchdayFlowTab(id);
+                                                        if (id === 'lineup') setMatchdayLineupView('positions');
+                                                        if (id === 'live') setMatchdayLiveView('actions');
+                                                    }}
+                                                    className={`min-h-[38px] rounded-lg text-[11px] font-bold border ${matchdayFlowTab === id ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}
+                                                >
+                                                    {label}
+                                                </button>
+                                            ))}
+                                        </div>
                                     )}
-                                    <button
-                                        onClick={() => saveFixtureDetails({ closeOnSave: true })}
-                                        className={`min-h-[48px] rounded-xl bg-slate-900 text-white text-sm font-bold ${isMatchdayWorkspace ? 'col-span-2' : ''}`}
-                                    >
-                                        {isMatchdayWorkspace ? 'Save Plan & Close' : 'Save & Close'}
-                                    </button>
+                                    <div className={`grid gap-2 ${isMatchdayWorkspace ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                                        <button onClick={() => setSelectedFixture(null)} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
+                                            Back
+                                        </button>
+                                        {!isMatchdayWorkspace && (
+                                            <button onClick={() => setIsScoreOpen(true)} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
+                                                Score
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => saveFixtureDetails({ closeOnSave: true })}
+                                            className="min-h-[48px] rounded-xl bg-slate-900 text-white text-sm font-bold"
+                                        >
+                                            {isMatchdayWorkspace ? 'Save Plan & Close' : 'Save & Close'}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                             <button onClick={scrollToTop} className="fixed bottom-24 right-4 z-[75] bg-white/90 backdrop-blur border border-slate-200 shadow-lg rounded-full px-4 py-2 text-sm font-bold text-slate-700 flex items-center gap-2">
@@ -6184,11 +6301,13 @@
                 transactions.forEach(tx => {
                     const d = new Date(tx.date);
                     if(isNaN(d)) return;
+                    const impact = getTxCashImpact(tx);
+                    if (!impact) return;
                     const y = d.getFullYear();
                     const mKey = `${y}-${String(d.getMonth()+1).padStart(2,'0')}`;
                     const mLabel = `${d.toLocaleString('default', { month: 'short' })} ${y}`;
-                    addRow(yearly, String(y), String(y), tx.amount);
-                    addRow(monthly, mKey, mLabel, tx.amount);
+                    addRow(yearly, String(y), String(y), impact);
+                    addRow(monthly, mKey, mLabel, impact);
                 });
                 const yearlyRows = Object.entries(yearly).sort((a,b)=> Number(b[0]) - Number(a[0])).map(([,v]) => v);
                 const monthlyRows = Object.entries(monthly).sort((a,b)=> b[0].localeCompare(a[0])).map(([,v]) => v);
@@ -6208,10 +6327,12 @@
 
                 // Calculate spending breakdown (Expenses only)
                 const cats = {};
-                txs.filter(t => t.amount < 0).forEach(t => {
+                txs.forEach(t => {
+                    const impact = getTxCashImpact(t);
+                    if (impact >= 0) return;
                     const c = normalizeFeeCategory(t.category) || 'Other';
                     if(!cats[c]) cats[c] = 0;
-                    cats[c] += Math.abs(t.amount);
+                    cats[c] += Math.abs(impact);
                 });
                 setBreakdown(cats);
             };
@@ -6289,8 +6410,14 @@
                 );
             };
 
-            const totalIncome = useMemo(() => transactions.filter(t => t.amount > 0).reduce((a,b)=>a+b.amount,0), [transactions]);
-            const totalExpense = useMemo(() => transactions.filter(t => t.amount < 0).reduce((a,b)=>a+b.amount,0), [transactions]);
+            const totalIncome = useMemo(() => transactions.reduce((sum, tx) => {
+                const impact = getTxCashImpact(tx);
+                return impact > 0 ? sum + impact : sum;
+            }, 0), [transactions]);
+            const totalExpense = useMemo(() => transactions.reduce((sum, tx) => {
+                const impact = getTxCashImpact(tx);
+                return impact < 0 ? sum + impact : sum;
+            }, 0), [transactions]);
             const currentCash = useMemo(() => totalIncome + totalExpense, [totalIncome, totalExpense]);
             const outstanding = useMemo(() => {
                 return summarizeOutstanding(transactions);
@@ -6298,10 +6425,12 @@
             const categorySummary = useMemo(() => {
                 const map = {};
                 transactions.forEach(t => {
+                    const impact = getTxCashImpact(t);
+                    if (!impact) return;
                     const key = normalizeFeeCategory(t.category) || 'Other';
                     if(!map[key]) map[key] = { income:0, expense:0, net:0, count:0 };
-                    if(t.amount >= 0) map[key].income += t.amount; else map[key].expense += t.amount;
-                    map[key].net += t.amount;
+                    if(impact >= 0) map[key].income += impact; else map[key].expense += impact;
+                    map[key].net += impact;
                     map[key].count += 1;
                 });
                 return Object.entries(map).map(([cat, v]) => ({ cat, ...v })).sort((a,b)=>Math.abs(b.net)-Math.abs(a.net));
@@ -6309,17 +6438,21 @@
         // Keep breakdown modal in Finances only
             const incomeBreakdown = useMemo(() => {
                 const map = {};
-                transactions.filter(t => t.amount > 0).forEach(t => {
+                transactions.forEach(t => {
+                    const impact = getTxCashImpact(t);
+                    if (impact <= 0) return;
                     const key = normalizeFeeCategory(t.category) || 'Other';
-                    map[key] = (map[key] || 0) + t.amount;
+                    map[key] = (map[key] || 0) + impact;
                 });
                 return map;
             }, [transactions]);
             const expenseBreakdown = useMemo(() => {
                 const map = {};
-                transactions.filter(t => t.amount < 0).forEach(t => {
+                transactions.forEach(t => {
+                    const impact = getTxCashImpact(t);
+                    if (impact >= 0) return;
                     const key = normalizeFeeCategory(t.category) || 'Other';
-                    map[key] = (map[key] || 0) + Math.abs(t.amount);
+                    map[key] = (map[key] || 0) + Math.abs(impact);
                 });
                 return map;
             }, [transactions]);
@@ -6355,8 +6488,9 @@
                 let running = 0;
                 return sorted.map((original) => {
                     const amount = Number(original.amount) || 0;
-                    running += amount;
-                    return { ...original, amount, runningBalance: running };
+                    const cashImpact = getTxCashImpact(original);
+                    running += cashImpact;
+                    return { ...original, amount, cashImpact, runningBalance: running };
                 });
             }, [transactions]);
 
@@ -6372,7 +6506,7 @@
                     return;
                 }
                 const rows = buildLedgerWithRunningBalance();
-                const headers = ['Date', 'Description', 'Category', 'Type', 'Flow', 'Amount (SGD)', 'Running Balance (SGD)', 'Player', 'Payee', 'Fixture', 'Reconciled'];
+                const headers = ['Date', 'Description', 'Category', 'Type', 'Flow', 'Amount (SGD)', 'Cash Impact (SGD)', 'Running Balance (SGD)', 'Player', 'Payee', 'Fixture', 'Reconciled'];
                 const csvLines = [headers.map(escapeCsv).join(',')];
                 rows.forEach((row) => {
                     const player = resolvePlayerForRow(row.playerId);
@@ -6383,6 +6517,7 @@
                         row.type || '',
                         row.flow || deriveFlow(row.type || ''),
                         (row.amount || 0).toFixed(2),
+                        (row.cashImpact || 0).toFixed(2),
                         (row.runningBalance || 0).toFixed(2),
                         player ? `${player.firstName} ${player.lastName}`.trim() : '',
                         row.payee || '',
@@ -6419,6 +6554,7 @@
                             <td>${row.type || ''}</td>
                             <td>${row.flow || deriveFlow(row.type || '')}</td>
                             <td>${formatCurrency(row.amount)}</td>
+                            <td>${formatCurrency(row.cashImpact)}</td>
                             <td>${formatCurrency(row.runningBalance)}</td>
                             <td>${playerName}</td>
                             <td>${row.payee || '—'}</td>
@@ -6450,6 +6586,7 @@
                                         <th>Type</th>
                                         <th>Flow</th>
                                         <th>Amount</th>
+                                        <th>Cash Impact</th>
                                         <th>Running Balance</th>
                                         <th>Player</th>
                                         <th>Payee</th>
@@ -6699,6 +6836,7 @@
                                 const outstandingTx = isOutstandingTransaction(tx, transactions);
                                 const coveredPlayerCharge = !tx.isReconciled && isCoveredPlayerCharge(tx, transactions);
                                 const flowDirection = getTxFlowDirection(tx);
+                                const cashImpact = getTxCashImpact(tx);
                                 return (
                                     <div key={tx.id} className="bg-white/90 backdrop-blur-sm p-3 rounded-xl shadow-sm border border-slate-100 flex justify-between gap-2 items-start hover:shadow-md transition">
                                         <div className="flex items-start gap-2">
@@ -6730,6 +6868,11 @@
                                             {coveredPlayerCharge && (
                                                 <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
                                                     Covered
+                                                </span>
+                                            )}
+                                            {!cashImpact && Number(tx.amount || 0) !== 0 && (
+                                                <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                                                    Non-cash
                                                 </span>
                                             )}
                                             <div className={`font-mono font-extrabold text-sm ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -6912,7 +7055,10 @@
                     
                     const sortedTxs = txs.sort((a,b) => new Date(a.date) - new Date(b.date));
                     let running = 0;
-                    const history = sortedTxs.map(t => { running += t.amount; return running; });
+                    const history = sortedTxs.map(t => {
+                        running += getTxCashImpact(t);
+                        return running;
+                    });
                     const chartData = history.slice(-20);
                     const { receivable, payable } = summarizeOutstanding(txs);
 
@@ -7001,7 +7147,7 @@
                         .sort((a, b) => a.inDays - b.inDays)
                         .slice(0, 3);
                     const recentPayments = txs
-                        .filter(tx => tx.amount > 0 && !tx.isWriteOff)
+                        .filter(tx => getTxCashImpact(tx) > 0)
                         .sort((a, b) => new Date(b.date) - new Date(a.date))
                         .slice(0, 4)
                         .map(tx => {
@@ -8036,7 +8182,8 @@
                     const sortedTxs = [...txs].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
                     let running = 0;
                     sortedTxs.forEach((tx) => {
-                        const amount = Number(tx.amount || 0);
+                        const amount = getTxCashImpact(tx);
+                        if (!amount) return;
                         const date = new Date(tx.date || 0);
                         if (Number.isNaN(date.getTime())) return;
                         const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
@@ -8072,8 +8219,14 @@
                     const fixtureProfitability = fixturesWithDates
                         .map((fixture) => {
                             const txList = txByFixture[String(fixture.id)] || [];
-                            const income = txList.filter(tx => Number(tx.amount || 0) > 0).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-                            const expense = txList.filter(tx => Number(tx.amount || 0) < 0).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+                            const income = txList.reduce((sum, tx) => {
+                                const impact = getTxCashImpact(tx);
+                                return impact > 0 ? sum + impact : sum;
+                            }, 0);
+                            const expense = txList.reduce((sum, tx) => {
+                                const impact = getTxCashImpact(tx);
+                                return impact < 0 ? sum + impact : sum;
+                            }, 0);
                             const net = income + expense;
                             const outcome = getFixtureOutcome(fixture);
                             const resultLabel = outcome.played ? outcome.result : 'UPCOMING';
@@ -8103,8 +8256,14 @@
                     const outstanding = Math.max(0, billed - covered);
                     const rate = billed > 0 ? (covered / billed) * 100 : 100;
 
-                    const totalIncome = txs.filter(tx => Number(tx.amount || 0) > 0).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-                    const totalExpense = txs.filter(tx => Number(tx.amount || 0) < 0).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+                    const totalIncome = txs.reduce((sum, tx) => {
+                        const impact = getTxCashImpact(tx);
+                        return impact > 0 ? sum + impact : sum;
+                    }, 0);
+                    const totalExpense = txs.reduce((sum, tx) => {
+                        const impact = getTxCashImpact(tx);
+                        return impact < 0 ? sum + impact : sum;
+                    }, 0);
                     const totalNet = totalIncome + totalExpense;
                     const avgNet = monthly.length ? (monthly.reduce((sum, row) => sum + Number(row.net || 0), 0) / monthly.length) : 0;
 
@@ -8251,7 +8410,7 @@
                             <div className="text-lg font-display font-bold text-slate-900">{formatCurrency(cashSummary.avgNet)}</div>
                         </div>
                         <div className="bg-white border border-slate-200 rounded-xl p-3">
-                            <div className="text-[10px] uppercase font-bold text-slate-500">Avg fixture P/L</div>
+                            <div className="text-[10px] uppercase font-bold text-slate-500">Avg fixture cash P/L</div>
                             <div className="text-lg font-display font-bold text-slate-900">{formatCurrency(averageFixtureNet)}</div>
                         </div>
                     </div>
