@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-79';
+        const MASTER_BUILD_VERSION = '2026.03.14-81';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -516,6 +516,35 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-14-home-bank-card-tap',
+                at: '2026-03-14T23:25:00+08:00',
+                build: '2026.03.14-81',
+                area: 'Home',
+                title: 'Home bank card is now tappable and more compact',
+                summary: 'The Home bank card now opens Banking when tapped and no longer uses the extra Money Position or Cleared bank cash labels.',
+                changes: [
+                    { label: 'Home bank card', from: 'Static labeled summary', to: 'Compact tappable bank summary that opens Banking' }
+                ],
+                details: [
+                    'The card now gives more space to the bank figure itself while keeping the 7-day movement insight on the right.'
+                ]
+            },
+            {
+                id: '2026-03-14-home-bank-7day-delta',
+                at: '2026-03-14T23:15:00+08:00',
+                build: '2026.03.14-80',
+                area: 'Home',
+                title: 'Home header trimmed and money card now shows 7-day bank movement',
+                summary: 'The Today label was removed, and the old season mini-card on the money panel now shows how much cleared bank cash has moved up or down over the last seven days.',
+                changes: [
+                    { label: 'Date block', from: 'Included Today label', to: 'Weekday and date only' },
+                    { label: 'Money mini-card', from: 'Season label', to: 'Last 7 days bank movement in dollars' }
+                ],
+                details: [
+                    'The 7-day figure is based on cleared cash-impact transactions dated within the last seven days, so it reflects recent bank movement rather than a generic visual.'
+                ]
+            },
             {
                 id: '2026-03-14-home-header-refined',
                 at: '2026-03-14T23:05:00+08:00',
@@ -10354,7 +10383,8 @@
                 history: [],
                 outstanding: { receivable: 0, payable: 0 },
                 record: { played: 0, wins: 0, draws: 0, losses: 0, points: 0 },
-                seasonLabel: ''
+                seasonLabel: '',
+                weeklyBankDelta: 0
             });
             const [nextFixture, setNextFixture] = useState(null);
             const [lastResult, setLastResult] = useState(null);
@@ -10479,6 +10509,14 @@
                         || playedFixtures[0]?.seasonTag
                         || fixtures[fixtures.length - 1]?.seasonTag
                         || 'Latest Season';
+                    const sevenDaysAgo = new Date();
+                    sevenDaysAgo.setHours(0, 0, 0, 0);
+                    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+                    const weeklyBankDelta = sortedTxs.reduce((sum, tx) => {
+                        const txDate = new Date(tx.date || 0);
+                        if (Number.isNaN(txDate.getTime()) || txDate < sevenDaysAgo) return sum;
+                        return sum + getTxCashImpact(tx);
+                    }, 0);
 
                     const seasonRecord = playedFixtures
                         .filter((fixture) => (fixture.seasonTag || 'Unknown Season') === latestSeasonLabel)
@@ -10507,7 +10545,8 @@
                         history: [],
                         outstanding: financePosition.outstanding,
                         record: seasonRecord,
-                        seasonLabel: latestSeasonLabel
+                        seasonLabel: latestSeasonLabel,
+                        weeklyBankDelta
                     });
                     setNextFixture(upcoming || null);
                     setLastResult(lastPlayed ? {
@@ -10851,13 +10890,9 @@
                                         </div>
                                     </div>
                                     <div className="rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-right shrink-0">
-                                        <div className="text-[10px] uppercase tracking-wider text-blue-100 font-semibold">Today</div>
                                         <div className="text-[11px] font-bold leading-tight">{todayWeekdayLabel}</div>
                                         <div className="text-[10px] text-blue-100 leading-tight mt-0.5">{todayDateLabel}</div>
                                     </div>
-                                </div>
-                                <div className="text-[10px] uppercase tracking-[0.16em] text-blue-100/90 font-semibold">
-                                    {stats.seasonLabel || 'Latest season'}
                                 </div>
                                 <div className="grid grid-cols-3 gap-2">
                                     <div className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-2">
@@ -10877,20 +10912,24 @@
                         </div>
                     </header>
 
-                    <div className="rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft space-y-3 backdrop-blur-sm">
+                    <button
+                        type="button"
+                        onClick={() => onNavigate('finances')}
+                        className="w-full rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft backdrop-blur-sm text-left transition-colors hover:border-blue-200"
+                    >
                         <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Money Position</div>
-                                <div className="text-3xl font-display font-bold text-slate-900 leading-none mt-1">{formatCurrency(stats.clearedBankCash, { minimumFractionDigits: 0 })}</div>
-                                <div className="mt-1 text-[11px] font-semibold text-slate-500">Cleared bank cash</div>
+                                <div className="text-3xl font-display font-bold text-slate-900 leading-none">{formatCurrency(stats.clearedBankCash, { minimumFractionDigits: 0 })}</div>
                             </div>
                             <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-right shrink-0 min-w-[122px]">
-                                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Season</div>
-                                <div className="text-[11px] font-bold text-slate-900 leading-tight mt-1">{stats.seasonLabel || 'Latest season'}</div>
-                                <div className="text-[10px] text-slate-500 mt-1">{stats.record.played} played</div>
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Last 7 days</div>
+                                <div className={`text-[13px] font-bold leading-tight mt-1 ${stats.weeklyBankDelta > 0 ? 'text-emerald-600' : stats.weeklyBankDelta < 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+                                    {stats.weeklyBankDelta > 0 ? '+' : stats.weeklyBankDelta < 0 ? '-' : ''}{formatCurrency(Math.abs(stats.weeklyBankDelta), { maximumFractionDigits: 0 })}
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-1">bank movement</div>
                             </div>
                         </div>
-                    </div>
+                    </button>
 
                     <div className="rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft space-y-3 backdrop-blur-sm">
                         <div className="flex items-center justify-between gap-2">
