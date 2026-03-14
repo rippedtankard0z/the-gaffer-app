@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-74';
+        const MASTER_BUILD_VERSION = '2026.03.14-75';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -516,6 +516,20 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-14-money-position-split',
+                at: '2026-03-14T22:05:00+08:00',
+                build: '2026.03.14-75',
+                area: 'Finance',
+                title: 'Money split added for club funds, cleared cash, and pending incoming',
+                summary: 'Home and Bank now separate cleared bank cash from pending incoming money so mixed personal-account handling is easier to reason about.',
+                changes: [
+                    { label: 'Money view', from: 'One headline cash number', to: 'Club funds total, cleared bank cash, and pending incoming/outgoing shown separately' }
+                ],
+                details: [
+                    'Club funds total is calculated as cleared bank cash plus pending incoming minus pending outgoing, while cleared bank cash remains settled cash only.'
+                ]
+            },
             {
                 id: '2026-03-14-settled-wording',
                 at: '2026-03-14T21:20:00+08:00',
@@ -1327,6 +1341,33 @@
                 }
             });
             return summary;
+        };
+
+        const summarizeFinancePosition = (txList = []) => {
+            const outstanding = summarizeOutstanding(txList);
+            const clearedIncome = (txList || []).reduce((sum, tx) => {
+                const impact = getTxCashImpact(tx);
+                return impact > 0 ? sum + impact : sum;
+            }, 0);
+            const clearedExpense = (txList || []).reduce((sum, tx) => {
+                const impact = getTxCashImpact(tx);
+                return impact < 0 ? sum + impact : sum;
+            }, 0);
+            const clearedBankCash = clearedIncome + clearedExpense;
+            const pendingIncoming = Math.max(0, Number(outstanding.receivable || 0));
+            const pendingOutgoing = Math.abs(Math.min(0, Number(outstanding.payable || 0)));
+            const pendingNet = pendingIncoming - pendingOutgoing;
+            const clubFundsTotal = clearedBankCash + pendingNet;
+            return {
+                clearedIncome,
+                clearedExpense,
+                clearedBankCash,
+                pendingIncoming,
+                pendingOutgoing,
+                pendingNet,
+                clubFundsTotal,
+                outstanding
+            };
         };
 
         const SETTINGS_DOC_ID = 'app';
@@ -9654,18 +9695,11 @@
                 );
             };
 
-            const totalIncome = useMemo(() => transactions.reduce((sum, tx) => {
-                const impact = getTxCashImpact(tx);
-                return impact > 0 ? sum + impact : sum;
-            }, 0), [transactions]);
-            const totalExpense = useMemo(() => transactions.reduce((sum, tx) => {
-                const impact = getTxCashImpact(tx);
-                return impact < 0 ? sum + impact : sum;
-            }, 0), [transactions]);
-            const currentCash = useMemo(() => totalIncome + totalExpense, [totalIncome, totalExpense]);
-            const outstanding = useMemo(() => {
-                return summarizeOutstanding(transactions);
-            }, [transactions]);
+            const financePosition = useMemo(() => summarizeFinancePosition(transactions), [transactions]);
+            const totalIncome = financePosition.clearedIncome;
+            const totalExpense = financePosition.clearedExpense;
+            const currentCash = financePosition.clearedBankCash;
+            const outstanding = financePosition.outstanding;
             const categorySummary = useMemo(() => {
                 const map = {};
                 transactions.forEach(t => {
@@ -9909,6 +9943,39 @@
                         }
                     />
 
+                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div>
+                                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Money Position</div>
+                                <div className="text-[11px] text-slate-500 mt-1">Club funds total = cleared bank cash + pending incoming - pending outgoing.</div>
+                            </div>
+                            <div className={`text-[11px] font-bold ${financePosition.pendingNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                Pending net {financePosition.pendingNet >= 0 ? '+' : ''}{formatCurrency(financePosition.pendingNet)}
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <div className="text-[10px] font-semibold text-slate-500 uppercase">Club funds total</div>
+                                <div className="text-lg font-display font-bold text-slate-900 mt-1">{formatCurrency(financePosition.clubFundsTotal)}</div>
+                            </div>
+                            <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
+                                <div className="text-[10px] font-semibold text-sky-700 uppercase">Cleared bank cash</div>
+                                <div className="text-lg font-display font-bold text-sky-900 mt-1">{formatCurrency(financePosition.clearedBankCash)}</div>
+                            </div>
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                                <div className="text-[10px] font-semibold text-emerald-700 uppercase">Pending incoming</div>
+                                <div className="text-lg font-display font-bold text-emerald-800 mt-1">{formatCurrency(financePosition.pendingIncoming)}</div>
+                            </div>
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                                <div className="text-[10px] font-semibold text-amber-700 uppercase">Pending outgoing</div>
+                                <div className="text-lg font-display font-bold text-amber-800 mt-1">{formatCurrency(financePosition.pendingOutgoing)}</div>
+                            </div>
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                            Cleared bank cash reflects settled ledger cash only. Pending incoming and outgoing stay outside cleared bank cash until they are actually received or paid.
+                        </div>
+                    </div>
+
                     <div className="grid md:grid-cols-2 gap-3">
                         <div className="bg-white p-3 rounded-2xl shadow-soft border border-slate-100 space-y-2">
                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cashflow</div>
@@ -9928,14 +9995,14 @@
                             </div>
                         </div>
                         <div className="bg-white p-3 rounded-2xl shadow-soft border border-slate-100 space-y-2">
-                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Outstanding</div>
+                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pending Queues</div>
                             <div className="flex flex-col gap-2">
                                 <div className="p-2 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-between">
-                                    <span className="text-[10px] font-semibold text-amber-700 uppercase">Open Receivable</span>
+                                    <span className="text-[10px] font-semibold text-amber-700 uppercase">Pending Incoming</span>
                                     <span className="text-base font-display font-bold text-amber-800">{formatCurrency(outstanding.receivable)}</span>
                                 </div>
                                 <div className="p-2 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-between">
-                                    <span className="text-[10px] font-semibold text-indigo-700 uppercase">Open Payable</span>
+                                    <span className="text-[10px] font-semibold text-indigo-700 uppercase">Pending Outgoing</span>
                                     <span className="text-base font-display font-bold text-indigo-800">{formatCurrency(Math.abs(outstanding.payable))}</span>
                                 </div>
                             </div>
@@ -9978,7 +10045,7 @@
                             <button type="button" onClick={() => setIsBreakdownOpen(true)} className="text-[11px] font-bold text-brand-600 underline">Full breakdown</button>
                         </div>
                         <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-900 text-white">
-                            <div className="text-[11px] font-semibold uppercase tracking-wide opacity-80">Current Cash (Settled)</div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wide opacity-80">Cleared Bank Cash</div>
                             <div className="text-lg font-display font-bold">{formatCurrency(currentCash, { minimumFractionDigits: 0 })}</div>
                         </div>
                         <div className="space-y-3">
@@ -10195,6 +10262,11 @@
         const Dashboard = ({ onNavigate, kitDetails = [], kitQueue = [], kitNumberLimit = DEFAULT_KIT_NUMBER_LIMIT }) => {
             const [stats, setStats] = useState({
                 balance: 0,
+                clearedBankCash: 0,
+                clubFundsTotal: 0,
+                pendingIncoming: 0,
+                pendingOutgoing: 0,
+                pendingNet: 0,
                 accrualBalance: 0,
                 nonCashDelta: 0,
                 playerCt: 0,
@@ -10314,7 +10386,7 @@
                     });
                     const accrualBalance = sortedTxs.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
                     const chartData = history.slice(-20);
-                    const { receivable, payable } = summarizeOutstanding(txs);
+                    const financePosition = summarizeFinancePosition(txs);
 
                     const upcoming = fixtures.filter(f => !f.status || f.status !== 'ARCHIVED').sort((a,b)=>new Date(a.date)-new Date(b.date)).find(f => new Date(f.date) >= new Date());
                     const playedFixtures = fixtures.filter(f => getFixtureOutcome(f).played).sort((a,b)=>new Date(b.date)-new Date(a.date));
@@ -10338,13 +10410,18 @@
                     }, { played: 0, wins: 0, draws: 0, losses: 0, points: 0 });
 
                     setStats({
-                        balance: running,
+                        balance: financePosition.clearedBankCash,
+                        clearedBankCash: financePosition.clearedBankCash,
+                        clubFundsTotal: financePosition.clubFundsTotal,
+                        pendingIncoming: financePosition.pendingIncoming,
+                        pendingOutgoing: financePosition.pendingOutgoing,
+                        pendingNet: financePosition.pendingNet,
                         accrualBalance,
-                        nonCashDelta: running - accrualBalance,
+                        nonCashDelta: financePosition.clearedBankCash - accrualBalance,
                         playerCt: playerList.length,
                         fixtureCt: fixtures.length,
                         history: chartData,
-                        outstanding: { receivable, payable },
+                        outstanding: financePosition.outstanding,
                         record: seasonRecord
                     });
                     setNextFixture(upcoming || null);
@@ -10657,7 +10734,7 @@
                 }
             };
             const todayLabel = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-            const netOpenExposure = Number(stats.outstanding.receivable || 0) - Math.abs(Number(stats.outstanding.payable || 0));
+            const netOpenExposure = Number(stats.pendingNet || 0);
             const nextFixtureCountdown = (() => {
                 if (!nextFixture?.date) return '';
                 const today = new Date();
@@ -10714,8 +10791,8 @@
                     <div className="rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft space-y-3 backdrop-blur-sm">
                         <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Cash Snapshot (Settled)</div>
-                                <div className="text-3xl font-display font-bold text-slate-900 leading-none mt-1">{formatCurrency(stats.balance, { minimumFractionDigits: 0 })}</div>
+                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Money Position</div>
+                                <div className="text-3xl font-display font-bold text-slate-900 leading-none mt-1">{formatCurrency(stats.clubFundsTotal, { minimumFractionDigits: 0 })}</div>
                                 <div className="mt-1 text-[11px] text-slate-500">
                                     Ledger total {formatCurrency(stats.accrualBalance, { minimumFractionDigits: 0 })}
                                     {Math.abs(Number(stats.nonCashDelta || 0)) >= 0.01 && (
@@ -10725,22 +10802,29 @@
                                     )}
                                 </div>
                                 <div className={`mt-2 text-[11px] font-semibold ${netOpenExposure >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                    Net open exposure {netOpenExposure >= 0 ? '+' : ''}{formatCurrency(netOpenExposure, { maximumFractionDigits: 0 })}
+                                    Pending net on top of cleared bank cash: {stats.pendingNet >= 0 ? '+' : ''}{formatCurrency(stats.pendingNet, { maximumFractionDigits: 0 })}
                                 </div>
                             </div>
                             <div className="h-16 w-32 rounded-xl border border-slate-200 bg-slate-50/80 p-2">
                                 <Sparkline data={stats.history} color="#2563eb" />
                             </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-semibold">
+                            <div className="rounded-xl border border-sky-200 bg-sky-50/80 p-2.5 text-sky-900">
+                                <div className="text-[10px] uppercase tracking-wider font-bold text-sky-700">Cleared bank cash</div>
+                                <div className="text-sm font-bold mt-0.5">{formatCurrency(stats.clearedBankCash, { maximumFractionDigits: 0 })}</div>
+                            </div>
                             <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-2.5 text-emerald-800">
-                                <div className="text-[10px] uppercase tracking-wider font-bold">Receivable</div>
-                                <div className="text-sm font-bold mt-0.5">{formatCurrency(stats.outstanding.receivable, { maximumFractionDigits: 0 })}</div>
+                                <div className="text-[10px] uppercase tracking-wider font-bold">Pending incoming</div>
+                                <div className="text-sm font-bold mt-0.5">{formatCurrency(stats.pendingIncoming, { maximumFractionDigits: 0 })}</div>
                             </div>
                             <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-2.5 text-amber-800">
-                                <div className="text-[10px] uppercase tracking-wider font-bold">Payable</div>
-                                <div className="text-sm font-bold mt-0.5">{formatCurrency(Math.abs(stats.outstanding.payable), { maximumFractionDigits: 0 })}</div>
+                                <div className="text-[10px] uppercase tracking-wider font-bold">Pending outgoing</div>
+                                <div className="text-sm font-bold mt-0.5">{formatCurrency(stats.pendingOutgoing, { maximumFractionDigits: 0 })}</div>
                             </div>
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                            Use cleared bank cash for what has actually landed or been paid. Pending incoming and outgoing show expected movement that still sits outside cleared cash.
                         </div>
                     </div>
 
