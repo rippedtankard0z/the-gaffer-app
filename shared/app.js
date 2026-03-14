@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-78';
+        const MASTER_BUILD_VERSION = '2026.03.14-79';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -516,6 +516,22 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-14-home-header-refined',
+                at: '2026-03-14T23:05:00+08:00',
+                build: '2026.03.14-79',
+                area: 'Home',
+                title: 'Home header refined with latest-season stats and simpler money card',
+                summary: 'The Home screen now shows played, points, and record for the latest season only, uses a smaller stacked date, and replaces the money-card sparkline with clearer season context.',
+                changes: [
+                    { label: 'Top stats', from: 'All-time record totals', to: 'Latest-season played, points, and record' },
+                    { label: 'Date block', from: 'Single larger line', to: 'Smaller stacked date lines' },
+                    { label: 'Money card side panel', from: 'Sparkline graph', to: 'Latest season context badge' }
+                ],
+                details: [
+                    'The Home screen is now aimed at quick day-to-day reading rather than showing ledger-style or historical visual noise.'
+                ]
+            },
             {
                 id: '2026-03-14-fixture-card-pl-pill',
                 at: '2026-03-14T22:50:00+08:00',
@@ -10337,7 +10353,8 @@
                 fixtureCt: 0,
                 history: [],
                 outstanding: { receivable: 0, payable: 0 },
-                record: { played: 0, wins: 0, draws: 0, losses: 0, points: 0 }
+                record: { played: 0, wins: 0, draws: 0, losses: 0, points: 0 },
+                seasonLabel: ''
             });
             const [nextFixture, setNextFixture] = useState(null);
             const [lastResult, setLastResult] = useState(null);
@@ -10443,13 +10460,7 @@
                     const fixtures = await db.fixtures.orderBy('date').toArray();
                     
                     const sortedTxs = txs.sort((a,b) => new Date(a.date) - new Date(b.date));
-                    let running = 0;
-                    const history = sortedTxs.map(t => {
-                        running += getTxCashImpact(t);
-                        return running;
-                    });
                     const accrualBalance = sortedTxs.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
-                    const chartData = history.slice(-20);
                     const financePosition = summarizeFinancePosition(txs);
 
                     const upcoming = fixtures.filter(f => !f.status || f.status !== 'ARCHIVED').sort((a,b)=>new Date(a.date)-new Date(b.date)).find(f => new Date(f.date) >= new Date());
@@ -10462,7 +10473,16 @@
                             : `${lastPlayed.homeScore ?? '-'}:${lastPlayed.awayScore ?? '-'}`)
                         : '';
 
-                    const seasonRecord = playedFixtures.reduce((acc, fixture) => {
+                    const latestSeasonLabel = [...fixtures]
+                        .filter(f => !f.status || f.status !== 'ARCHIVED')
+                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))[0]?.seasonTag
+                        || playedFixtures[0]?.seasonTag
+                        || fixtures[fixtures.length - 1]?.seasonTag
+                        || 'Latest Season';
+
+                    const seasonRecord = playedFixtures
+                        .filter((fixture) => (fixture.seasonTag || 'Unknown Season') === latestSeasonLabel)
+                        .reduce((acc, fixture) => {
                         const outcome = getFixtureOutcome(fixture);
                         if (!outcome.played) return acc;
                         acc.played += 1;
@@ -10484,9 +10504,10 @@
                         nonCashDelta: financePosition.clearedBankCash - accrualBalance,
                         playerCt: playerList.length,
                         fixtureCt: fixtures.length,
-                        history: chartData,
+                        history: [],
                         outstanding: financePosition.outstanding,
-                        record: seasonRecord
+                        record: seasonRecord,
+                        seasonLabel: latestSeasonLabel
                     });
                     setNextFixture(upcoming || null);
                     setLastResult(lastPlayed ? {
@@ -10797,7 +10818,8 @@
                     action();
                 }
             };
-            const todayLabel = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+            const todayWeekdayLabel = new Date().toLocaleDateString('en-GB', { weekday: 'long' });
+            const todayDateLabel = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
             const nextFixtureCountdown = (() => {
                 if (!nextFixture?.date) return '';
                 const today = new Date();
@@ -10830,8 +10852,12 @@
                                     </div>
                                     <div className="rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-right shrink-0">
                                         <div className="text-[10px] uppercase tracking-wider text-blue-100 font-semibold">Today</div>
-                                        <div className="text-[11px] font-bold leading-tight">{todayLabel}</div>
+                                        <div className="text-[11px] font-bold leading-tight">{todayWeekdayLabel}</div>
+                                        <div className="text-[10px] text-blue-100 leading-tight mt-0.5">{todayDateLabel}</div>
                                     </div>
+                                </div>
+                                <div className="text-[10px] uppercase tracking-[0.16em] text-blue-100/90 font-semibold">
+                                    {stats.seasonLabel || 'Latest season'}
                                 </div>
                                 <div className="grid grid-cols-3 gap-2">
                                     <div className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-2">
@@ -10858,16 +10884,12 @@
                                 <div className="text-3xl font-display font-bold text-slate-900 leading-none mt-1">{formatCurrency(stats.clearedBankCash, { minimumFractionDigits: 0 })}</div>
                                 <div className="mt-1 text-[11px] font-semibold text-slate-500">Cleared bank cash</div>
                             </div>
-                            <div className="h-16 w-32 rounded-xl border border-slate-200 bg-slate-50/80 p-2">
-                                <Sparkline data={stats.history} color="#2563eb" />
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-right shrink-0 min-w-[122px]">
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Season</div>
+                                <div className="text-[11px] font-bold text-slate-900 leading-tight mt-1">{stats.seasonLabel || 'Latest season'}</div>
+                                <div className="text-[10px] text-slate-500 mt-1">{stats.record.played} played</div>
                             </div>
                         </div>
-                        <button
-                            onClick={() => onNavigate('finances')}
-                            className="min-h-[44px] w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-left text-sm font-semibold text-slate-700"
-                        >
-                            Open Bank for full ledger and pending details
-                        </button>
                     </div>
 
                     <div className="rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft space-y-3 backdrop-blur-sm">
