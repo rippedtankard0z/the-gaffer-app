@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-63';
+        const MASTER_BUILD_VERSION = '2026.03.14-66';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -189,9 +189,9 @@
         };
         const USER_GUIDE_SECTIONS = [
             {
-                id: 'glenn-rhythm',
+                id: 'weekly-rhythm',
                 badge: 'Start Here',
-                title: 'Glenn\'s recommended weekly rhythm',
+                title: 'Recommended weekly rhythm',
                 summary: 'This is the simplest way to run the club in the app without missing key admin or money steps.',
                 actions: [
                     { label: 'Open Home', tab: 'dashboard' },
@@ -212,7 +212,7 @@
                 notes: [
                     'Use the app as the source of truth from the moment a fixture is real, not only after the match.',
                     'If you miss a live event, you can still fix it later in the game screen.',
-                    'The app works best when Glenn updates little and often instead of doing everything at month-end.'
+                    'The app works best when updates happen little and often instead of everything being left until month-end.'
                 ]
             },
             {
@@ -328,7 +328,7 @@
                 id: 'after-full-time',
                 badge: 'Closeout',
                 title: 'Close out the game after full time',
-                summary: 'This is where Glenn turns a live match into a financially complete fixture record.',
+                summary: 'This is where a live match turns into a financially complete fixture record.',
                 actions: [
                     { label: 'Open Games', tab: 'fixtures' },
                     { label: 'Open Reports', tab: 'reports' }
@@ -348,7 +348,7 @@
                 notes: [
                     'Do not wait too long to add costs because pitch-fee details are easy to forget.',
                     'If you collected cash outside the app during the match, capture it as soon as possible while names and amounts are fresh.',
-                    'The game should be complete enough that someone else could understand it later without asking Glenn what happened.'
+                    'The game should be complete enough that someone else could understand it later without needing extra explanation.'
                 ]
             },
             {
@@ -369,7 +369,7 @@
                     'Use the Bank page when you need raw ledger visibility across receivables, payables, and exports.'
                 ],
                 checkpoints: [
-                    'The monthly totals feel believable based on what Glenn expects for that period.',
+                    'The monthly totals feel believable based on what you expect for that period.',
                     'Every flagged fixture in audit has either been fixed or intentionally hidden as externally settled.',
                     'SIA home games show the correct receivable and payable treatment when relevant.'
                 ],
@@ -383,7 +383,7 @@
                 id: 'reference-pages',
                 badge: 'Reference',
                 title: 'Use the rest of the More section fully',
-                summary: 'The More area is not just storage. It is where Glenn can drill into people, clubs, venues, sponsorship, and governance.',
+                summary: 'The More area is not just storage. It is where you can drill into people, clubs, venues, sponsorship, and governance.',
                 actions: [
                     { label: 'Open Opponent Intel', tab: 'opponentintel' },
                     { label: 'Open Sponsors', tab: 'sponsors' },
@@ -403,7 +403,7 @@
                     'Extra admin pages are being used to prevent future confusion, not only to store data.'
                 ],
                 notes: [
-                    'If Glenn wants the app to feel complete, these reference pages must stay alive.',
+                    'If you want the app to feel complete, these reference pages must stay alive.',
                     'A strong reference dataset saves time everywhere else in the app.',
                     'Use More as your club operations toolbox, not as a forgotten menu.'
                 ]
@@ -438,6 +438,48 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-14-more-version-status',
+                at: '2026-03-14T18:55:00+08:00',
+                build: '2026.03.14-66',
+                area: 'More',
+                title: 'More header now shows build and update time',
+                summary: 'The top-right of More now shows the current version number and the latest update time under the refresh button.',
+                changes: [
+                    { label: 'More header status', from: 'Refresh button only', to: 'Refresh button plus build number and last updated timestamp' }
+                ],
+                details: [
+                    'The timestamp is sourced from the latest app-log entry so it stays aligned with shipped changes.'
+                ]
+            },
+            {
+                id: '2026-03-14-guide-neutral-copy',
+                at: '2026-03-14T18:40:00+08:00',
+                build: '2026.03.14-65',
+                area: 'User Guide',
+                title: 'Help guide language made role-neutral',
+                summary: 'The User Guide now speaks to any app user rather than naming one specific person.',
+                changes: [
+                    { label: 'Guide tone', from: 'Help copy referenced Glenn directly', to: 'Help copy now reads as support for anyone using the app' }
+                ],
+                details: [
+                    'This keeps the guide more reusable for coaches, admins, and anyone else operating the club in the app.'
+                ]
+            },
+            {
+                id: '2026-03-14-audit-modal-restyle',
+                at: '2026-03-14T18:25:00+08:00',
+                build: '2026.03.14-64',
+                area: 'Audit',
+                title: 'Audit settlement confirmation restyled',
+                summary: 'The externally-settled audit action now uses an in-app modal instead of the browser default confirm dialog.',
+                changes: [
+                    { label: 'Confirmation UI', from: 'Browser-native confirm popup', to: 'App-styled modal aligned with the rest of Reports' }
+                ],
+                details: [
+                    'This applies to both hiding a legacy fixture from audit and restoring it into audit again.'
+                ]
+            },
             {
                 id: '2026-03-14-more-compact-header',
                 at: '2026-03-14T18:10:00+08:00',
@@ -474,7 +516,7 @@
                 build: '2026.03.14-60',
                 area: 'More',
                 title: 'App Log added to More',
-                summary: 'There is now a dedicated in-app release log so Glenn can see what changed without relying on memory or chat history.',
+                summary: 'There is now a dedicated in-app release log so anyone can see what changed without relying on memory or chat history.',
                 changes: [
                     { label: 'Release history', from: 'Not visible inside the app', to: 'More -> App Log with searchable shipped updates' },
                     { label: 'Storage', from: 'Remembered manually or via thread history', to: 'Saved in the shared settings document and pulled into the app' }
@@ -521,7 +563,7 @@
                 build: '2026.03.14-57',
                 area: 'More',
                 title: 'Full User Guide added',
-                summary: 'More now includes a Glenn-friendly user guide covering setup, games, Match Day, money, reports, audit, and troubleshooting.',
+                summary: 'More now includes a practical user guide covering setup, games, Match Day, money, reports, audit, and troubleshooting.',
                 changes: [
                     { label: 'Help experience', from: 'No structured in-app walkthrough', to: 'Dedicated searchable User Guide page under More' }
                 ],
@@ -10703,8 +10745,25 @@
             );
         };
 
-        const MoreHub = ({ onNavigate = () => {} }) => {
+        const MoreHub = ({ onNavigate = () => {}, appChangeLog = [] }) => {
             const [isRefreshingApp, setIsRefreshingApp] = useState(false);
+            const changeLogEntries = useMemo(() => normalizeAppChangeLogEntries(appChangeLog), [appChangeLog]);
+            const latestBuildEntry = useMemo(() => {
+                return changeLogEntries.find((entry) => String(entry.build || '') === String(APP_VERSION))
+                    || changeLogEntries[0]
+                    || null;
+            }, [changeLogEntries]);
+            const moreHeaderUpdatedLabel = useMemo(() => {
+                const raw = latestBuildEntry?.at || '';
+                const timestamp = Date.parse(raw);
+                if (Number.isNaN(timestamp)) return 'Updated recently';
+                return new Date(timestamp).toLocaleString('en-GB', {
+                    day: '2-digit',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }, [latestBuildEntry]);
             const actions = [
                 {
                     id: 'appdb',
@@ -10822,16 +10881,24 @@
                         title="More"
                         inlineActionsOnMobile
                         actions={(
-                            <button
-                                type="button"
-                                onClick={handleHardRefresh}
-                                disabled={isRefreshingApp}
-                                title={isRefreshingApp ? 'Refreshing app...' : 'Hard refresh app'}
-                                aria-label={isRefreshingApp ? 'Refreshing app' : 'Hard refresh app'}
-                                className={`h-11 w-11 rounded-xl border flex items-center justify-center ${isRefreshingApp ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-slate-200 bg-white text-slate-700 hover:border-brand-200'}`}
-                            >
-                                <Icon name="RotateCw" size={18} className={isRefreshingApp ? 'animate-spin' : ''} />
-                            </button>
+                            <div className="flex flex-col items-end gap-1 text-right">
+                                <button
+                                    type="button"
+                                    onClick={handleHardRefresh}
+                                    disabled={isRefreshingApp}
+                                    title={isRefreshingApp ? 'Refreshing app...' : 'Hard refresh app'}
+                                    aria-label={isRefreshingApp ? 'Refreshing app' : 'Hard refresh app'}
+                                    className={`h-11 w-11 rounded-xl border flex items-center justify-center ${isRefreshingApp ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-slate-200 bg-white text-slate-700 hover:border-brand-200'}`}
+                                >
+                                    <Icon name="RotateCw" size={18} className={isRefreshingApp ? 'animate-spin' : ''} />
+                                </button>
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                    Build {APP_VERSION}
+                                </div>
+                                <div className="text-[10px] text-slate-400">
+                                    Updated {moreHeaderUpdatedLabel}
+                                </div>
+                            </div>
                         )}
                     />
                     <div className="space-y-3">
@@ -10913,7 +10980,7 @@
                         <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                                 <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Release Memory</div>
-                                <div className="mt-1 text-lg font-display font-bold text-slate-900">A shared changelog Glenn can actually read.</div>
+                                <div className="mt-1 text-lg font-display font-bold text-slate-900">A shared changelog the whole club can actually read.</div>
                                 <div className="mt-2 text-[13px] text-slate-500">
                                     These entries are stored in the shared app settings document, so the log can be pulled into the app instead of living only in chat history.
                                 </div>
@@ -11106,7 +11173,7 @@
                         <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                                 <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Guide Overview</div>
-                                <div className="mt-1 text-lg font-display font-bold text-slate-900">Built for Glenn and anyone running the club end to end.</div>
+                                <div className="mt-1 text-lg font-display font-bold text-slate-900">Built for anyone running the club end to end.</div>
                                 <div className="mt-2 text-[13px] text-slate-500">
                                     Use this guide when you want the full operating rhythm: setup, fixtures, live match day, money, reports, audit, and troubleshooting.
                                 </div>
@@ -11499,6 +11566,8 @@
                 nextSummary: null
             });
             const [lastManualAuditScanResult, setLastManualAuditScanResult] = useState(null);
+            const [auditSettlementDialog, setAuditSettlementDialog] = useState({ open: false, mode: 'hide', row: null, error: '' });
+            const [isSavingAuditSettlement, setIsSavingAuditSettlement] = useState(false);
             const auditSummaryRef = useRef(auditSummary);
 
             useEffect(() => {
@@ -12180,34 +12249,43 @@
                 if (Number.isNaN(parsed.getTime())) return 'Date TBC';
                 return parsed.toLocaleDateString('en-GB');
             };
-            const markFixtureAuditAsExternallySettled = async (row) => {
+            const openAuditSettlementDialog = (row, mode = 'hide') => {
                 if (!row?.fixtureId) return;
-                const dateLabel = formatAuditRowDate(row.date);
-                const approved = window.confirm(`Mark vs ${row.opponent || 'Opponent'} (${dateLabel}) as externally settled?\n\nThis will hide this fixture from future Reconciliation Audit findings until you undo it.`);
-                if (!approved) return;
-                try {
-                    await db.fixtures.update(row.fixtureId, {
-                        auditIgnoreReconciliation: true,
-                        auditIgnoreReconciliationAt: new Date().toISOString()
-                    });
-                    await loadReports();
-                } catch (err) {
-                    window.alert('Unable to mark fixture as externally settled: ' + (err?.message || 'Unexpected error'));
-                }
+                setAuditSettlementDialog({ open: true, mode: mode === 'restore' ? 'restore' : 'hide', row, error: '' });
             };
-            const undoFixtureAuditExternalSettlement = async (row) => {
-                if (!row?.fixtureId) return;
-                const dateLabel = formatAuditRowDate(row.date);
-                const approved = window.confirm(`Show vs ${row.opponent || 'Opponent'} (${dateLabel}) in Reconciliation Audit again?`);
-                if (!approved) return;
+            const closeAuditSettlementDialog = () => {
+                if (isSavingAuditSettlement) return;
+                setAuditSettlementDialog({ open: false, mode: 'hide', row: null, error: '' });
+            };
+            const submitAuditSettlementDialog = async () => {
+                const row = auditSettlementDialog?.row;
+                const mode = auditSettlementDialog?.mode === 'restore' ? 'restore' : 'hide';
+                if (!row?.fixtureId || isSavingAuditSettlement) return;
+                setIsSavingAuditSettlement(true);
                 try {
-                    await db.fixtures.update(row.fixtureId, {
-                        auditIgnoreReconciliation: false,
-                        auditIgnoreReconciliationAt: ''
-                    });
+                    await db.fixtures.update(
+                        row.fixtureId,
+                        mode === 'restore'
+                            ? {
+                                auditIgnoreReconciliation: false,
+                                auditIgnoreReconciliationAt: ''
+                            }
+                            : {
+                                auditIgnoreReconciliation: true,
+                                auditIgnoreReconciliationAt: new Date().toISOString()
+                            }
+                    );
                     await loadReports();
+                    setAuditSettlementDialog({ open: false, mode: 'hide', row: null, error: '' });
                 } catch (err) {
-                    window.alert('Unable to restore fixture audit checks: ' + (err?.message || 'Unexpected error'));
+                    setAuditSettlementDialog((prev) => ({
+                        ...prev,
+                        error: mode === 'restore'
+                            ? `Unable to restore fixture audit checks: ${err?.message || 'Unexpected error'}`
+                            : `Unable to mark fixture as externally settled: ${err?.message || 'Unexpected error'}`
+                    }));
+                } finally {
+                    setIsSavingAuditSettlement(false);
                 }
             };
             const openFixtureById = (fixtureId, opponent = '') => {
@@ -12360,7 +12438,7 @@
                                                 <div className="text-xs font-bold text-rose-700">{row.issues.length} issue{row.issues.length === 1 ? '' : 's'}</div>
                                                 <button
                                                     type="button"
-                                                    onClick={() => markFixtureAuditAsExternallySettled(row)}
+                                                    onClick={() => openAuditSettlementDialog(row, 'hide')}
                                                     className="min-h-[28px] px-2 rounded-md border border-emerald-200 bg-emerald-50 text-[10px] font-bold text-emerald-700"
                                                 >
                                                     Settled outside app
@@ -12441,7 +12519,7 @@
                                                     </button>
                                                     <button
                                                         type="button"
-                                                        onClick={() => undoFixtureAuditExternalSettlement(row)}
+                                                        onClick={() => openAuditSettlementDialog(row, 'restore')}
                                                         className="min-h-[34px] rounded-lg border border-amber-200 bg-amber-50 text-[10px] font-bold text-amber-700"
                                                     >
                                                         Show in audit again
@@ -12519,6 +12597,73 @@
                             <div className="text-sm text-slate-400">No fixture data yet.</div>
                         )}
                     </div>
+                    <Modal
+                        isOpen={!!auditSettlementDialog.open}
+                        onClose={closeAuditSettlementDialog}
+                        title={auditSettlementDialog.mode === 'restore' ? 'Show In Audit Again' : 'Settled Outside App'}
+                        placement="center"
+                    >
+                        {auditSettlementDialog.row && (
+                            <div className="space-y-4">
+                                <div className={`rounded-2xl border p-4 ${auditSettlementDialog.mode === 'restore' ? 'border-amber-200 bg-amber-50/70' : 'border-emerald-200 bg-emerald-50/70'}`}>
+                                    <div className={`text-[10px] font-bold uppercase tracking-wider ${auditSettlementDialog.mode === 'restore' ? 'text-amber-700' : 'text-emerald-700'}`}>
+                                        Fixture
+                                    </div>
+                                    <div className="mt-1 text-lg font-display font-bold text-slate-900">
+                                        vs {auditSettlementDialog.row.opponent || 'Opponent'}
+                                    </div>
+                                    <div className="mt-1 text-[12px] text-slate-600">
+                                        {formatAuditRowDate(auditSettlementDialog.row.date)} · Billed {formatCurrency(auditSettlementDialog.row.billed)} · Collected {formatCurrency(auditSettlementDialog.row.collected)} · Cash {formatCurrency(auditSettlementDialog.row.cashPL)}
+                                    </div>
+                                    {!!auditSettlementDialog.row.issues?.length && (
+                                        <div className="mt-3 flex flex-wrap gap-1">
+                                            {auditSettlementDialog.row.issues.slice(0, 3).map((issue, idx) => (
+                                                <span
+                                                    key={`audit-settlement-dialog-issue-${auditSettlementDialog.row.fixtureId}-${idx}`}
+                                                    className="px-2 py-1 rounded-full border border-white/80 bg-white/80 text-[10px] font-semibold text-slate-700"
+                                                >
+                                                    {issue}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-[13px] text-slate-700">
+                                    {auditSettlementDialog.mode === 'restore'
+                                        ? 'This will return the fixture to Reconciliation Audit checks so it can be flagged again if issues still exist.'
+                                        : 'This will hide the fixture from future Reconciliation Audit findings until you choose to show it in audit again.'}
+                                </div>
+
+                                {auditSettlementDialog.error ? (
+                                    <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">
+                                        {auditSettlementDialog.error}
+                                    </div>
+                                ) : null}
+
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={closeAuditSettlementDialog}
+                                        disabled={isSavingAuditSettlement}
+                                        className="flex-1 min-h-[44px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700 disabled:opacity-60"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={submitAuditSettlementDialog}
+                                        disabled={isSavingAuditSettlement}
+                                        className={`flex-1 min-h-[44px] rounded-xl text-sm font-bold text-white disabled:opacity-60 ${auditSettlementDialog.mode === 'restore' ? 'bg-amber-600' : 'bg-emerald-600'}`}
+                                    >
+                                        {isSavingAuditSettlement
+                                            ? (auditSettlementDialog.mode === 'restore' ? 'Restoring...' : 'Saving...')
+                                            : (auditSettlementDialog.mode === 'restore' ? 'Show In Audit Again' : 'Mark Settled')}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
                     <Modal
                         isOpen={!!activeMonthlyRow}
                         onClose={() => setSelectedMonthKey('')}
@@ -19751,7 +19896,7 @@
                             )}
                             {activeTab === 'more' && (
                                 <div data-tab-container="more">
-                                    <MoreHub onNavigate={navigate} />
+                                    <MoreHub onNavigate={navigate} appChangeLog={appChangeLog} />
                                 </div>
                             )}
                             {activeTab === 'applog' && (
