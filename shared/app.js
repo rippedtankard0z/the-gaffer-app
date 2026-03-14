@@ -2307,8 +2307,8 @@
         const competitionTypes = ['LEAGUE', 'CUP', 'FRIENDLY', 'OTHER'];
         const fixtureForfeitOptions = [
             { value: FORFEIT_RESULT.NONE, label: 'No forfeit' },
-            { value: FORFEIT_RESULT.OPPOSITION, label: 'Opposition forfeited (win, 3 pts)' },
-            { value: FORFEIT_RESULT.OURS, label: 'We forfeited (loss, 0 pts)' }
+            { value: FORFEIT_RESULT.OPPOSITION, label: 'Opposition forfeited (default 3-0 to Exiles)' },
+            { value: FORFEIT_RESULT.OURS, label: 'We forfeited (default 0-3 to opposition)' }
         ];
         const MATCHDAY_FORMATION_PRESETS = {
             '4-3-3': [
@@ -3133,6 +3133,46 @@
             const isSiaVenue = useMemo(() => {
                 return (selectedFixture?.venue || '').toLowerCase().includes('sia sports club');
             }, [selectedFixture]);
+            const getForfeitScoreDefaults = useCallback((forfeitRaw) => {
+                const forfeit = normalizeForfeitResult(forfeitRaw);
+                if (forfeit === FORFEIT_RESULT.OPPOSITION) return { homeScore: 3, awayScore: 0 };
+                if (forfeit === FORFEIT_RESULT.OURS) return { homeScore: 0, awayScore: 3 };
+                return null;
+            }, []);
+            const resolveFixtureScoresForForfeit = useCallback((fixtureLike = {}, forfeitRaw = FORFEIT_RESULT.NONE) => {
+                const forfeit = normalizeForfeitResult(forfeitRaw);
+                const homeScore = normalizeFixtureScoreValue(fixtureLike?.homeScore);
+                const awayScore = normalizeFixtureScoreValue(fixtureLike?.awayScore);
+                if (homeScore !== null && awayScore !== null) {
+                    return { homeScore, awayScore, defaultApplied: false };
+                }
+                const defaults = getForfeitScoreDefaults(forfeit);
+                if (defaults) {
+                    return { ...defaults, defaultApplied: true };
+                }
+                return { homeScore, awayScore, defaultApplied: false };
+            }, [getForfeitScoreDefaults]);
+            const applySelectedFixtureForfeitChange = useCallback((nextForfeitRaw) => {
+                if (!selectedFixture) return;
+                const forfeitResult = normalizeForfeitResult(nextForfeitRaw);
+                const resolved = resolveFixtureScoresForForfeit(selectedFixture, forfeitResult);
+                setSelectedFixture({
+                    ...selectedFixture,
+                    forfeitResult,
+                    homeScore: resolved.homeScore,
+                    awayScore: resolved.awayScore
+                });
+                if (resolved.defaultApplied) {
+                    setScoreForm(prev => ({
+                        ...prev,
+                        our: resolved.homeScore ?? prev.our,
+                        their: resolved.awayScore ?? prev.their,
+                        scorersArr: Array.isArray(prev.scorersArr)
+                            ? prev.scorersArr.slice(0, Math.max(0, Number(resolved.homeScore || 0)))
+                            : []
+                    }));
+                }
+            }, [resolveFixtureScoresForForfeit, selectedFixture]);
             const plannerSlots = useMemo(() => {
                 const formation = matchdayPlanner?.formation || '4-3-3';
                 return MATCHDAY_FORMATION_PRESETS[formation] || MATCHDAY_FORMATION_PRESETS['4-3-3'];
@@ -4852,6 +4892,7 @@
                 const motmValue = selectedFixture.manOfTheMatch;
                 const normalizedMotm = typeof motmValue === 'string' ? motmValue.trim() : (motmValue ?? '');
                 const forfeitResult = normalizeForfeitResult(selectedFixture.forfeitResult);
+                const resolved = resolveFixtureScoresForForfeit(selectedFixture, forfeitResult);
                 const nextStatus = forfeitResult !== FORFEIT_RESULT.NONE
                     ? 'PLAYED'
                     : (selectedFixture.status || 'SCHEDULED');
@@ -4867,8 +4908,21 @@
                         manOfTheMatch: normalizedMotm || '',
                         paymentsSettled: !!selectedFixture.paymentsSettled,
                         forfeitResult,
+                        homeScore: resolved.homeScore,
+                        awayScore: resolved.awayScore,
                         status: nextStatus
                     });
+                    if (resolved.defaultApplied) {
+                        setSelectedFixture(prev => prev ? { ...prev, homeScore: resolved.homeScore, awayScore: resolved.awayScore } : prev);
+                        setScoreForm(prev => ({
+                            ...prev,
+                            our: resolved.homeScore ?? prev.our,
+                            their: resolved.awayScore ?? prev.their,
+                            scorersArr: Array.isArray(prev.scorersArr)
+                                ? prev.scorersArr.slice(0, Math.max(0, Number(resolved.homeScore || 0)))
+                                : []
+                        }));
+                    }
                     refresh();
                     setFixtureSaveStatus('saved');
                     const delayMs = closeOnSave ? 700 : 1200;
@@ -5257,11 +5311,16 @@
             const handleAdd = async (e) => {
                 e.preventDefault();
                 const forfeitResult = normalizeForfeitResult(newFixture.forfeitResult);
+                const resolved = resolveFixtureScoresForForfeit(newFixture, forfeitResult);
                 const fixturePayload = {
                     ...newFixture,
                     forfeitResult,
                     status: forfeitResult !== FORFEIT_RESULT.NONE ? 'PLAYED' : 'SCHEDULED'
                 };
+                if (resolved.homeScore !== null && resolved.awayScore !== null) {
+                    fixturePayload.homeScore = resolved.homeScore;
+                    fixturePayload.awayScore = resolved.awayScore;
+                }
                 const createdFixtureId = await db.fixtures.add(fixturePayload);
                 const shouldOpenMatchdayAfterCreate = launchMode === 'matchday' || matchdayOpenAfterAdd;
                 setNewFixture(defaultFixtureDraft(seasonCategories));
@@ -6006,7 +6065,16 @@
                                     <select className={touchModalSelectClass} value={newFixture.competitionType} onChange={e => setNewFixture({ ...newFixture, competitionType: e.target.value })}>
                                         {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
                                     </select>
-                                    <select className={touchModalSelectClass} value={normalizeForfeitResult(newFixture.forfeitResult)} onChange={e => setNewFixture({ ...newFixture, forfeitResult: e.target.value })}>
+                                    <select className={touchModalSelectClass} value={normalizeForfeitResult(newFixture.forfeitResult)} onChange={e => {
+                                        const forfeitResult = normalizeForfeitResult(e.target.value);
+                                        const resolved = resolveFixtureScoresForForfeit(newFixture, forfeitResult);
+                                        setNewFixture({
+                                            ...newFixture,
+                                            forfeitResult,
+                                            homeScore: resolved.homeScore,
+                                            awayScore: resolved.awayScore
+                                        });
+                                    }}>
                                         {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                                     </select>
                                     <select className={touchModalSelectClass} value={newFixture.seasonTag} onChange={e => setNewFixture({ ...newFixture, seasonTag: e.target.value })}>
@@ -6129,7 +6197,7 @@
                                             <select className={touchPanelSelectClass} value={selectedFixture.competitionType || 'LEAGUE'} onChange={e => setSelectedFixture({ ...selectedFixture, competitionType: e.target.value })}>
                                                 {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
                                             </select>
-                                            <select className={touchPanelSelectClass} value={normalizeForfeitResult(selectedFixture.forfeitResult)} onChange={e => setSelectedFixture({ ...selectedFixture, forfeitResult: e.target.value })}>
+                                            <select className={touchPanelSelectClass} value={normalizeForfeitResult(selectedFixture.forfeitResult)} onChange={e => applySelectedFixtureForfeitChange(e.target.value)}>
                                                 {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                                             </select>
                                             <select className={touchPanelSelectClass} value={selectedFixture.seasonTag || (seasonCategories?.[0] || '2025/2026 Season')} onChange={e => setSelectedFixture({ ...selectedFixture, seasonTag: e.target.value })}>
@@ -6490,9 +6558,9 @@
                                                                             <div className={`mt-1 text-sm font-bold ${hasPlayer ? 'text-slate-900' : 'text-slate-400'}`}>
                                                                                 {plannerPlayerShortName(shownPlayerId)}
                                                                             </div>
-                                                                            <div className={`text-[10px] mt-0.5 leading-tight ${hasPlayer ? 'text-slate-600' : 'text-slate-400'}`}>
-                                                                                {hasPlayer ? plannerPlayerName(shownPlayerId) : 'No player'}
-                                                                            </div>
+                                                                            {!hasPlayer && (
+                                                                                <div className="text-[10px] mt-0.5 leading-tight text-slate-400">No player</div>
+                                                                            )}
                                                                         </button>
                                                                     );
                                                                 })}
@@ -6742,9 +6810,9 @@
                                                                                 <div className={`mt-1 text-sm font-bold ${hasPlayer ? 'text-slate-900' : 'text-slate-400'}`}>
                                                                                     {plannerPlayerShortName(shownPlayerId)}
                                                                                 </div>
-                                                                                <div className={`text-[10px] mt-0.5 leading-tight ${hasPlayer ? 'text-slate-600' : 'text-slate-400'}`}>
-                                                                                    {hasPlayer ? plannerPlayerName(shownPlayerId) : 'No player'}
-                                                                                </div>
+                                                                                {!hasPlayer && (
+                                                                                    <div className="text-[10px] mt-0.5 leading-tight text-slate-400">No player</div>
+                                                                                )}
                                                                             </button>
                                                                         );
                                                                     })}
@@ -9635,14 +9703,23 @@
         const ReportsHub = ({ onNavigate = () => {} }) => {
             const [isLoading, setIsLoading] = useState(true);
             const [monthlyRows, setMonthlyRows] = useState([]);
+            const [monthlyBreakdownByKey, setMonthlyBreakdownByKey] = useState({});
+            const [selectedMonthKey, setSelectedMonthKey] = useState('');
             const [fixtureRows, setFixtureRows] = useState([]);
+            const [fixtureFinanceById, setFixtureFinanceById] = useState({});
+            const [activeFixtureFinanceId, setActiveFixtureFinanceId] = useState(null);
             const [collectionSummary, setCollectionSummary] = useState({ billed: 0, collected: 0, writtenOff: 0, outstanding: 0, rate: 0 });
             const [cashSummary, setCashSummary] = useState({ income: 0, expense: 0, net: 0, avgNet: 0 });
             const [auditRows, setAuditRows] = useState([]);
             const [auditSummary, setAuditSummary] = useState({ scanned: 0, flagged: 0, billed: 0, collected: 0, outstanding: 0, overCollected: 0 });
             const [showAllAuditRows, setShowAllAuditRows] = useState(false);
+            const [isRescanning, setIsRescanning] = useState(false);
+            const [lastAuditScanAt, setLastAuditScanAt] = useState(null);
+            const [auditScanRuns, setAuditScanRuns] = useState(0);
 
-            const loadReports = useCallback(async () => {
+            const loadReports = useCallback(async ({ manual = false } = {}) => {
+                const startedAt = Date.now();
+                if (manual) setIsRescanning(true);
                 setIsLoading(true);
                 try {
                     await waitForDb();
@@ -9651,10 +9728,15 @@
                         db.fixtures.toArray()
                     ]);
 
+                    const fixtureLookup = {};
+                    fixtures.forEach((fixture) => {
+                        fixtureLookup[String(fixture.id)] = fixture;
+                    });
                     const byMonth = {};
+                    const monthBreakdowns = {};
                     const sortedTxs = [...txs].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
                     let running = 0;
-                    sortedTxs.forEach((tx) => {
+                    sortedTxs.forEach((tx, index) => {
                         const amount = getTxCashImpact(tx);
                         if (!amount) return;
                         const date = new Date(tx.date || 0);
@@ -9670,13 +9752,59 @@
                                 closing: 0
                             };
                         }
+                        if (!monthBreakdowns[key]) {
+                            monthBreakdowns[key] = {
+                                entries: [],
+                                incomeByCategory: {},
+                                expenseByCategory: {},
+                                incomeTxCount: 0,
+                                expenseTxCount: 0
+                            };
+                        }
+                        const categoryLabel = formatCategoryLabel(tx.category) || 'Other';
                         if (amount >= 0) byMonth[key].income += amount;
                         else byMonth[key].expense += amount;
                         byMonth[key].net += amount;
                         running += amount;
                         byMonth[key].closing = running;
+                        if (amount >= 0) {
+                            monthBreakdowns[key].incomeTxCount += 1;
+                            monthBreakdowns[key].incomeByCategory[categoryLabel] = (monthBreakdowns[key].incomeByCategory[categoryLabel] || 0) + amount;
+                        } else {
+                            monthBreakdowns[key].expenseTxCount += 1;
+                            monthBreakdowns[key].expenseByCategory[categoryLabel] = (monthBreakdowns[key].expenseByCategory[categoryLabel] || 0) + Math.abs(amount);
+                        }
+                        const fixture = (tx.fixtureId !== undefined && tx.fixtureId !== null) ? fixtureLookup[String(tx.fixtureId)] : null;
+                        monthBreakdowns[key].entries.push({
+                            id: tx.id !== undefined && tx.id !== null ? String(tx.id) : `tx-${key}-${index}`,
+                            timestamp: date.getTime(),
+                            dateIso: date.toISOString(),
+                            amount,
+                            category: categoryLabel,
+                            description: (tx.description || '').toString().trim() || categoryLabel,
+                            payee: (tx.payee || '').toString().trim(),
+                            fixtureId: tx.fixtureId,
+                            fixtureOpponent: fixture?.opponent || '',
+                            fixtureVenue: fixture?.venue || ''
+                        });
                     });
                     const monthly = Object.values(byMonth).sort((a, b) => b.key.localeCompare(a.key));
+                    const normalizedMonthBreakdowns = {};
+                    Object.entries(monthBreakdowns).forEach(([key, details]) => {
+                        const entries = [...(details.entries || [])].sort((a, b) => b.timestamp - a.timestamp);
+                        const incomeByCategory = Object.entries(details.incomeByCategory || {})
+                            .map(([category, amount]) => ({ category, amount: Number(amount || 0) }))
+                            .sort((a, b) => b.amount - a.amount);
+                        const expenseByCategory = Object.entries(details.expenseByCategory || {})
+                            .map(([category, amount]) => ({ category, amount: Number(amount || 0) }))
+                            .sort((a, b) => b.amount - a.amount);
+                        normalizedMonthBreakdowns[key] = {
+                            ...details,
+                            entries,
+                            incomeByCategory,
+                            expenseByCategory
+                        };
+                    });
 
                     const txByFixture = {};
                     txs.forEach((tx) => {
@@ -9689,6 +9817,7 @@
                         ...fixture,
                         parsedDate: Number.isNaN(new Date(fixture.date || '').getTime()) ? 0 : new Date(fixture.date || '').getTime()
                     }));
+                    const fixtureFinanceLookup = {};
                     const fixtureProfitability = fixturesWithDates
                         .map((fixture) => {
                             const txList = txByFixture[String(fixture.id)] || [];
@@ -9703,6 +9832,59 @@
                             const net = income + expense;
                             const outcome = getFixtureOutcome(fixture);
                             const resultLabel = outcome.played ? outcome.result : 'UPCOMING';
+                            const financeEntries = txList
+                                .map((tx, index) => {
+                                    const cashImpact = Number(getTxCashImpact(tx) || 0);
+                                    const rawAmount = Number(tx.amount || 0);
+                                    const txDateObj = new Date(tx.date || fixture.date || 0);
+                                    const hasValidDate = !Number.isNaN(txDateObj.getTime());
+                                    const description = (tx.description || '').toString().trim();
+                                    const categoryLabel = formatCategoryLabel(tx.category) || 'Other';
+                                    return {
+                                        id: tx.id !== undefined && tx.id !== null ? String(tx.id) : `fixture-${fixture.id}-tx-${index}`,
+                                        timestamp: hasValidDate ? txDateObj.getTime() : 0,
+                                        dateIso: hasValidDate ? txDateObj.toISOString() : '',
+                                        category: categoryLabel,
+                                        description: description || categoryLabel,
+                                        payee: (tx.payee || '').toString().trim(),
+                                        rawAmount: Number.isFinite(rawAmount) ? rawAmount : 0,
+                                        cashImpact,
+                                        hasCashImpact: Math.abs(cashImpact) > 0.009,
+                                        flow: getTxFlowDirection(tx),
+                                        isReconciled: !!tx.isReconciled,
+                                        isWriteOff: !!tx.isWriteOff,
+                                        playerId: tx.playerId
+                                    };
+                                })
+                                .sort((a, b) => b.timestamp - a.timestamp);
+                            const incomeByCategory = {};
+                            const expenseByCategory = {};
+                            financeEntries.forEach((entry) => {
+                                if (entry.cashImpact > 0) {
+                                    incomeByCategory[entry.category] = (incomeByCategory[entry.category] || 0) + entry.cashImpact;
+                                } else if (entry.cashImpact < 0) {
+                                    expenseByCategory[entry.category] = (expenseByCategory[entry.category] || 0) + Math.abs(entry.cashImpact);
+                                }
+                            });
+                            fixtureFinanceLookup[String(fixture.id)] = {
+                                fixtureId: fixture.id,
+                                opponent: fixture.opponent || 'Opponent',
+                                date: fixture.date,
+                                venue: fixture.venue || '',
+                                resultLabel,
+                                income,
+                                expense,
+                                net,
+                                entries: financeEntries,
+                                cashImpactEntryCount: financeEntries.filter(entry => entry.hasCashImpact).length,
+                                nonCashEntryCount: financeEntries.filter(entry => !entry.hasCashImpact).length,
+                                incomeByCategory: Object.entries(incomeByCategory)
+                                    .map(([category, amount]) => ({ category, amount: Number(amount || 0) }))
+                                    .sort((a, b) => b.amount - a.amount),
+                                expenseByCategory: Object.entries(expenseByCategory)
+                                    .map(([category, amount]) => ({ category, amount: Number(amount || 0) }))
+                                    .sort((a, b) => b.amount - a.amount)
+                            };
                             return {
                                 id: fixture.id,
                                 opponent: fixture.opponent || 'Opponent',
@@ -9848,7 +10030,17 @@
                     const avgNet = monthly.length ? (monthly.reduce((sum, row) => sum + Number(row.net || 0), 0) / monthly.length) : 0;
 
                     setMonthlyRows(monthly);
+                    setMonthlyBreakdownByKey(normalizedMonthBreakdowns);
+                    setSelectedMonthKey((prev) => {
+                        if (prev && normalizedMonthBreakdowns[prev]) return prev;
+                        return '';
+                    });
                     setFixtureRows(fixtureProfitability);
+                    setFixtureFinanceById(fixtureFinanceLookup);
+                    setActiveFixtureFinanceId((prev) => {
+                        if (prev === undefined || prev === null || prev === '') return null;
+                        return fixtureFinanceLookup[String(prev)] ? prev : null;
+                    });
                     setCollectionSummary({ billed, collected, writtenOff, outstanding, rate });
                     setCashSummary({ income: totalIncome, expense: totalExpense, net: totalNet, avgNet });
                     setAuditRows(flaggedFixtureRows);
@@ -9862,16 +10054,36 @@
                     });
                     setShowAllAuditRows(false);
                 } finally {
+                    const elapsedMs = Date.now() - startedAt;
+                    const minVisibleMs = manual ? 450 : 0;
+                    if (elapsedMs < minVisibleMs) {
+                        await new Promise(resolve => setTimeout(resolve, minVisibleMs - elapsedMs));
+                    }
                     setIsLoading(false);
+                    if (manual) {
+                        setIsRescanning(false);
+                        setLastAuditScanAt(new Date().toISOString());
+                        setAuditScanRuns(prev => prev + 1);
+                    }
                 }
             }, []);
+            const runManualRescan = useCallback(() => {
+                if (isRescanning) return;
+                void loadReports({ manual: true }).catch((err) => {
+                    console.error('Unable to run manual audit scan', err);
+                });
+            }, [isRescanning, loadReports]);
 
             useEffect(() => {
-                loadReports();
+                void loadReports().catch((err) => {
+                    console.error('Unable to load reports', err);
+                });
                 const handler = (event) => {
                     if (!event?.detail?.name) return;
                     if (['transactions', 'fixtures', 'participations', 'players'].includes(event.detail.name)) {
-                        loadReports();
+                        void loadReports().catch((err) => {
+                            console.error('Unable to refresh reports from datastore event', err);
+                        });
                     }
                 };
                 window.addEventListener('gaffer-firestore-update', handler);
@@ -10002,11 +10214,29 @@
                 : 0;
             const visibleAuditRows = showAllAuditRows ? auditRows : auditRows.slice(0, 8);
             const hiddenAuditRowsCount = Math.max(0, auditRows.length - 8);
-            const openAuditFixture = (row) => {
-                if (!row?.fixtureId || !onNavigate) return;
-                localStorage.setItem('gaffer:focusFixtureId', String(row.fixtureId));
-                if (row.opponent) localStorage.setItem('gaffer:focusFixtureOpponent', row.opponent);
+            const activeFixtureFinance = activeFixtureFinanceId !== undefined && activeFixtureFinanceId !== null
+                ? (fixtureFinanceById[String(activeFixtureFinanceId)] || null)
+                : null;
+            const openFixtureById = (fixtureId, opponent = '') => {
+                if (fixtureId === undefined || fixtureId === null || !onNavigate) return;
+                localStorage.setItem('gaffer:focusFixtureId', String(fixtureId));
+                if (opponent) localStorage.setItem('gaffer:focusFixtureOpponent', opponent);
                 onNavigate('fixtures');
+            };
+            const openFixtureFromMonthlyEntry = (entry) => {
+                openFixtureById(entry?.fixtureId, entry?.fixtureOpponent || '');
+            };
+            const openAuditFixture = (row) => {
+                openFixtureById(row?.fixtureId, row?.opponent || '');
+            };
+            const openFixtureProfitabilityModal = (row) => {
+                if (!row?.id) return;
+                setActiveFixtureFinanceId(row.id);
+            };
+            const openFixtureFromProfitabilityModal = () => {
+                if (!activeFixtureFinance) return;
+                setActiveFixtureFinanceId(null);
+                openFixtureById(activeFixtureFinance.fixtureId, activeFixtureFinance.opponent || '');
             };
 
             return (
@@ -10056,9 +10286,20 @@
                             <div>
                                 <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Reconciliation Audit</div>
                                 <div className="text-[11px] text-slate-500 mt-1">Flags player-fee reconciliation gaps plus missing/misaligned pitch fee attribution (including SIA home flow checks).</div>
+                                <div className="text-[11px] text-slate-500 mt-1">
+                                    {isRescanning
+                                        ? 'Scanning now...'
+                                        : lastAuditScanAt
+                                            ? `Last scan: ${new Date(lastAuditScanAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} (${auditScanRuns} run${auditScanRuns === 1 ? '' : 's'})`
+                                            : 'Tap Rescan to run a fresh audit check.'}
+                                </div>
                             </div>
-                            <button onClick={loadReports} className="min-h-[40px] px-3 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700">
-                                Rescan
+                            <button
+                                onClick={runManualRescan}
+                                disabled={isRescanning}
+                                className={`min-h-[40px] px-3 rounded-lg border text-xs font-bold ${isRescanning ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-slate-200 bg-white text-slate-700'}`}
+                            >
+                                {isRescanning ? 'Scanning...' : 'Rescan'}
                             </button>
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-[12px]">
@@ -10127,17 +10368,131 @@
                             <div className="text-sm text-slate-400">Loading reports...</div>
                         ) : monthlyRows.length ? (
                             <div className="space-y-2">
-                                {monthlyRows.slice(0, 12).map((row) => (
+                                <div className="text-[11px] text-slate-500">Tap a month to inspect the ledger lines behind the totals.</div>
+                                {monthlyRows.slice(0, 12).map((row) => {
+                                    const monthBreakdown = monthlyBreakdownByKey[row.key] || {
+                                        entries: [],
+                                        incomeByCategory: [],
+                                        expenseByCategory: [],
+                                        incomeTxCount: 0,
+                                        expenseTxCount: 0
+                                    };
+                                    const isMonthOpen = selectedMonthKey === row.key;
+                                    return (
                                     <div key={`report-month-${row.key}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                                        <div className="flex items-center justify-between">
-                                            <div className="text-sm font-bold text-slate-900">{row.label}</div>
-                                            <div className={`text-sm font-bold ${row.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatCurrency(row.net)}</div>
-                                        </div>
-                                        <div className="mt-1 text-[11px] text-slate-500">
-                                            Income {formatCurrency(row.income)} · Expense {formatCurrency(row.expense)} · Closing {formatCurrency(row.closing)}
-                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedMonthKey(prev => prev === row.key ? '' : row.key)}
+                                            className="w-full text-left"
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <div className="text-sm font-bold text-slate-900">{row.label}</div>
+                                                <div className={`text-sm font-bold ${row.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatCurrency(row.net)}</div>
+                                            </div>
+                                            <div className="mt-1 text-[11px] text-slate-500">
+                                                Income {formatCurrency(row.income)} · Expense {formatCurrency(row.expense)} · Closing {formatCurrency(row.closing)}
+                                            </div>
+                                            <div className="mt-1 text-[11px] text-slate-500">
+                                                {monthBreakdown.entries.length} transaction{monthBreakdown.entries.length === 1 ? '' : 's'} · {isMonthOpen ? 'Hide breakdown' : 'Show breakdown'}
+                                            </div>
+                                        </button>
+                                        {isMonthOpen && (
+                                            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 space-y-3">
+                                                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                                    <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-emerald-800">
+                                                        Income lines: <span className="font-bold">{monthBreakdown.incomeTxCount || 0}</span>
+                                                    </div>
+                                                    <div className="rounded-lg border border-rose-100 bg-rose-50 p-2 text-rose-800">
+                                                        Expense lines: <span className="font-bold">{monthBreakdown.expenseTxCount || 0}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Income By Category</div>
+                                                    {monthBreakdown.incomeByCategory.length ? (
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {monthBreakdown.incomeByCategory.slice(0, 6).map((item) => (
+                                                                <span key={`month-income-${row.key}-${item.category}`} className="px-2 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[10px] font-semibold text-emerald-700">
+                                                                    {item.category}: {formatCurrency(item.amount)}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-[11px] text-slate-400">No income lines this month.</div>
+                                                    )}
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Expense By Category</div>
+                                                    {monthBreakdown.expenseByCategory.length ? (
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {monthBreakdown.expenseByCategory.slice(0, 6).map((item) => (
+                                                                <span key={`month-expense-${row.key}-${item.category}`} className="px-2 py-1 rounded-full border border-rose-200 bg-rose-50 text-[10px] font-semibold text-rose-700">
+                                                                    {item.category}: {formatCurrency(item.amount)}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-[11px] text-slate-400">No expense lines this month.</div>
+                                                    )}
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Transactions</div>
+                                                    {monthBreakdown.entries.length ? (
+                                                        <>
+                                                            {monthBreakdown.entries.slice(0, 14).map((entry) => {
+                                                                const dateLabel = entry?.dateIso
+                                                                    ? new Date(entry.dateIso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+                                                                    : 'Date TBC';
+                                                                const canOpenFixture = !!entry?.fixtureId;
+                                                                const rowContent = (
+                                                                    <>
+                                                                        <div className="flex items-start justify-between gap-2">
+                                                                            <div className="min-w-0">
+                                                                                <div className="text-[11px] font-bold text-slate-900">{entry.description}</div>
+                                                                                <div className="text-[10px] text-slate-500">
+                                                                                    {dateLabel} · {entry.category}
+                                                                                    {entry.payee ? ` · ${entry.payee}` : ''}
+                                                                                    {entry.fixtureOpponent ? ` · vs ${entry.fixtureOpponent}` : ''}
+                                                                                </div>
+                                                                            </div>
+                                                                            <div className={`text-[11px] font-bold shrink-0 ${entry.amount >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                                                {formatCurrency(entry.amount)}
+                                                                            </div>
+                                                                        </div>
+                                                                    </>
+                                                                );
+                                                                if (canOpenFixture) {
+                                                                    return (
+                                                                        <button
+                                                                            type="button"
+                                                                            key={`month-entry-${row.key}-${entry.id}`}
+                                                                            onClick={() => openFixtureFromMonthlyEntry(entry)}
+                                                                            className="w-full text-left rounded-lg border border-slate-100 bg-slate-50 hover:border-brand-200 p-2"
+                                                                        >
+                                                                            {rowContent}
+                                                                        </button>
+                                                                    );
+                                                                }
+                                                                return (
+                                                                    <div key={`month-entry-${row.key}-${entry.id}`} className="rounded-lg border border-slate-100 bg-slate-50 p-2">
+                                                                        {rowContent}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                            {monthBreakdown.entries.length > 14 && (
+                                                                <div className="text-[11px] text-slate-500">
+                                                                    Showing 14 of {monthBreakdown.entries.length} transactions.
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    ) : (
+                                                        <div className="text-[11px] text-slate-400">No cash-impact transactions in this month.</div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         ) : (
                             <div className="text-sm text-slate-400">No ledger rows yet.</div>
@@ -10149,8 +10504,14 @@
                             <div className="text-sm text-slate-400">Loading fixtures...</div>
                         ) : fixtureRows.length ? (
                             <div className="space-y-2">
+                                <div className="text-[11px] text-slate-500">Tap a fixture to inspect its finance lines.</div>
                                 {fixtureRows.slice(0, 15).map((row) => (
-                                    <div key={`report-fixture-${row.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                    <button
+                                        type="button"
+                                        key={`report-fixture-${row.id}`}
+                                        onClick={() => openFixtureProfitabilityModal(row)}
+                                        className="w-full text-left rounded-lg border border-slate-200 bg-slate-50 hover:border-brand-200 p-3"
+                                    >
                                         <div className="flex items-center justify-between">
                                             <div className="text-sm font-bold text-slate-900">vs {row.opponent}</div>
                                             <div className={`text-sm font-bold ${row.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatCurrency(row.net)}</div>
@@ -10158,13 +10519,119 @@
                                         <div className="mt-1 text-[11px] text-slate-500">
                                             {row.date ? new Date(row.date).toLocaleDateString('en-GB') : 'Date TBC'} · {row.resultLabel} · Income {formatCurrency(row.income)} · Expense {formatCurrency(row.expense)}
                                         </div>
-                                    </div>
+                                        <div className="mt-1 text-[11px] text-slate-500">Open finance details</div>
+                                    </button>
                                 ))}
                             </div>
                         ) : (
                             <div className="text-sm text-slate-400">No fixture data yet.</div>
                         )}
                     </div>
+                    <Modal
+                        isOpen={!!activeFixtureFinance}
+                        onClose={() => setActiveFixtureFinanceId(null)}
+                        title={activeFixtureFinance ? `vs ${activeFixtureFinance.opponent}` : 'Fixture Finance'}
+                        placement="center"
+                    >
+                        {activeFixtureFinance && (
+                            <div className="space-y-3">
+                                <div className="text-[11px] text-slate-500">
+                                    {(activeFixtureFinance.date ? new Date(activeFixtureFinance.date).toLocaleDateString('en-GB') : 'Date TBC')}
+                                    {` · ${activeFixtureFinance.resultLabel}`}
+                                    {activeFixtureFinance.venue ? ` · ${activeFixtureFinance.venue}` : ''}
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 text-[11px]">
+                                    <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-emerald-800">
+                                        Income
+                                        <div className="font-bold">{formatCurrency(activeFixtureFinance.income)}</div>
+                                    </div>
+                                    <div className="rounded-lg border border-rose-100 bg-rose-50 p-2 text-rose-800">
+                                        Expense
+                                        <div className="font-bold">{formatCurrency(activeFixtureFinance.expense)}</div>
+                                    </div>
+                                    <div className={`rounded-lg border p-2 ${activeFixtureFinance.net >= 0 ? 'border-emerald-100 bg-emerald-50 text-emerald-800' : 'border-rose-100 bg-rose-50 text-rose-800'}`}>
+                                        Net
+                                        <div className="font-bold">{formatCurrency(activeFixtureFinance.net)}</div>
+                                    </div>
+                                </div>
+                                <div className="text-[11px] text-slate-500">
+                                    Cash-impact lines: {activeFixtureFinance.cashImpactEntryCount || 0} · Non-cash lines: {activeFixtureFinance.nonCashEntryCount || 0}
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Income By Category</div>
+                                    {activeFixtureFinance.incomeByCategory?.length ? (
+                                        <div className="flex flex-wrap gap-1">
+                                            {activeFixtureFinance.incomeByCategory.slice(0, 8).map((item) => (
+                                                <span key={`fixture-modal-income-${activeFixtureFinance.fixtureId}-${item.category}`} className="px-2 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[10px] font-semibold text-emerald-700">
+                                                    {item.category}: {formatCurrency(item.amount)}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-[11px] text-slate-400">No income categories.</div>
+                                    )}
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Expense By Category</div>
+                                    {activeFixtureFinance.expenseByCategory?.length ? (
+                                        <div className="flex flex-wrap gap-1">
+                                            {activeFixtureFinance.expenseByCategory.slice(0, 8).map((item) => (
+                                                <span key={`fixture-modal-expense-${activeFixtureFinance.fixtureId}-${item.category}`} className="px-2 py-1 rounded-full border border-rose-200 bg-rose-50 text-[10px] font-semibold text-rose-700">
+                                                    {item.category}: {formatCurrency(item.amount)}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-[11px] text-slate-400">No expense categories.</div>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Ledger Lines</div>
+                                    {activeFixtureFinance.entries?.length ? (
+                                        <>
+                                            {activeFixtureFinance.entries.slice(0, 25).map((entry) => (
+                                                <div key={`fixture-modal-entry-${entry.id}`} className="rounded-lg border border-slate-100 bg-slate-50 p-2">
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="min-w-0">
+                                                            <div className="text-[11px] font-bold text-slate-900">{entry.description}</div>
+                                                            <div className="text-[10px] text-slate-500">
+                                                                {entry.dateIso ? new Date(entry.dateIso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'Date TBC'}
+                                                                {` · ${entry.category}`}
+                                                                {entry.payee ? ` · ${entry.payee}` : ''}
+                                                            </div>
+                                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${entry.hasCashImpact ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-slate-500'}`}>
+                                                                    {entry.hasCashImpact ? 'Cash impact' : 'Non-cash'}
+                                                                </span>
+                                                                {entry.isWriteOff && <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 bg-white text-slate-600">Write-off</span>}
+                                                                {!entry.isReconciled && !entry.isWriteOff && <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold border border-amber-200 bg-amber-50 text-amber-700">Unreconciled</span>}
+                                                            </div>
+                                                        </div>
+                                                        <div className={`text-[11px] font-bold shrink-0 ${entry.cashImpact >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                            {formatCurrency(entry.cashImpact)}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {activeFixtureFinance.entries.length > 25 && (
+                                                <div className="text-[11px] text-slate-500">Showing 25 of {activeFixtureFinance.entries.length} ledger lines.</div>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <div className="text-[11px] text-slate-400">No fixture-linked ledger lines found.</div>
+                                    )}
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 pt-1">
+                                    <button onClick={() => setActiveFixtureFinanceId(null)} className="min-h-[42px] rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                                        Close
+                                    </button>
+                                    <button onClick={openFixtureFromProfitabilityModal} className="min-h-[42px] rounded-lg bg-slate-900 text-white text-xs font-bold">
+                                        Open Game To Edit
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
                 </div>
             );
         };
