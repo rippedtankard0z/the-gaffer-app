@@ -3441,6 +3441,108 @@
                         return a.playerName.localeCompare(b.playerName);
                     });
             }, [plannerRosterIds, plannerPlayerLookup, plannerLivePlayerStats, plannerLiveMinute, plannerOnPitchIds]);
+            const plannerLiveActionPlayerStatus = useMemo(() => {
+                const playerId = normalizePlayerIdValue(plannerLiveActionOutgoingId);
+                if (!playerId) {
+                    return {
+                        goals: 0,
+                        yellow: 0,
+                        red: 0,
+                        injuryCount: 0,
+                        isInjured: false,
+                        lastIncidentMinute: null
+                    };
+                }
+                const player = plannerPlayerLookup[playerId] || {};
+                const fullName = plannerPlayerName(playerId);
+                const shortName = plannerPlayerShortName(playerId);
+                const aliasName = ((fullName.match(/\(([^)]+)\)/) || [])[1] || '').trim();
+                const first = (player.firstName || '').trim();
+                const last = (player.lastName || '').trim();
+                const toSearchKey = (value = '') => normalizePersonNameKey(value)
+                    .replace(/[^a-z0-9 ]+/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                const nameKeys = [
+                    fullName,
+                    shortName,
+                    aliasName,
+                    `${first} ${last}`.trim(),
+                    `${first} ${last ? `${last.charAt(0)}.` : ''}`.trim()
+                ]
+                    .map(toSearchKey)
+                    .filter(Boolean);
+                const noteMentionsPlayer = (noteRaw = '') => {
+                    const noteKey = toSearchKey(noteRaw);
+                    if (!noteKey) return false;
+                    return nameKeys.some((key) => noteKey.includes(key));
+                };
+
+                let yellow = 0;
+                let red = 0;
+                let goalsFromEvents = 0;
+                let injuryCount = 0;
+                let isInjured = false;
+                let lastIncidentMinute = null;
+
+                const fixtureScorers = Array.isArray(selectedFixture?.scorers) ? selectedFixture.scorers : [];
+                const goalsFromScorecard = fixtureScorers.reduce((sum, scorer) => (
+                    normalizePlayerIdValue(scorer) === playerId ? sum + 1 : sum
+                ), 0);
+
+                (plannerLiveEventsChronological || []).forEach((event) => {
+                    const type = (event?.type || '').toString().toLowerCase();
+                    const note = (event?.note || '').toString();
+                    if (!noteMentionsPlayer(note)) return;
+                    const noteLower = note.toLowerCase();
+                    const minute = event?.minute === null || event?.minute === undefined || event?.minute === ''
+                        ? null
+                        : clampMatchMinute(event.minute);
+                    if (minute !== null) {
+                        lastIncidentMinute = minute;
+                    }
+
+                    if (type === 'card-yellow') {
+                        yellow += 1;
+                    } else if (type === 'card-red') {
+                        red += 1;
+                    }
+
+                    const isGoalEvent = type === 'goal' || type === 'goal-adjust' || /\bgoal\b/i.test(noteLower);
+                    if (isGoalEvent) {
+                        const isRemoval = type === 'goal-adjust' && /\b(remove|removed|undo|revers)/i.test(noteLower);
+                        goalsFromEvents += isRemoval ? -1 : 1;
+                    }
+
+                    const isInjuryType = ['injury', 'injured', 'player-injury', 'medical'].includes(type);
+                    const isInjuryNote = /\binjur|hurt|knock|strain|hamstring|cramp|concussion\b/i.test(noteLower);
+                    const isRecoveryNote = /\bfit to continue|recovered|back on|returned|cleared\b/i.test(noteLower);
+                    if (isInjuryType || isInjuryNote) {
+                        injuryCount += 1;
+                        isInjured = true;
+                    } else if (isRecoveryNote) {
+                        isInjured = false;
+                    }
+                });
+
+                const goalsFromLog = Math.max(0, goalsFromEvents);
+                const goals = goalsFromScorecard > 0 ? goalsFromScorecard : goalsFromLog;
+                return {
+                    goals,
+                    yellow,
+                    red,
+                    injuryCount,
+                    isInjured,
+                    lastIncidentMinute
+                };
+            }, [
+                plannerLiveActionOutgoingId,
+                plannerLiveEventsChronological,
+                plannerPlayerLookup,
+                plannerPlayerName,
+                plannerPlayerShortName,
+                selectedFixture?.scorers
+            ]);
             const maybeSuggestBreakSubstitutions = useCallback((triggerKey = '', minuteRaw = 0, plannerSnapshotRaw = null) => {
                 const trigger = (triggerKey || '').toString();
                 if (!['wb1', 'ht', 'start2h', 'wb2'].includes(trigger)) return;
@@ -7550,6 +7652,39 @@
                                 <div className="text-[11px] text-slate-500 mt-1">
                                     Slot {plannerLiveActionSlot?.label || '-'} · Preferred subs: {getBenchGroupLabel(plannerLiveActionPreferredGroup)}
                                 </div>
+                                {plannerLiveActionOutgoingId && (
+                                    <>
+                                        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1">
+                                                <div className="text-emerald-700">Goals</div>
+                                                <div className="text-sm font-bold text-emerald-900">{plannerLiveActionPlayerStatus.goals}</div>
+                                            </div>
+                                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1">
+                                                <div className="text-amber-700">Yellow</div>
+                                                <div className="text-sm font-bold text-amber-900">{plannerLiveActionPlayerStatus.yellow}</div>
+                                            </div>
+                                            <div className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1">
+                                                <div className="text-rose-700">Red</div>
+                                                <div className="text-sm font-bold text-rose-900">{plannerLiveActionPlayerStatus.red}</div>
+                                            </div>
+                                            <div className={`rounded-lg border px-2 py-1 ${plannerLiveActionPlayerStatus.isInjured ? 'border-orange-200 bg-orange-50' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white'}`}>
+                                                <div className={`${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-700' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'text-emerald-700' : 'text-slate-500'}`}>Injury</div>
+                                                <div className={`text-xs font-bold ${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-900' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'text-emerald-900' : 'text-slate-700'}`}>
+                                                    {plannerLiveActionPlayerStatus.isInjured
+                                                        ? 'Injured'
+                                                        : plannerLiveActionPlayerStatus.injuryCount > 0
+                                                            ? 'Cleared'
+                                                            : 'None logged'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {plannerLiveActionPlayerStatus.lastIncidentMinute !== null && (
+                                            <div className="text-[11px] text-slate-500 mt-2">
+                                                Last player incident: {plannerLiveActionPlayerStatus.lastIncidentMinute}'
+                                            </div>
+                                        )}
+                                    </>
+                                )}
                             </div>
 
                             <div className="grid grid-cols-2 gap-2">
@@ -10106,6 +10241,13 @@
         };
 
         const ReportsHub = ({ onNavigate = () => {} }) => {
+            const REPORT_AUDIT_SCAN_STEPS = [
+                'Connecting to database',
+                'Loading fixtures and ledger rows',
+                'Rebuilding reports and cash totals',
+                'Scanning fixture reconciliation checks',
+                'Publishing refreshed findings'
+            ];
             const [isLoading, setIsLoading] = useState(true);
             const [monthlyRows, setMonthlyRows] = useState([]);
             const [monthlyBreakdownByKey, setMonthlyBreakdownByKey] = useState({});
@@ -10118,20 +10260,77 @@
             const [auditRows, setAuditRows] = useState([]);
             const [auditSummary, setAuditSummary] = useState({ scanned: 0, flagged: 0, billed: 0, collected: 0, outstanding: 0, overCollected: 0 });
             const [showAllAuditRows, setShowAllAuditRows] = useState(false);
+            const [showIgnoredAuditRows, setShowIgnoredAuditRows] = useState(false);
+            const [ignoredAuditRows, setIgnoredAuditRows] = useState([]);
             const [isRescanning, setIsRescanning] = useState(false);
             const [lastAuditScanAt, setLastAuditScanAt] = useState(null);
             const [auditScanRuns, setAuditScanRuns] = useState(0);
+            const [auditScanOverlay, setAuditScanOverlay] = useState({
+                open: false,
+                status: 'idle',
+                stepIndex: -1,
+                note: '',
+                startedAt: '',
+                finishedAt: '',
+                durationMs: 0,
+                previousSummary: null,
+                nextSummary: null
+            });
+            const [lastManualAuditScanResult, setLastManualAuditScanResult] = useState(null);
+            const auditSummaryRef = useRef(auditSummary);
+
+            useEffect(() => {
+                auditSummaryRef.current = auditSummary;
+            }, [auditSummary]);
 
             const loadReports = useCallback(async ({ manual = false } = {}) => {
                 const startedAt = Date.now();
-                if (manual) setIsRescanning(true);
+                let manualSucceeded = false;
+                const previousAuditSummary = manual
+                    ? { ...(auditSummaryRef.current || { scanned: 0, flagged: 0, outstanding: 0, overCollected: 0 }) }
+                    : null;
+                const updateAuditScanStep = async (stepIndex, note = '') => {
+                    if (!manual) return;
+                    setAuditScanOverlay((prev) => ({
+                        ...prev,
+                        open: true,
+                        status: 'running',
+                        stepIndex,
+                        note: note || REPORT_AUDIT_SCAN_STEPS[stepIndex] || 'Scanning...',
+                        startedAt: prev.startedAt || new Date(startedAt).toISOString(),
+                        finishedAt: '',
+                        durationMs: 0,
+                        previousSummary: prev.previousSummary || previousAuditSummary,
+                        nextSummary: null
+                    }));
+                    await new Promise((resolve) => window.setTimeout(resolve, 0));
+                };
+                if (manual) {
+                    setIsRescanning(true);
+                    setLastManualAuditScanResult(null);
+                    setAuditScanOverlay({
+                        open: true,
+                        status: 'running',
+                        stepIndex: 0,
+                        note: REPORT_AUDIT_SCAN_STEPS[0],
+                        startedAt: new Date(startedAt).toISOString(),
+                        finishedAt: '',
+                        durationMs: 0,
+                        previousSummary: previousAuditSummary,
+                        nextSummary: null
+                    });
+                    await new Promise((resolve) => window.setTimeout(resolve, 0));
+                }
                 setIsLoading(true);
                 try {
+                    await updateAuditScanStep(0, 'Connecting to database...');
                     await waitForDb();
+                    await updateAuditScanStep(1, 'Loading fixtures and transactions...');
                     const [txs, fixtures] = await Promise.all([
                         db.transactions.toArray(),
                         db.fixtures.toArray()
                     ]);
+                    await updateAuditScanStep(2, `Loaded ${fixtures.length} fixtures and ${txs.length} ledger row${txs.length === 1 ? '' : 's'}.`);
 
                     const fixtureLookup = {};
                     fixtures.forEach((fixture) => {
@@ -10302,12 +10501,15 @@
                             };
                         })
                         .sort((a, b) => b.parsedDate - a.parsedDate);
+                    await updateAuditScanStep(3, `Scanning ${fixturesWithDates.length} fixture${fixturesWithDates.length === 1 ? '' : 's'} for reconciliation and pitch-fee issues...`);
                     const fixtureAuditRows = fixturesWithDates
                         .filter((fixture) => (fixture.status || 'SCHEDULED') !== 'ARCHIVED')
                         .map((fixture) => {
                             const txList = txByFixture[String(fixture.id)] || [];
                             const fixtureStatus = (fixture?.status || 'SCHEDULED').toString().trim().toUpperCase();
                             const fixtureForfeit = normalizeForfeitResult(fixture?.forfeitResult);
+                            const auditIgnoreReconciliation = !!fixture?.auditIgnoreReconciliation;
+                            const auditIgnoreReconciliationAt = fixture?.auditIgnoreReconciliationAt || '';
                             const requiresPitchFeeAttribution = fixtureStatus === 'PLAYED' || fixtureForfeit !== FORFEIT_RESULT.NONE;
                             const isSiaHomeFixture = (fixture?.venue || '').toString().trim().toLowerCase().includes('sia sports club');
                             const playerCharges = txList.filter(tx => isPlayerFeeCategory(tx.category) && Number(tx.amount || 0) < 0 && tx.playerId !== undefined && tx.playerId !== null);
@@ -10380,6 +10582,8 @@
                                 if (!pitchFeePayables.length) issues.push('SIA home: missing payable pitch fee (Exiles -> SIA/Glenn)');
                                 if (pitchFeePayables.length && !hasPayableTaggedToSiaOrGlenn) issues.push('SIA home: payable pitch fee not tagged to SIA/Glenn');
                             }
+                            const detectedIssues = [...issues];
+                            const effectiveIssues = auditIgnoreReconciliation ? [] : detectedIssues;
 
                             return {
                                 fixtureId: fixture.id,
@@ -10392,7 +10596,10 @@
                                 outstanding: outstandingFixture,
                                 overCollected: overCollectedFixture,
                                 cashPL: fixtureCashPL,
-                                issues
+                                issues: effectiveIssues,
+                                detectedIssues,
+                                auditIgnored: auditIgnoreReconciliation,
+                                auditIgnoredAt: auditIgnoreReconciliationAt
                             };
                         })
                         .sort((a, b) => {
@@ -10402,6 +10609,7 @@
                             return (b.parsedDate || 0) - (a.parsedDate || 0);
                         });
                     const flaggedFixtureRows = fixtureAuditRows.filter(row => row.issues.length > 0);
+                    const ignoredFixtureRows = fixtureAuditRows.filter(row => row.auditIgnored);
                     const auditTotals = fixtureAuditRows.reduce((acc, row) => {
                         acc.billed += Number(row.billed || 0);
                         acc.collected += Number(row.collected || 0);
@@ -10433,6 +10641,7 @@
                     }, 0);
                     const totalNet = totalIncome + totalExpense;
                     const avgNet = monthly.length ? (monthly.reduce((sum, row) => sum + Number(row.net || 0), 0) / monthly.length) : 0;
+                    await updateAuditScanStep(4, 'Publishing refreshed findings to audit cards...');
 
                     setMonthlyRows(monthly);
                     setMonthlyBreakdownByKey(normalizedMonthBreakdowns);
@@ -10449,26 +10658,80 @@
                     setCollectionSummary({ billed, collected, writtenOff, outstanding, rate });
                     setCashSummary({ income: totalIncome, expense: totalExpense, net: totalNet, avgNet });
                     setAuditRows(flaggedFixtureRows);
-                    setAuditSummary({
+                    setIgnoredAuditRows(ignoredFixtureRows);
+                    const nextAuditSummary = {
                         scanned: fixtureAuditRows.length,
                         flagged: flaggedFixtureRows.length,
                         billed: auditTotals.billed,
                         collected: auditTotals.collected,
                         outstanding: auditTotals.outstanding,
                         overCollected: auditTotals.overCollected
-                    });
+                    };
+                    setAuditSummary(nextAuditSummary);
                     setShowAllAuditRows(false);
+                    if (!ignoredFixtureRows.length) {
+                        setShowIgnoredAuditRows(false);
+                    }
+                    if (manual) {
+                        const completedAt = new Date().toISOString();
+                        const durationMs = Date.now() - startedAt;
+                        manualSucceeded = true;
+                        setLastManualAuditScanResult({
+                            completedAt,
+                            durationMs,
+                            previousSummary: previousAuditSummary,
+                            nextSummary: nextAuditSummary,
+                            error: ''
+                        });
+                        setAuditScanOverlay((prev) => ({
+                            ...prev,
+                            open: true,
+                            status: 'complete',
+                            stepIndex: REPORT_AUDIT_SCAN_STEPS.length - 1,
+                            note: `Scan complete. ${nextAuditSummary.flagged} flagged fixture${nextAuditSummary.flagged === 1 ? '' : 's'} updated.`,
+                            finishedAt: completedAt,
+                            durationMs,
+                            previousSummary: prev.previousSummary || previousAuditSummary,
+                            nextSummary: nextAuditSummary
+                        }));
+                    }
+                } catch (err) {
+                    if (manual) {
+                        const finishedAt = new Date().toISOString();
+                        const durationMs = Date.now() - startedAt;
+                        const errorMessage = err?.message || 'Unexpected error';
+                        setLastManualAuditScanResult({
+                            completedAt: finishedAt,
+                            durationMs,
+                            previousSummary: previousAuditSummary,
+                            nextSummary: null,
+                            error: errorMessage
+                        });
+                        setAuditScanOverlay((prev) => ({
+                            ...prev,
+                            open: true,
+                            status: 'error',
+                            note: `Scan failed: ${errorMessage}`,
+                            finishedAt,
+                            durationMs,
+                            previousSummary: prev.previousSummary || previousAuditSummary,
+                            nextSummary: null
+                        }));
+                    }
+                    throw err;
                 } finally {
                     const elapsedMs = Date.now() - startedAt;
-                    const minVisibleMs = manual ? 450 : 0;
+                    const minVisibleMs = manual ? 900 : 0;
                     if (elapsedMs < minVisibleMs) {
                         await new Promise(resolve => setTimeout(resolve, minVisibleMs - elapsedMs));
                     }
                     setIsLoading(false);
                     if (manual) {
                         setIsRescanning(false);
-                        setLastAuditScanAt(new Date().toISOString());
-                        setAuditScanRuns(prev => prev + 1);
+                        if (manualSucceeded) {
+                            setLastAuditScanAt(new Date().toISOString());
+                            setAuditScanRuns(prev => prev + 1);
+                        }
                     }
                 }
             }, []);
@@ -10494,6 +10757,14 @@
                 window.addEventListener('gaffer-firestore-update', handler);
                 return () => window.removeEventListener('gaffer-firestore-update', handler);
             }, [loadReports]);
+            useEffect(() => {
+                if (!auditScanOverlay.open) return undefined;
+                if (auditScanOverlay.status !== 'complete') return undefined;
+                const timer = window.setTimeout(() => {
+                    setAuditScanOverlay((prev) => ({ ...prev, open: false }));
+                }, 2200);
+                return () => window.clearTimeout(timer);
+            }, [auditScanOverlay.open, auditScanOverlay.status, auditScanOverlay.finishedAt]);
 
             const escapeCsv = (value) => {
                 if (value === undefined || value === null) return '';
@@ -10622,6 +10893,57 @@
             const activeFixtureFinance = activeFixtureFinanceId !== undefined && activeFixtureFinanceId !== null
                 ? (fixtureFinanceById[String(activeFixtureFinanceId)] || null)
                 : null;
+            const auditScanStepIndex = Math.max(0, Math.min(REPORT_AUDIT_SCAN_STEPS.length - 1, Number(auditScanOverlay.stepIndex || 0)));
+            const auditScanProgress = auditScanOverlay.status === 'complete'
+                ? 100
+                : Math.max(8, Math.round(((auditScanStepIndex + 1) / REPORT_AUDIT_SCAN_STEPS.length) * 100));
+            const auditScanActiveStepLabel = REPORT_AUDIT_SCAN_STEPS[auditScanStepIndex] || 'Scanning...';
+            const lastScanDiff = (() => {
+                const prev = lastManualAuditScanResult?.previousSummary;
+                const next = lastManualAuditScanResult?.nextSummary;
+                if (!prev || !next) return null;
+                return {
+                    flaggedDelta: Number(next.flagged || 0) - Number(prev.flagged || 0),
+                    outstandingDelta: Number(next.outstanding || 0) - Number(prev.outstanding || 0),
+                    scannedDelta: Number(next.scanned || 0) - Number(prev.scanned || 0)
+                };
+            })();
+            const formatAuditRowDate = (rowDate) => {
+                if (!rowDate) return 'Date TBC';
+                const parsed = new Date(rowDate);
+                if (Number.isNaN(parsed.getTime())) return 'Date TBC';
+                return parsed.toLocaleDateString('en-GB');
+            };
+            const markFixtureAuditAsExternallySettled = async (row) => {
+                if (!row?.fixtureId) return;
+                const dateLabel = formatAuditRowDate(row.date);
+                const approved = window.confirm(`Mark vs ${row.opponent || 'Opponent'} (${dateLabel}) as externally settled?\n\nThis will hide this fixture from future Reconciliation Audit findings until you undo it.`);
+                if (!approved) return;
+                try {
+                    await db.fixtures.update(row.fixtureId, {
+                        auditIgnoreReconciliation: true,
+                        auditIgnoreReconciliationAt: new Date().toISOString()
+                    });
+                    await loadReports();
+                } catch (err) {
+                    window.alert('Unable to mark fixture as externally settled: ' + (err?.message || 'Unexpected error'));
+                }
+            };
+            const undoFixtureAuditExternalSettlement = async (row) => {
+                if (!row?.fixtureId) return;
+                const dateLabel = formatAuditRowDate(row.date);
+                const approved = window.confirm(`Show vs ${row.opponent || 'Opponent'} (${dateLabel}) in Reconciliation Audit again?`);
+                if (!approved) return;
+                try {
+                    await db.fixtures.update(row.fixtureId, {
+                        auditIgnoreReconciliation: false,
+                        auditIgnoreReconciliationAt: ''
+                    });
+                    await loadReports();
+                } catch (err) {
+                    window.alert('Unable to restore fixture audit checks: ' + (err?.message || 'Unexpected error'));
+                }
+            };
             const openFixtureById = (fixtureId, opponent = '') => {
                 if (fixtureId === undefined || fixtureId === null || !onNavigate) return;
                 localStorage.setItem('gaffer:focusFixtureId', String(fixtureId));
@@ -10691,9 +11013,10 @@
                             <div>
                                 <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Reconciliation Audit</div>
                                 <div className="text-[11px] text-slate-500 mt-1">Flags player-fee reconciliation gaps plus missing/misaligned pitch fee attribution (including SIA home flow checks).</div>
+                                <div className="text-[11px] text-slate-500 mt-1">Legacy match already settled outside the app? Use "Mark settled outside app" to hide it from future scans.</div>
                                 <div className="text-[11px] text-slate-500 mt-1">
                                     {isRescanning
-                                        ? 'Scanning now...'
+                                        ? `Scanning now... ${auditScanActiveStepLabel} (${auditScanStepIndex + 1}/${REPORT_AUDIT_SCAN_STEPS.length})`
                                         : lastAuditScanAt
                                             ? `Last scan: ${new Date(lastAuditScanAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} (${auditScanRuns} run${auditScanRuns === 1 ? '' : 's'})`
                                             : 'Tap Rescan to run a fresh audit check.'}
@@ -10713,6 +11036,25 @@
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Outstanding: <span className="font-bold text-amber-700">{formatCurrency(auditSummary.outstanding)}</span></div>
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Over-covered: <span className="font-bold text-rose-700">{formatCurrency(auditSummary.overCollected)}</span></div>
                         </div>
+                        {!!lastManualAuditScanResult && !isRescanning && (
+                            <div className={`rounded-lg border p-2 text-[11px] ${lastManualAuditScanResult.error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                                {lastManualAuditScanResult.error ? (
+                                    <span>Last scan failed: {lastManualAuditScanResult.error}</span>
+                                ) : (
+                                    <>
+                                        <span className="font-bold">Last rescan updated findings.</span>{' '}
+                                        {lastScanDiff && (
+                                            <span>
+                                                Scanned {lastScanDiff.scannedDelta >= 0 ? '+' : ''}{lastScanDiff.scannedDelta}, Flagged {lastScanDiff.flaggedDelta >= 0 ? '+' : ''}{lastScanDiff.flaggedDelta}, Outstanding {lastScanDiff.outstandingDelta > 0 ? '+' : ''}{formatCurrency(lastScanDiff.outstandingDelta)}.
+                                            </span>
+                                        )}
+                                        {lastManualAuditScanResult.completedAt && (
+                                            <span> Completed at {new Date(lastManualAuditScanResult.completedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.</span>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        )}
                         {isLoading ? (
                             <div className="text-sm text-slate-400">Scanning fixtures...</div>
                         ) : auditRows.length ? (
@@ -10725,10 +11067,9 @@
                                         return 0;
                                     });
                                     return (
-                                    <button
+                                    <div
                                         key={`audit-fixture-${row.fixtureId}`}
-                                        onClick={() => openAuditFixture(row)}
-                                        className="w-full rounded-lg border border-rose-200 bg-rose-50/30 p-3 text-left hover:bg-rose-50"
+                                        className="w-full rounded-lg border border-rose-200 bg-rose-50/30 p-3 text-left"
                                     >
                                         <div className="flex items-center justify-between gap-2">
                                             <div className="text-sm font-bold text-slate-900">vs {row.opponent}</div>
@@ -10749,7 +11090,23 @@
                                                 </span>
                                             )}
                                         </div>
-                                    </button>
+                                        <div className="mt-3 grid grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => openAuditFixture(row)}
+                                                className="min-h-[36px] rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
+                                            >
+                                                Open game
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => markFixtureAuditAsExternallySettled(row)}
+                                                className="min-h-[36px] rounded-lg border border-emerald-200 bg-emerald-50 text-[11px] font-bold text-emerald-700"
+                                            >
+                                                Mark settled outside app
+                                            </button>
+                                        </div>
+                                    </div>
                                     );
                                 })}
                                 {hiddenAuditRowsCount > 0 && (
@@ -10764,6 +11121,51 @@
                         ) : (
                             <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 font-semibold">
                                 No fixture reconciliation issues found.
+                            </div>
+                        )}
+                        {ignoredAuditRows.length > 0 && (
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[11px] text-slate-600">
+                                        Externally settled fixtures hidden from audit: <span className="font-bold text-slate-900">{ignoredAuditRows.length}</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowIgnoredAuditRows((prev) => !prev)}
+                                        className="min-h-[34px] px-3 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
+                                    >
+                                        {showIgnoredAuditRows ? 'Hide list' : 'Show list'}
+                                    </button>
+                                </div>
+                                {showIgnoredAuditRows && (
+                                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                        {ignoredAuditRows.map((row) => (
+                                            <div key={`audit-ignored-${row.fixtureId}`} className="rounded-lg border border-slate-200 bg-white p-2">
+                                                <div className="text-[11px] font-bold text-slate-900">vs {row.opponent}</div>
+                                                <div className="text-[10px] text-slate-500">
+                                                    {formatAuditRowDate(row.date)}
+                                                    {row.auditIgnoredAt ? ` · hidden ${new Date(row.auditIgnoredAt).toLocaleDateString('en-GB')}` : ''}
+                                                </div>
+                                                <div className="mt-2 grid grid-cols-2 gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openAuditFixture(row)}
+                                                        className="min-h-[34px] rounded-lg border border-slate-200 bg-slate-50 text-[10px] font-bold text-slate-700"
+                                                    >
+                                                        Open game
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => undoFixtureAuditExternalSettlement(row)}
+                                                        className="min-h-[34px] rounded-lg border border-amber-200 bg-amber-50 text-[10px] font-bold text-amber-700"
+                                                    >
+                                                        Show in audit again
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -11037,6 +11439,71 @@
                             </div>
                         )}
                     </Modal>
+                    {auditScanOverlay.open && (
+                        <div className="fixed inset-0 z-[180] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4">
+                            <div className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-5 shadow-2xl space-y-3 animate-slide-up">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                        <div className="text-sm font-display font-bold text-slate-900">
+                                            {auditScanOverlay.status === 'error'
+                                                ? 'Reconciliation scan failed'
+                                                : auditScanOverlay.status === 'complete'
+                                                    ? 'Reconciliation scan complete'
+                                                    : 'Scanning reconciliation audit...'}
+                                        </div>
+                                        <div className="text-[11px] text-slate-500 mt-1">
+                                            {auditScanOverlay.status === 'running'
+                                                ? `Step ${auditScanStepIndex + 1} of ${REPORT_AUDIT_SCAN_STEPS.length}`
+                                                : auditScanOverlay.status === 'complete'
+                                                    ? `Updated in ${(Number(auditScanOverlay.durationMs || 0) / 1000).toFixed(1)}s`
+                                                    : 'Review error details below.'}
+                                        </div>
+                                    </div>
+                                    <div className={`h-9 w-9 rounded-full border flex items-center justify-center ${auditScanOverlay.status === 'complete' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : auditScanOverlay.status === 'error' ? 'bg-rose-50 border-rose-100 text-rose-600' : 'bg-slate-50 border-slate-200 text-slate-300'}`}>
+                                        {auditScanOverlay.status === 'complete'
+                                            ? '✓'
+                                            : auditScanOverlay.status === 'error'
+                                                ? '!'
+                                                : <span className="h-4 w-4 rounded-full border-2 border-slate-200 border-t-brand-600 animate-spin"></span>}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                                        <div className={`h-full rounded-full transition-all duration-300 ${auditScanOverlay.status === 'error' ? 'bg-rose-500' : 'bg-brand-500'}`} style={{ width: `${auditScanProgress}%` }}></div>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 mt-1">{auditScanOverlay.note || auditScanActiveStepLabel}</div>
+                                </div>
+                                <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                                    {REPORT_AUDIT_SCAN_STEPS.map((label, index) => {
+                                        const isDone = index < auditScanStepIndex || (auditScanOverlay.status === 'complete' && index <= auditScanStepIndex);
+                                        const isRunning = auditScanOverlay.status === 'running' && index === auditScanStepIndex;
+                                        const isError = auditScanOverlay.status === 'error' && index === auditScanStepIndex;
+                                        return (
+                                            <div key={`audit-scan-step-${index}`} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5">
+                                                <div className={`h-5 w-5 rounded-full border flex items-center justify-center text-[10px] font-bold ${isDone ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : isError ? 'bg-rose-50 border-rose-100 text-rose-600' : isRunning ? 'bg-blue-50 border-blue-100 text-blue-600' : 'bg-white border-slate-200 text-slate-400'}`}>
+                                                    {isDone ? '✓' : isError ? '!' : isRunning ? '...' : '•'}
+                                                </div>
+                                                <div className="text-[11px] text-slate-700">{label}</div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                {auditScanOverlay.status === 'complete' && auditScanOverlay.previousSummary && auditScanOverlay.nextSummary && (
+                                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-[11px] text-emerald-800 space-y-1">
+                                        <div>Flagged fixtures: <span className="font-bold">{auditScanOverlay.previousSummary.flagged || 0}</span> → <span className="font-bold">{auditScanOverlay.nextSummary.flagged || 0}</span></div>
+                                        <div>Outstanding: <span className="font-bold">{formatCurrency(auditScanOverlay.previousSummary.outstanding || 0)}</span> → <span className="font-bold">{formatCurrency(auditScanOverlay.nextSummary.outstanding || 0)}</span></div>
+                                    </div>
+                                )}
+                                <button
+                                    onClick={() => setAuditScanOverlay((prev) => ({ ...prev, open: false }))}
+                                    disabled={auditScanOverlay.status === 'running'}
+                                    className={`w-full min-h-[40px] rounded-lg border text-xs font-bold ${auditScanOverlay.status === 'running' ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-slate-200 bg-white text-slate-700'}`}
+                                >
+                                    {auditScanOverlay.status === 'running' ? 'Scanning...' : 'Close'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         };
