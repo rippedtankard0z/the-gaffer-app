@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-73';
+        const MASTER_BUILD_VERSION = '2026.03.14-74';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -284,7 +284,7 @@
                 ],
                 checkpoints: [
                     'Every played game should have a result, squad, and any real cash activity recorded.',
-                    'Every game should have some form of pitch-fee treatment, even if it is zero or settled outside the app.',
+                    'Every game should have some form of pitch-fee treatment, even if it is zero or already settled.',
                     'If a card or badge in Reports looks wrong, drill into it immediately while the match is still fresh in your head.'
                 ],
                 notes: [
@@ -344,7 +344,7 @@
                 ],
                 notes: [
                     'The game screen is the place to fix most issues later, so a clean fixture record matters.',
-                    'If the app did not exist at the time of an old game, you can still add the match and mark it as settled outside the app later in audit.',
+                    'If the app did not exist at the time of an old game, you can still add the match and mark it as settled later in audit.',
                     'Do not leave fixture basics blank unless the information is genuinely unknown.'
                 ]
             },
@@ -443,12 +443,12 @@
                     'Open Fixture Profitability to see which games made or lost money. Tap a fixture to inspect its finance lines and jump straight back to the game if something needs fixing.',
                     'Run Reconciliation Audit and wait for the scan overlay to complete so you know the findings have actually refreshed.',
                     'Read each audit card carefully. The audit can flag unpaid fees, orphan payments, over-covered fixtures, missing pitch fees, and SIA home-flow gaps.',
-                    'For older fixtures that were fully settled outside the app, use Settled outside app on the audit card so those fixtures stop coming back after rescans.',
+                    'For older fixtures that were fully settled, use Settled on the audit card so those fixtures stop coming back after rescans.',
                     'Use the Bank page when you need raw ledger visibility across receivables, payables, and exports.'
                 ],
                 checkpoints: [
                     'The monthly totals feel believable based on what you expect for that period.',
-                    'Every flagged fixture in audit has either been fixed or intentionally hidden as externally settled.',
+                    'Every flagged fixture in audit has either been fixed or intentionally marked as settled.',
                     'SIA home games show the correct receivable and payable treatment when relevant.'
                 ],
                 notes: [
@@ -497,7 +497,7 @@
                 ],
                 steps: [
                     'If the UI looks stale after a release, use the hard refresh button in More or the full refresh option in Settings. This clears PWA cache and reloads the app cleanly.',
-                    'If an old fixture was handled outside the app, keep the game for history but hide it from future audit noise by marking it settled outside app in Reconciliation Audit.',
+                    'If an old fixture was already handled, keep the game for history but hide it from future audit noise by marking it settled in Reconciliation Audit.',
                     'If a report total looks suspicious, click through to the month or fixture modal first and trace the exact ledger lines before editing anything.',
                     'If you are about to do major cleanup, exports, imports, or repair tools, download a backup first.',
                     'Use App & Database when you need to confirm build details or login state for the underlying app database.'
@@ -516,6 +516,20 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-14-settled-wording',
+                at: '2026-03-14T21:20:00+08:00',
+                build: '2026.03.14-74',
+                area: 'Audit',
+                title: 'Audit wording simplified from Settled outside app to Settled',
+                summary: 'The audit action now uses a cleaner settled label so forfeits and no-finance fixtures feel natural to clear without implying off-app money movement.',
+                changes: [
+                    { label: 'Audit wording', from: 'Settled outside app', to: 'Settled' }
+                ],
+                details: [
+                    'The behavior is unchanged: the fixture is hidden from future audit findings until you choose to show it in audit again.'
+                ]
+            },
             {
                 id: '2026-03-14-print-view-fallback',
                 at: '2026-03-14T21:05:00+08:00',
@@ -892,10 +906,10 @@
                 at: '2026-03-14T13:20:00+08:00',
                 build: '2026.03.14-53',
                 area: 'Audit',
-                title: 'Legacy fixtures can be marked Settled outside app',
+                title: 'Legacy fixtures can be marked Settled',
                 summary: 'Older games that were already settled outside the app can now be suppressed from future audit noise instead of being flagged forever.',
                 changes: [
-                    { label: 'Legacy handling', from: 'Old fixtures kept reappearing on each scan', to: 'Settled outside app hides them from future audit scans' }
+                    { label: 'Legacy handling', from: 'Old fixtures kept reappearing on each scan', to: 'Settled hides them from future audit scans' }
                 ],
                 details: [
                     'This keeps historical fixtures for reference without letting them pollute current reconciliation work.'
@@ -11665,7 +11679,7 @@
                             </div>
                         </div>
                         <div className="text-[11px] text-slate-500">
-                            Search filters the full guide text, so you can quickly jump to topics like SIA, settled outside app, auto-assign bench, or reconciliation audit.
+                            Search filters the full guide text, so you can quickly jump to topics like SIA, settled, auto-assign bench, or reconciliation audit.
                         </div>
                     </div>
 
@@ -12765,7 +12779,7 @@
                         ...prev,
                         error: mode === 'restore'
                             ? `Unable to restore fixture audit checks: ${err?.message || 'Unexpected error'}`
-                            : `Unable to mark fixture as externally settled: ${err?.message || 'Unexpected error'}`
+                            : `Unable to mark fixture as settled: ${err?.message || 'Unexpected error'}`
                     }));
                 } finally {
                     setIsSavingAuditSettlement(false);
@@ -12775,7 +12789,7 @@
                 if (isSavingBulkAuditSettlement) return;
                 const selectedIds = bulkAuditSelectedRows.map((row) => row.fixtureId).filter((id) => id !== undefined && id !== null);
                 if (!selectedIds.length) {
-                    setBulkAuditSettlementDialog((prev) => ({ ...prev, error: 'Select at least one fixture to mark as settled outside the app.' }));
+                    setBulkAuditSettlementDialog((prev) => ({ ...prev, error: 'Select at least one fixture to mark as settled.' }));
                     return;
                 }
                 setIsSavingBulkAuditSettlement(true);
@@ -12886,7 +12900,7 @@
                             <div>
                                 <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Reconciliation Audit</div>
                                 <div className="text-[11px] text-slate-500 mt-1">Flags player-fee reconciliation gaps plus missing/misaligned pitch fee attribution (including SIA home flow checks).</div>
-                                <div className="text-[11px] text-slate-500 mt-1">Legacy match already settled outside the app? Use "Settled outside app" to hide it from future scans.</div>
+                                <div className="text-[11px] text-slate-500 mt-1">Legacy match already handled? Use "Settled" to hide it from future scans.</div>
                                 <div className="text-[11px] text-slate-500 mt-1">
                                     {isRescanning
                                         ? `Scanning now... ${auditScanActiveStepLabel} (${auditScanStepIndex + 1}/${REPORT_AUDIT_SCAN_STEPS.length})`
@@ -12914,7 +12928,7 @@
                                 <div>
                                     <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Legacy Bulk Settle</div>
                                     <div className="text-[11px] text-slate-500 mt-1">
-                                        Select older fixtures once and mark them as settled outside the app in bulk.
+                                        Select older fixtures once and mark them as settled in bulk.
                                     </div>
                                 </div>
                                 <div className="shrink-0 text-right">
@@ -12975,7 +12989,7 @@
                                                     onClick={() => openAuditSettlementDialog(row, 'hide')}
                                                     className="min-h-[28px] px-2 rounded-md border border-emerald-200 bg-emerald-50 text-[10px] font-bold text-emerald-700"
                                                 >
-                                                    Settled outside app
+                                                    Settled
                                                 </button>
                                             </div>
                                         </div>
@@ -13024,7 +13038,7 @@
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
                                 <div className="flex items-center justify-between gap-2">
                                     <div className="text-[11px] text-slate-600">
-                                        Externally settled fixtures hidden from audit: <span className="font-bold text-slate-900">{ignoredAuditRows.length}</span>
+                                        Settled fixtures hidden from audit: <span className="font-bold text-slate-900">{ignoredAuditRows.length}</span>
                                     </div>
                                     <button
                                         type="button"
@@ -13139,7 +13153,7 @@
                     >
                         <div className="space-y-4 pb-[max(5rem,env(safe-area-inset-bottom))] sm:pb-2">
                             <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-[13px] text-blue-900">
-                                This will mark the selected fixtures as settled outside the app, so they stop appearing in future Reconciliation Audit findings unless you show them in audit again later.
+                                This will mark the selected fixtures as settled, so they stop appearing in future Reconciliation Audit findings unless you show them in audit again later.
                             </div>
 
                             <div className="grid grid-cols-2 gap-2 text-[11px]">
