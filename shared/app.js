@@ -9719,6 +9719,9 @@
                         .filter((fixture) => (fixture.status || 'SCHEDULED') !== 'ARCHIVED')
                         .map((fixture) => {
                             const txList = txByFixture[String(fixture.id)] || [];
+                            const fixtureStatus = (fixture?.status || 'SCHEDULED').toString().trim().toUpperCase();
+                            const fixtureForfeit = normalizeForfeitResult(fixture?.forfeitResult);
+                            const requiresPitchFeeAttribution = fixtureStatus === 'PLAYED' || fixtureForfeit !== FORFEIT_RESULT.NONE;
                             const isSiaHomeFixture = (fixture?.venue || '').toString().trim().toLowerCase().includes('sia sports club');
                             const playerCharges = txList.filter(tx => isPlayerFeeCategory(tx.category) && Number(tx.amount || 0) < 0 && tx.playerId !== undefined && tx.playerId !== null);
                             const playerPayments = txList.filter(tx => isPlayerFeeCategory(tx.category) && Number(tx.amount || 0) > 0 && !tx.isWriteOff && tx.playerId !== undefined && tx.playerId !== null);
@@ -9784,6 +9787,7 @@
                             if (mismatchedCoverageCount > 0) issues.push(`${mismatchedCoverageCount} amount mismatch${mismatchedCoverageCount === 1 ? '' : 'es'}`);
                             if (overCollectedFixture > 0.009) issues.push(`Over-covered ${formatCurrency(overCollectedFixture)}`);
                             if (Math.abs(cashVariance) > 0.009) issues.push(`Cash variance ${formatCurrency(cashVariance)}`);
+                            if (requiresPitchFeeAttribution && !pitchFeeTx.length) issues.push('Missing pitch fee');
                             if (isSiaHomeFixture) {
                                 if (!pitchFeeReceivables.length) issues.push('SIA home: missing receivable pitch fee (club -> Exiles)');
                                 if (!pitchFeePayables.length) issues.push('SIA home: missing payable pitch fee (Exiles -> SIA/Glenn)');
@@ -10067,7 +10071,14 @@
                             <div className="text-sm text-slate-400">Scanning fixtures...</div>
                         ) : auditRows.length ? (
                             <div className="space-y-2">
-                                {visibleAuditRows.map((row) => (
+                                {visibleAuditRows.map((row) => {
+                                    const prioritizedIssues = [...(row.issues || [])].sort((a, b) => {
+                                        const aPitch = /missing pitch fee/i.test(a) ? 1 : 0;
+                                        const bPitch = /missing pitch fee/i.test(b) ? 1 : 0;
+                                        if (aPitch !== bPitch) return bPitch - aPitch;
+                                        return 0;
+                                    });
+                                    return (
                                     <button
                                         key={`audit-fixture-${row.fixtureId}`}
                                         onClick={() => openAuditFixture(row)}
@@ -10081,19 +10092,20 @@
                                             {row.date ? new Date(row.date).toLocaleDateString('en-GB') : 'Date TBC'} · Billed {formatCurrency(row.billed)} · Collected {formatCurrency(row.collected)} · Cash {formatCurrency(row.cashPL)}
                                         </div>
                                         <div className="mt-2 flex flex-wrap gap-1">
-                                            {row.issues.slice(0, 3).map((issue, idx) => (
+                                            {prioritizedIssues.slice(0, 3).map((issue, idx) => (
                                                 <span key={`audit-issue-${row.fixtureId}-${idx}`} className="px-2 py-1 rounded-full bg-white border border-rose-200 text-[10px] font-semibold text-rose-700">
                                                     {issue}
                                                 </span>
                                             ))}
-                                            {row.issues.length > 3 && (
+                                            {prioritizedIssues.length > 3 && (
                                                 <span className="px-2 py-1 rounded-full bg-white border border-slate-200 text-[10px] font-semibold text-slate-600">
-                                                    +{row.issues.length - 3} more
+                                                    +{prioritizedIssues.length - 3} more
                                                 </span>
                                             )}
                                         </div>
                                     </button>
-                                ))}
+                                    );
+                                })}
                                 {hiddenAuditRowsCount > 0 && (
                                     <button
                                         onClick={() => setShowAllAuditRows(prev => !prev)}
