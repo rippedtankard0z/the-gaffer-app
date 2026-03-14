@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-60';
+        const MASTER_BUILD_VERSION = '2026.03.14-63';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -438,6 +438,36 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-14-more-compact-header',
+                at: '2026-03-14T18:10:00+08:00',
+                build: '2026.03.14-63',
+                area: 'More',
+                title: 'More header compacted',
+                summary: 'The More page header is now tighter, with the refresh button pinned to the top-right and the subtitle removed.',
+                changes: [
+                    { label: 'More header copy', from: 'More + subtitle', to: 'More only' },
+                    { label: 'Refresh placement', from: 'Action area stacked lower on mobile', to: 'Top-right of the header row' }
+                ],
+                details: [
+                    'This was done to make the More screen feel less tall and easier to scan immediately.'
+                ]
+            },
+            {
+                id: '2026-03-14-firestore-transport',
+                at: '2026-03-14T17:55:00+08:00',
+                build: '2026.03.14-62',
+                area: 'App Shell',
+                title: 'Firestore startup transport hardened for mobile/PWA use',
+                summary: 'The viewer and production shells now initialize Firestore with a more reliable long-polling transport to reduce noisy startup channel errors.',
+                changes: [
+                    { label: 'Firestore transport', from: 'Default streaming channel transport', to: 'Forced long-polling with fetch streams disabled' }
+                ],
+                details: [
+                    'This specifically targets startup noise around Firestore Listen/Write channel access-control errors in browser consoles.',
+                    'It improves reliability for PWAs and webview-style environments where the default streaming transport can be noisy.'
+                ]
+            },
             {
                 id: '2026-03-14-app-log',
                 at: '2026-03-14T17:20:00+08:00',
@@ -1597,16 +1627,16 @@
             );
         };
 
-        const PageHeader = ({ title, subtitle = '', actions = null }) => {
+        const PageHeader = ({ title, subtitle = '', actions = null, inlineActionsOnMobile = false }) => {
             return (
                 <header className="px-1">
-                    <div className="bg-white/90 backdrop-blur rounded-2xl border border-slate-200/70 p-4 shadow-soft flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className={`bg-white/90 backdrop-blur rounded-2xl border border-slate-200/70 p-4 shadow-soft ${inlineActionsOnMobile ? 'flex items-start justify-between gap-3' : 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'}`}>
                         <div className="min-w-0">
                             <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">{title}</h1>
                             {subtitle ? <p className="text-slate-500 text-sm font-medium mt-0.5">{subtitle}</p> : null}
                         </div>
                         {actions ? (
-                            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                            <div className={`flex flex-wrap items-center gap-2 ${inlineActionsOnMobile ? 'justify-end shrink-0' : 'sm:justify-end'}`}>
                                 {actions}
                             </div>
                         ) : null}
@@ -3851,6 +3881,24 @@
                 });
                 return lookup;
             }, [players, plannerDeclaredPlayerLookup]);
+            const plannerPlayerName = useCallback((playerId) => {
+                const normalized = normalizePlayerIdValue(playerId);
+                if (!normalized) return 'Unknown player';
+                const player = plannerPlayerLookup[normalized];
+                if (!player) return `Player #${normalized}`;
+                return `${player.firstName || ''} ${player.lastName || ''}`.trim() || `Player #${normalized}`;
+            }, [plannerPlayerLookup]);
+            const plannerPlayerShortName = useCallback((playerId) => {
+                const normalized = normalizePlayerIdValue(playerId);
+                if (!normalized) return 'Empty';
+                const player = plannerPlayerLookup[normalized];
+                if (!player) return `#${normalized}`;
+                const first = (player.firstName || '').trim();
+                const last = (player.lastName || '').trim();
+                if (!first && !last) return `#${normalized}`;
+                if (!last) return first;
+                return `${first} ${last.charAt(0)}.`;
+            }, [plannerPlayerLookup]);
             const plannerAvailablePool = useMemo(() => {
                 return plannerRosterIds.map((id) => plannerPlayerLookup[id]).filter(Boolean);
             }, [plannerRosterIds, plannerPlayerLookup]);
@@ -4639,25 +4687,6 @@
             const reloadSelected = () => {
                 if(selectedFixture) openMatchMode(selectedFixture);
             };
-
-            const plannerPlayerName = useCallback((playerId) => {
-                const normalized = normalizePlayerIdValue(playerId);
-                if (!normalized) return 'Unknown player';
-                const player = plannerPlayerLookup[normalized];
-                if (!player) return `Player #${normalized}`;
-                return `${player.firstName || ''} ${player.lastName || ''}`.trim() || `Player #${normalized}`;
-            }, [plannerPlayerLookup]);
-            const plannerPlayerShortName = useCallback((playerId) => {
-                const normalized = normalizePlayerIdValue(playerId);
-                if (!normalized) return 'Empty';
-                const player = plannerPlayerLookup[normalized];
-                if (!player) return `#${normalized}`;
-                const first = (player.firstName || '').trim();
-                const last = (player.lastName || '').trim();
-                if (!first && !last) return `#${normalized}`;
-                if (!last) return first;
-                return `${first} ${last.charAt(0)}.`;
-            }, [plannerPlayerLookup]);
 
             const persistPlanner = async (nextPlannerRaw, options = {}) => {
                 if (!selectedFixture?.id) return null;
@@ -10791,7 +10820,7 @@
                 <div className="space-y-5 pb-20 animate-fade-in">
                     <PageHeader
                         title="More"
-                        subtitle="Everything else in one place."
+                        inlineActionsOnMobile
                         actions={(
                             <button
                                 type="button"

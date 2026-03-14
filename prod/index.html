@@ -44,9 +44,9 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, setPersistence, browserLocalPersistence, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
-        import { 
-            getFirestore, collection, doc, setDoc, addDoc, updateDoc, deleteDoc, 
-            getDocs, onSnapshot 
+        import {
+            initializeFirestore, collection, doc, setDoc, addDoc, updateDoc, deleteDoc,
+            getDocs, onSnapshot
         } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
         const firebaseConfig = window.GAFFER_FIREBASE_CONFIG;
@@ -69,7 +69,12 @@
             const validatedConfig = ensureFirebaseConfig(firebaseConfig);
             const app = initializeApp(validatedConfig);
             const auth = getAuth(app);
-            const fs = getFirestore(app);
+            // Prefer long-polling transport for reliability in mobile webviews/PWAs where
+            // Firestore's streaming channel can generate noisy startup CORS/access-control errors.
+            const fs = initializeFirestore(app, {
+                experimentalForceLongPolling: true,
+                useFetchStreams: false
+            });
             const publishAuthState = (user) => {
                 window.gafferAuthUser = user || null;
                 window.dispatchEvent(new CustomEvent('gaffer-auth-state', { detail: { user: user || null } }));
