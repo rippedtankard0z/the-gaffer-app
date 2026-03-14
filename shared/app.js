@@ -1,10 +1,10 @@
 'use strict';
         const { useState, useEffect, useMemo, useRef, useCallback, useContext } = React;
-        // Build version source of truth for the app shell. When you want Codex to bump the version:
+        // Build version source of truth for the app shell. Every shipped change should bump this:
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-55';
+        const MASTER_BUILD_VERSION = '2026.03.14-56';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -12,6 +12,7 @@
         const READ_ONLY = !!window.GAFFER_READ_ONLY;
         const VERSION_STORAGE_KEY = 'gaffer:lastBuildVersion';
         const LAST_BACKUP_AT_KEY = 'gaffer:lastBackupAt';
+        const FOCUS_FIXTURE_BACK_TAB_KEY = 'gaffer:focusFixtureBackTab';
         console.info('[Gaffer] Loaded build version:', APP_VERSION);
 
         // --- 1. Database & Domain Models (Firestore) ---
@@ -153,6 +154,38 @@
                 label: `Build ${withoutPrefix || 'latest'}`,
                 version: ''
             };
+        };
+
+        const setFixtureFocusContext = ({ fixtureId = null, opponent = '', venue = '', backTab = '' } = {}) => {
+            try {
+                if (fixtureId !== undefined && fixtureId !== null && String(fixtureId).trim()) {
+                    localStorage.setItem('gaffer:focusFixtureId', String(fixtureId));
+                }
+                if (opponent) localStorage.setItem('gaffer:focusFixtureOpponent', opponent);
+                if (venue) localStorage.setItem('gaffer:focusFixtureVenue', venue);
+                if (backTab) localStorage.setItem(FOCUS_FIXTURE_BACK_TAB_KEY, backTab);
+                else localStorage.removeItem(FOCUS_FIXTURE_BACK_TAB_KEY);
+            } catch (err) {
+                console.warn('Unable to persist fixture focus context', err);
+            }
+        };
+        const performHardPwaRefresh = async () => {
+            if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(registrations.map(reg => reg.unregister().catch(() => false)));
+            }
+            if (typeof caches !== 'undefined' && caches.keys) {
+                const cacheNames = await caches.keys();
+                await Promise.all(cacheNames.map(name => caches.delete(name).catch(() => false)));
+            }
+            try {
+                localStorage.removeItem(VERSION_STORAGE_KEY);
+            } catch (err) {
+                // localStorage may be unavailable in some contexts.
+            }
+            const url = new URL(window.location.href);
+            url.searchParams.set('refresh', String(Date.now()));
+            window.location.replace(url.toString());
         };
         const resolveDefaultLogo = () => {
             if (typeof window === 'undefined') return './assets/images/Exiles-Logo.jpg.webp';
@@ -2874,6 +2907,7 @@
         const Fixtures = ({ categories, opponents, venues, referees, refDefaults, seasonCategories, setOpponents, setVenues, onNavigate, launchMode = 'schedule', playerNameMatchHistory = {}, onRememberPlayerNameMatches = null }) => {
             const [fixtures, setFixtures] = useState([]);
             const [selectedFixture, setSelectedFixture] = useState(null);
+            const [selectedFixtureBackTab, setSelectedFixtureBackTab] = useState('');
             const [players, setPlayers] = useState([]);
             const [squad, setSquad] = useState({});
             const [fixtureTx, setFixtureTx] = useState([]);
@@ -3798,12 +3832,13 @@
                 setAllTx(txs);
                 if(seasonCategories?.length && !selectedSeason) setSelectedSeason(seasonCategories[0]);
 
+                const focusBackTab = localStorage.getItem(FOCUS_FIXTURE_BACK_TAB_KEY) || '';
                 let hasFocusedFixture = false;
                 const focusFixtureId = localStorage.getItem('gaffer:focusFixtureId');
                 if (focusFixtureId) {
                     const targetById = list.find(f => String(f.id) === String(focusFixtureId));
                     if (targetById) {
-                        openMatchMode(targetById);
+                        openMatchMode(targetById, { backTab: focusBackTab });
                         hasFocusedFixture = true;
                     }
                     localStorage.removeItem('gaffer:focusFixtureId');
@@ -3812,7 +3847,7 @@
                 if(focusOpp) {
                     if(!hasFocusedFixture) {
                         const target = list.find(f => (f.opponent || '').toLowerCase().includes(focusOpp.toLowerCase()));
-                        if(target) openMatchMode(target);
+                        if(target) openMatchMode(target, { backTab: focusBackTab });
                     }
                     localStorage.removeItem('gaffer:focusFixtureOpponent');
                 }
@@ -3820,10 +3855,11 @@
                 if(focusVenue) {
                     if(!hasFocusedFixture) {
                         const targetByVenue = list.find(f => (f.venue || '').toLowerCase().includes(focusVenue.toLowerCase()));
-                        if(targetByVenue) openMatchMode(targetByVenue);
+                        if(targetByVenue) openMatchMode(targetByVenue, { backTab: focusBackTab });
                     }
                     localStorage.removeItem('gaffer:focusFixtureVenue');
                 }
+                localStorage.removeItem(FOCUS_FIXTURE_BACK_TAB_KEY);
             };
 
             useEffect(() => {
@@ -3838,7 +3874,8 @@
                 return () => window.removeEventListener('gaffer-firestore-update', handler);
             }, []);
 
-            const openMatchMode = async (fixture) => {
+            const openMatchMode = async (fixture, options = {}) => {
+                setSelectedFixtureBackTab((options?.backTab || '').trim());
                 const participations = await db.participations.where('fixtureId').equals(fixture.id).toArray();
                 const squadState = {};
                 participations.forEach(p => squadState[p.playerId] = true);
@@ -3869,6 +3906,14 @@
                 });
                 setFeeEdits(newFeeEdits);
             };
+            const closeSelectedFixtureView = useCallback(() => {
+                const backTab = (selectedFixtureBackTab || '').trim();
+                setSelectedFixtureBackTab('');
+                setSelectedFixture(null);
+                if (backTab && onNavigate) {
+                    onNavigate(backTab);
+                }
+            }, [selectedFixtureBackTab, onNavigate]);
 
             const pickMatchdayFixture = useCallback((list = []) => {
                 if (!Array.isArray(list) || !list.length) return null;
@@ -4238,6 +4283,51 @@
                     }
                     return { ...prev, bench };
                 }, { silent: true });
+            };
+            const plannerSuggestBenchGroupForPlayer = (playerIdRaw) => {
+                const playerId = normalizePlayerIdValue(playerIdRaw);
+                const player = plannerPlayerLookup[playerId];
+                if (!player) return 'midfield';
+                const positions = collectPlayerPositions(player);
+                const defenceCodes = new Set(['GK', 'CB', 'LB', 'RB', 'LWB', 'RWB', 'SW']);
+                const midfieldCodes = new Set(['CM', 'CDM', 'CAM', 'LM', 'RM']);
+                const forwardCodes = new Set(['LW', 'RW', 'CF', 'ST', 'SS']);
+                const score = { defence: 0, midfield: 0, forward: 0 };
+                positions.forEach((code) => {
+                    if (defenceCodes.has(code)) score.defence += 2;
+                    if (midfieldCodes.has(code)) score.midfield += 2;
+                    if (forwardCodes.has(code)) score.forward += 2;
+                });
+                if (!score.defence && !score.midfield && !score.forward) {
+                    const text = `${player.position || ''} ${player.preferredPosition || ''}`.toUpperCase();
+                    if (/(GK|CB|LB|RB|WB|DEF|BACK|SWEEP)/.test(text)) score.defence += 1;
+                    if (/(CM|CDM|CAM|MID|LM|RM)/.test(text)) score.midfield += 1;
+                    if (/(ST|CF|FWD|FOR|WING|LW|RW|SS)/.test(text)) score.forward += 1;
+                }
+                if (score.forward > score.midfield && score.forward > score.defence) return 'forward';
+                if (score.defence > score.midfield && score.defence > score.forward) return 'defence';
+                return 'midfield';
+            };
+            const plannerAutoFillBenchGroups = async () => {
+                if (plannerLiveActive) {
+                    pushFixtureToast('Stop live tracking to auto-fill bench groups.', 'warning');
+                    return;
+                }
+                if (!plannerBenchAssignableIds.length) {
+                    pushFixtureToast('No bench candidates available to auto-fill.', 'info');
+                    return;
+                }
+                const nextBench = { defence: [], midfield: [], forward: [] };
+                plannerBenchAssignableIds.forEach((playerId) => {
+                    const group = plannerSuggestBenchGroupForPlayer(playerId);
+                    nextBench[group] = uniquePlayerIds([...(nextBench[group] || []), normalizePlayerIdValue(playerId)]);
+                });
+                await updatePlanner((prev) => ({
+                    ...prev,
+                    bench: normalizeBenchState(nextBench)
+                }), { silent: true });
+                const summary = `Def ${nextBench.defence.length} · Mid ${nextBench.midfield.length} · Fwd ${nextBench.forward.length}`;
+                pushFixtureToast(`Auto-filled subs. ${summary}`, 'success');
             };
 
             const plannerSetLiveMinute = async (minuteRaw, options = {}) => {
@@ -6513,7 +6603,7 @@
                                         {isMatchdayWorkspace ? (
                                             <div className="flex items-center gap-2 shrink-0">
                                                 <button
-                                                    onClick={() => setSelectedFixture(null)}
+                                                    onClick={closeSelectedFixtureView}
                                                     className="min-h-[34px] px-3 rounded-md border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
                                                 >
                                                     Back
@@ -6527,7 +6617,7 @@
                                             </div>
                                         ) : (
                                             <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:justify-end">
-                                                <button onClick={() => setSelectedFixture(null)} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
+                                                <button onClick={closeSelectedFixtureView} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
                                                 <button onClick={() => deleteFixture(selectedFixture)} className="min-h-[46px] px-4 py-2 rounded-lg border border-rose-200 bg-rose-50 text-sm font-bold text-rose-700">Delete</button>
                                             </div>
                                         )}
@@ -6973,6 +7063,19 @@
                                         <div className="space-y-2">
                                             <div className="text-[11px] font-bold text-slate-600 uppercase">Bench Groups</div>
                                             <div className="text-[11px] text-slate-500">Pick each player's sub line. This is where you set defence/midfield/forward substitutes.</div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={plannerAutoFillBenchGroups}
+                                                    disabled={plannerLiveActive || !plannerBenchAssignableIds.length}
+                                                    className={`min-h-[40px] px-3 rounded-lg border text-xs font-bold ${plannerLiveActive || !plannerBenchAssignableIds.length ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700'}`}
+                                                >
+                                                    Auto-fill subs
+                                                </button>
+                                                <div className="text-[11px] text-slate-500">
+                                                    Bench candidates: {plannerBenchAssignableIds.length}
+                                                </div>
+                                            </div>
                                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                                 {MATCHDAY_BENCH_GROUPS.map((group) => (
                                                     <div key={`planner-bench-summary-${group}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
@@ -7614,7 +7717,7 @@
                             <div className="fixed inset-x-0 bottom-0 z-[72] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-white via-white/95 to-white/0">
                                 <div className="max-w-4xl mx-auto space-y-2">
                                     <div className={`grid gap-2 ${isMatchdayWorkspace ? 'grid-cols-2' : 'grid-cols-3'}`}>
-                                        <button onClick={() => setSelectedFixture(null)} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
+                                        <button onClick={closeSelectedFixtureView} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
                                             Back
                                         </button>
                                         {!isMatchdayWorkspace && (
@@ -9431,8 +9534,11 @@
 
             const openFixtureFromUnpaid = (item) => {
                 if (!item?.fixtureId || !onNavigate) return;
-                localStorage.setItem('gaffer:focusFixtureId', String(item.fixtureId));
-                if (item.fixtureOpponent) localStorage.setItem('gaffer:focusFixtureOpponent', item.fixtureOpponent);
+                setFixtureFocusContext({
+                    fixtureId: item.fixtureId,
+                    opponent: item.fixtureOpponent || '',
+                    backTab: 'dashboard'
+                });
                 onNavigate('fixtures');
             };
 
@@ -9445,13 +9551,19 @@
 
             const openOpponentFromClubReceivable = (group) => {
                 if (!group?.clubName || !onNavigate) return;
-                localStorage.setItem('gaffer:focusFixtureOpponent', group.clubName);
+                setFixtureFocusContext({
+                    opponent: group.clubName,
+                    backTab: 'dashboard'
+                });
                 onNavigate('fixtures');
             };
             const openLastResultFixture = () => {
                 if (!lastResult?.fixtureId || !onNavigate) return;
-                localStorage.setItem('gaffer:focusFixtureId', String(lastResult.fixtureId));
-                if (lastResult.opponent) localStorage.setItem('gaffer:focusFixtureOpponent', lastResult.opponent);
+                setFixtureFocusContext({
+                    fixtureId: lastResult.fixtureId,
+                    opponent: lastResult.opponent || '',
+                    backTab: 'dashboard'
+                });
                 onNavigate('fixtures');
             };
 
@@ -9974,6 +10086,7 @@
         };
 
         const MoreHub = ({ onNavigate = () => {} }) => {
+            const [isRefreshingApp, setIsRefreshingApp] = useState(false);
             const actions = [
                 {
                     id: 'appdb',
@@ -10059,10 +10172,36 @@
                     icon: 'Settings',
                     tab: 'settings'
                 }
-            ];
+            ].sort((a, b) => a.label.localeCompare(b.label, 'en', { sensitivity: 'base' }));
+            const handleHardRefresh = async () => {
+                if (isRefreshingApp) return;
+                setIsRefreshingApp(true);
+                try {
+                    await performHardPwaRefresh();
+                } catch (err) {
+                    console.error('Hard refresh from More failed', err);
+                    setIsRefreshingApp(false);
+                    window.alert('Unable to hard refresh the app: ' + (err?.message || 'Unexpected error'));
+                }
+            };
             return (
                 <div className="space-y-5 pb-20 animate-fade-in">
-                    <PageHeader title="More" subtitle="Everything else in one place." />
+                    <PageHeader
+                        title="More"
+                        subtitle="Everything else in one place."
+                        actions={(
+                            <button
+                                type="button"
+                                onClick={handleHardRefresh}
+                                disabled={isRefreshingApp}
+                                title={isRefreshingApp ? 'Refreshing app...' : 'Hard refresh app'}
+                                aria-label={isRefreshingApp ? 'Refreshing app' : 'Hard refresh app'}
+                                className={`h-11 w-11 rounded-xl border flex items-center justify-center ${isRefreshingApp ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-slate-200 bg-white text-slate-700 hover:border-brand-200'}`}
+                            >
+                                <Icon name="RotateCw" size={18} className={isRefreshingApp ? 'animate-spin' : ''} />
+                            </button>
+                        )}
+                    />
                     <div className="space-y-3">
                         {actions.map(action => (
                             <button
@@ -10190,8 +10329,11 @@
 
             const openFixture = (item) => {
                 if (!item?.id || !onNavigate) return;
-                localStorage.setItem('gaffer:focusFixtureId', String(item.id));
-                if (item.opponent) localStorage.setItem('gaffer:focusFixtureOpponent', item.opponent);
+                setFixtureFocusContext({
+                    fixtureId: item.id,
+                    opponent: item.opponent || '',
+                    backTab: 'motmboard'
+                });
                 onNavigate('fixtures');
             };
 
@@ -10248,13 +10390,19 @@
                 'Scanning fixture reconciliation checks',
                 'Publishing refreshed findings'
             ];
+            const REPORT_MONTH_TX_INITIAL_LIMIT = 14;
+            const REPORT_MONTH_TX_PAGE_SIZE = 30;
+            const REPORT_FIXTURE_LEDGER_INITIAL_LIMIT = 25;
+            const REPORT_FIXTURE_LEDGER_PAGE_SIZE = 25;
             const [isLoading, setIsLoading] = useState(true);
             const [monthlyRows, setMonthlyRows] = useState([]);
             const [monthlyBreakdownByKey, setMonthlyBreakdownByKey] = useState({});
             const [selectedMonthKey, setSelectedMonthKey] = useState('');
+            const [monthEntryLimitByKey, setMonthEntryLimitByKey] = useState({});
             const [fixtureRows, setFixtureRows] = useState([]);
             const [fixtureFinanceById, setFixtureFinanceById] = useState({});
             const [activeFixtureFinanceId, setActiveFixtureFinanceId] = useState(null);
+            const [fixtureLedgerLimitById, setFixtureLedgerLimitById] = useState({});
             const [collectionSummary, setCollectionSummary] = useState({ billed: 0, collected: 0, writtenOff: 0, outstanding: 0, rate: 0 });
             const [cashSummary, setCashSummary] = useState({ income: 0, expense: 0, net: 0, avgNet: 0 });
             const [auditRows, setAuditRows] = useState([]);
@@ -10890,9 +11038,53 @@
                 : 0;
             const visibleAuditRows = showAllAuditRows ? auditRows : auditRows.slice(0, 8);
             const hiddenAuditRowsCount = Math.max(0, auditRows.length - 8);
+            const activeMonthlyRow = selectedMonthKey
+                ? (monthlyRows.find((row) => row.key === selectedMonthKey) || null)
+                : null;
+            const activeMonthlyBreakdown = activeMonthlyRow
+                ? (monthlyBreakdownByKey[activeMonthlyRow.key] || {
+                    entries: [],
+                    incomeByCategory: [],
+                    expenseByCategory: [],
+                    incomeTxCount: 0,
+                    expenseTxCount: 0
+                })
+                : null;
+            const activeMonthEntryLimit = activeMonthlyRow
+                ? Math.max(
+                    REPORT_MONTH_TX_INITIAL_LIMIT,
+                    Number(monthEntryLimitByKey[activeMonthlyRow.key] || REPORT_MONTH_TX_INITIAL_LIMIT)
+                )
+                : REPORT_MONTH_TX_INITIAL_LIMIT;
+            const activeMonthVisibleEntries = activeMonthlyBreakdown
+                ? activeMonthlyBreakdown.entries.slice(0, activeMonthEntryLimit)
+                : [];
+            const activeMonthRemainingEntryCount = activeMonthlyBreakdown
+                ? Math.max(0, Number(activeMonthlyBreakdown.entries.length || 0) - activeMonthVisibleEntries.length)
+                : 0;
+            const canShowMoreMonthEntries = activeMonthRemainingEntryCount > 0;
+            const canShowFewerMonthEntries = !!activeMonthlyBreakdown
+                && activeMonthEntryLimit > REPORT_MONTH_TX_INITIAL_LIMIT
+                && Number(activeMonthlyBreakdown.entries.length || 0) > REPORT_MONTH_TX_INITIAL_LIMIT;
             const activeFixtureFinance = activeFixtureFinanceId !== undefined && activeFixtureFinanceId !== null
                 ? (fixtureFinanceById[String(activeFixtureFinanceId)] || null)
                 : null;
+            const activeFixtureLedgerLimit = activeFixtureFinance
+                ? Math.max(
+                    REPORT_FIXTURE_LEDGER_INITIAL_LIMIT,
+                    Number(fixtureLedgerLimitById[String(activeFixtureFinance.fixtureId)] || REPORT_FIXTURE_LEDGER_INITIAL_LIMIT)
+                )
+                : REPORT_FIXTURE_LEDGER_INITIAL_LIMIT;
+            const activeFixtureVisibleEntries = activeFixtureFinance
+                ? (activeFixtureFinance.entries || []).slice(0, activeFixtureLedgerLimit)
+                : [];
+            const activeFixtureRemainingEntryCount = activeFixtureFinance
+                ? Math.max(0, Number(activeFixtureFinance.entries?.length || 0) - activeFixtureVisibleEntries.length)
+                : 0;
+            const canShowMoreFixtureEntries = activeFixtureRemainingEntryCount > 0;
+            const canShowFewerFixtureEntries = !!activeFixtureFinance
+                && activeFixtureLedgerLimit > REPORT_FIXTURE_LEDGER_INITIAL_LIMIT
+                && Number(activeFixtureFinance.entries?.length || 0) > REPORT_FIXTURE_LEDGER_INITIAL_LIMIT;
             const auditScanStepIndex = Math.max(0, Math.min(REPORT_AUDIT_SCAN_STEPS.length - 1, Number(auditScanOverlay.stepIndex || 0)));
             const auditScanProgress = auditScanOverlay.status === 'complete'
                 ? 100
@@ -10946,18 +11138,35 @@
             };
             const openFixtureById = (fixtureId, opponent = '') => {
                 if (fixtureId === undefined || fixtureId === null || !onNavigate) return;
-                localStorage.setItem('gaffer:focusFixtureId', String(fixtureId));
-                if (opponent) localStorage.setItem('gaffer:focusFixtureOpponent', opponent);
+                setFixtureFocusContext({
+                    fixtureId,
+                    opponent,
+                    backTab: 'reports'
+                });
                 onNavigate('fixtures');
             };
             const openFixtureFromMonthlyEntry = (entry) => {
+                setSelectedMonthKey('');
                 openFixtureById(entry?.fixtureId, entry?.fixtureOpponent || '');
             };
             const openAuditFixture = (row) => {
                 openFixtureById(row?.fixtureId, row?.opponent || '');
             };
+            const openMonthlyBreakdownModal = (row) => {
+                if (!row?.key) return;
+                setMonthEntryLimitByKey((prev) => ({
+                    ...prev,
+                    [row.key]: Math.max(REPORT_MONTH_TX_INITIAL_LIMIT, Number(prev[row.key] || REPORT_MONTH_TX_INITIAL_LIMIT))
+                }));
+                setSelectedMonthKey(row.key);
+            };
             const openFixtureProfitabilityModal = (row) => {
                 if (!row?.id) return;
+                const key = String(row.id);
+                setFixtureLedgerLimitById((prev) => ({
+                    ...prev,
+                    [key]: Math.max(REPORT_FIXTURE_LEDGER_INITIAL_LIMIT, Number(prev[key] || REPORT_FIXTURE_LEDGER_INITIAL_LIMIT))
+                }));
                 setActiveFixtureFinanceId(row.id);
             };
             const openFixtureFromProfitabilityModal = () => {
@@ -10967,7 +11176,7 @@
             };
 
             return (
-                <div className="space-y-5 pb-20 animate-fade-in">
+                <div className="space-y-5 pb-[calc(8rem+env(safe-area-inset-bottom))] animate-fade-in">
                     <PageHeader
                         title="Reports"
                         subtitle="Monthly P&L, cashflow, fixture profitability, and fee collection."
@@ -11013,7 +11222,7 @@
                             <div>
                                 <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Reconciliation Audit</div>
                                 <div className="text-[11px] text-slate-500 mt-1">Flags player-fee reconciliation gaps plus missing/misaligned pitch fee attribution (including SIA home flow checks).</div>
-                                <div className="text-[11px] text-slate-500 mt-1">Legacy match already settled outside the app? Use "Mark settled outside app" to hide it from future scans.</div>
+                                <div className="text-[11px] text-slate-500 mt-1">Legacy match already settled outside the app? Use "Settled outside app" to hide it from future scans.</div>
                                 <div className="text-[11px] text-slate-500 mt-1">
                                     {isRescanning
                                         ? `Scanning now... ${auditScanActiveStepLabel} (${auditScanStepIndex + 1}/${REPORT_AUDIT_SCAN_STEPS.length})`
@@ -11071,9 +11280,18 @@
                                         key={`audit-fixture-${row.fixtureId}`}
                                         className="w-full rounded-lg border border-rose-200 bg-rose-50/30 p-3 text-left"
                                     >
-                                        <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-start justify-between gap-2">
                                             <div className="text-sm font-bold text-slate-900">vs {row.opponent}</div>
-                                            <div className="text-xs font-bold text-rose-700">{row.issues.length} issue{row.issues.length === 1 ? '' : 's'}</div>
+                                            <div className="flex flex-col items-end gap-1">
+                                                <div className="text-xs font-bold text-rose-700">{row.issues.length} issue{row.issues.length === 1 ? '' : 's'}</div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => markFixtureAuditAsExternallySettled(row)}
+                                                    className="min-h-[28px] px-2 rounded-md border border-emerald-200 bg-emerald-50 text-[10px] font-bold text-emerald-700"
+                                                >
+                                                    Settled outside app
+                                                </button>
+                                            </div>
                                         </div>
                                         <div className="mt-1 text-[11px] text-slate-600">
                                             {row.date ? new Date(row.date).toLocaleDateString('en-GB') : 'Date TBC'} · Billed {formatCurrency(row.billed)} · Collected {formatCurrency(row.collected)} · Cash {formatCurrency(row.cashPL)}
@@ -11090,20 +11308,13 @@
                                                 </span>
                                             )}
                                         </div>
-                                        <div className="mt-3 grid grid-cols-2 gap-2">
+                                        <div className="mt-3">
                                             <button
                                                 type="button"
                                                 onClick={() => openAuditFixture(row)}
-                                                className="min-h-[36px] rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
+                                                className="w-full min-h-[36px] rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
                                             >
                                                 Open game
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => markFixtureAuditAsExternallySettled(row)}
-                                                className="min-h-[36px] rounded-lg border border-emerald-200 bg-emerald-50 text-[11px] font-bold text-emerald-700"
-                                            >
-                                                Mark settled outside app
                                             </button>
                                         </div>
                                     </div>
@@ -11178,126 +11389,26 @@
                                 <div className="text-[11px] text-slate-500">Tap a month to inspect the ledger lines behind the totals.</div>
                                 {monthlyRows.slice(0, 12).map((row) => {
                                     const monthBreakdown = monthlyBreakdownByKey[row.key] || {
-                                        entries: [],
-                                        incomeByCategory: [],
-                                        expenseByCategory: [],
-                                        incomeTxCount: 0,
-                                        expenseTxCount: 0
+                                        entries: []
                                     };
-                                    const isMonthOpen = selectedMonthKey === row.key;
                                     return (
-                                    <div key={`report-month-${row.key}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                                        <button
-                                            type="button"
-                                            onClick={() => setSelectedMonthKey(prev => prev === row.key ? '' : row.key)}
-                                            className="w-full text-left"
-                                        >
-                                            <div className="flex items-center justify-between">
-                                                <div className="text-sm font-bold text-slate-900">{row.label}</div>
-                                                <div className={`text-sm font-bold ${row.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatCurrency(row.net)}</div>
-                                            </div>
-                                            <div className="mt-1 text-[11px] text-slate-500">
-                                                Income {formatCurrency(row.income)} · Expense {formatCurrency(row.expense)} · Closing {formatCurrency(row.closing)}
-                                            </div>
-                                            <div className="mt-1 text-[11px] text-slate-500">
-                                                {monthBreakdown.entries.length} transaction{monthBreakdown.entries.length === 1 ? '' : 's'} · {isMonthOpen ? 'Hide breakdown' : 'Show breakdown'}
-                                            </div>
-                                        </button>
-                                        {isMonthOpen && (
-                                            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 space-y-3">
-                                                <div className="grid grid-cols-2 gap-2 text-[11px]">
-                                                    <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-emerald-800">
-                                                        Income lines: <span className="font-bold">{monthBreakdown.incomeTxCount || 0}</span>
-                                                    </div>
-                                                    <div className="rounded-lg border border-rose-100 bg-rose-50 p-2 text-rose-800">
-                                                        Expense lines: <span className="font-bold">{monthBreakdown.expenseTxCount || 0}</span>
-                                                    </div>
-                                                </div>
-                                                <div className="space-y-1">
-                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Income By Category</div>
-                                                    {monthBreakdown.incomeByCategory.length ? (
-                                                        <div className="flex flex-wrap gap-1">
-                                                            {monthBreakdown.incomeByCategory.slice(0, 6).map((item) => (
-                                                                <span key={`month-income-${row.key}-${item.category}`} className="px-2 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[10px] font-semibold text-emerald-700">
-                                                                    {item.category}: {formatCurrency(item.amount)}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    ) : (
-                                                        <div className="text-[11px] text-slate-400">No income lines this month.</div>
-                                                    )}
-                                                </div>
-                                                <div className="space-y-1">
-                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Expense By Category</div>
-                                                    {monthBreakdown.expenseByCategory.length ? (
-                                                        <div className="flex flex-wrap gap-1">
-                                                            {monthBreakdown.expenseByCategory.slice(0, 6).map((item) => (
-                                                                <span key={`month-expense-${row.key}-${item.category}`} className="px-2 py-1 rounded-full border border-rose-200 bg-rose-50 text-[10px] font-semibold text-rose-700">
-                                                                    {item.category}: {formatCurrency(item.amount)}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    ) : (
-                                                        <div className="text-[11px] text-slate-400">No expense lines this month.</div>
-                                                    )}
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Transactions</div>
-                                                    {monthBreakdown.entries.length ? (
-                                                        <>
-                                                            {monthBreakdown.entries.slice(0, 14).map((entry) => {
-                                                                const dateLabel = entry?.dateIso
-                                                                    ? new Date(entry.dateIso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
-                                                                    : 'Date TBC';
-                                                                const canOpenFixture = !!entry?.fixtureId;
-                                                                const rowContent = (
-                                                                    <>
-                                                                        <div className="flex items-start justify-between gap-2">
-                                                                            <div className="min-w-0">
-                                                                                <div className="text-[11px] font-bold text-slate-900">{entry.description}</div>
-                                                                                <div className="text-[10px] text-slate-500">
-                                                                                    {dateLabel} · {entry.category}
-                                                                                    {entry.payee ? ` · ${entry.payee}` : ''}
-                                                                                    {entry.fixtureOpponent ? ` · vs ${entry.fixtureOpponent}` : ''}
-                                                                                </div>
-                                                                            </div>
-                                                                            <div className={`text-[11px] font-bold shrink-0 ${entry.amount >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                                                                {formatCurrency(entry.amount)}
-                                                                            </div>
-                                                                        </div>
-                                                                    </>
-                                                                );
-                                                                if (canOpenFixture) {
-                                                                    return (
-                                                                        <button
-                                                                            type="button"
-                                                                            key={`month-entry-${row.key}-${entry.id}`}
-                                                                            onClick={() => openFixtureFromMonthlyEntry(entry)}
-                                                                            className="w-full text-left rounded-lg border border-slate-100 bg-slate-50 hover:border-brand-200 p-2"
-                                                                        >
-                                                                            {rowContent}
-                                                                        </button>
-                                                                    );
-                                                                }
-                                                                return (
-                                                                    <div key={`month-entry-${row.key}-${entry.id}`} className="rounded-lg border border-slate-100 bg-slate-50 p-2">
-                                                                        {rowContent}
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                            {monthBreakdown.entries.length > 14 && (
-                                                                <div className="text-[11px] text-slate-500">
-                                                                    Showing 14 of {monthBreakdown.entries.length} transactions.
-                                                                </div>
-                                                            )}
-                                                        </>
-                                                    ) : (
-                                                        <div className="text-[11px] text-slate-400">No cash-impact transactions in this month.</div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
+                                    <button
+                                        type="button"
+                                        key={`report-month-${row.key}`}
+                                        onClick={() => openMonthlyBreakdownModal(row)}
+                                        className="w-full text-left rounded-lg border border-slate-200 bg-slate-50 hover:border-brand-200 p-3"
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-sm font-bold text-slate-900">{row.label}</div>
+                                            <div className={`text-sm font-bold ${row.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatCurrency(row.net)}</div>
+                                        </div>
+                                        <div className="mt-1 text-[11px] text-slate-500">
+                                            Income {formatCurrency(row.income)} · Expense {formatCurrency(row.expense)} · Closing {formatCurrency(row.closing)}
+                                        </div>
+                                        <div className="mt-1 text-[11px] text-slate-500">
+                                            {monthBreakdown.entries.length} transaction{monthBreakdown.entries.length === 1 ? '' : 's'} · Open breakdown
+                                        </div>
+                                    </button>
                                     );
                                 })}
                             </div>
@@ -11335,13 +11446,179 @@
                         )}
                     </div>
                     <Modal
+                        isOpen={!!activeMonthlyRow}
+                        onClose={() => setSelectedMonthKey('')}
+                        title={activeMonthlyRow ? activeMonthlyRow.label : 'Monthly Breakdown'}
+                        placement="center"
+                    >
+                        {activeMonthlyRow && activeMonthlyBreakdown && (
+                            <div className="space-y-3 pb-[max(5rem,env(safe-area-inset-bottom))] sm:pb-2">
+                                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                    <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-emerald-800">
+                                        Income
+                                        <div className="font-bold">{formatCurrency(activeMonthlyRow.income)}</div>
+                                    </div>
+                                    <div className="rounded-lg border border-rose-100 bg-rose-50 p-2 text-rose-800">
+                                        Expense
+                                        <div className="font-bold">{formatCurrency(activeMonthlyRow.expense)}</div>
+                                    </div>
+                                    <div className={`rounded-lg border p-2 ${activeMonthlyRow.net >= 0 ? 'border-emerald-100 bg-emerald-50 text-emerald-800' : 'border-rose-100 bg-rose-50 text-rose-800'}`}>
+                                        Net
+                                        <div className="font-bold">{formatCurrency(activeMonthlyRow.net)}</div>
+                                    </div>
+                                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-slate-700">
+                                        Closing
+                                        <div className="font-bold">{formatCurrency(activeMonthlyRow.closing)}</div>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                    <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-emerald-800">
+                                        Income lines: <span className="font-bold">{activeMonthlyBreakdown.incomeTxCount || 0}</span>
+                                    </div>
+                                    <div className="rounded-lg border border-rose-100 bg-rose-50 p-2 text-rose-800">
+                                        Expense lines: <span className="font-bold">{activeMonthlyBreakdown.expenseTxCount || 0}</span>
+                                    </div>
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Income By Category</div>
+                                    {activeMonthlyBreakdown.incomeByCategory.length ? (
+                                        <div className="flex flex-wrap gap-1">
+                                            {activeMonthlyBreakdown.incomeByCategory.slice(0, 6).map((item) => (
+                                                <span key={`month-income-${activeMonthlyRow.key}-${item.category}`} className="px-2 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[10px] font-semibold text-emerald-700">
+                                                    {item.category}: {formatCurrency(item.amount)}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-[11px] text-slate-400">No income lines this month.</div>
+                                    )}
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Expense By Category</div>
+                                    {activeMonthlyBreakdown.expenseByCategory.length ? (
+                                        <div className="flex flex-wrap gap-1">
+                                            {activeMonthlyBreakdown.expenseByCategory.slice(0, 6).map((item) => (
+                                                <span key={`month-expense-${activeMonthlyRow.key}-${item.category}`} className="px-2 py-1 rounded-full border border-rose-200 bg-rose-50 text-[10px] font-semibold text-rose-700">
+                                                    {item.category}: {formatCurrency(item.amount)}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-[11px] text-slate-400">No expense lines this month.</div>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Transactions</div>
+                                    {activeMonthlyBreakdown.entries.length ? (
+                                        <>
+                                            {activeMonthVisibleEntries.map((entry) => {
+                                                const dateLabel = entry?.dateIso
+                                                    ? new Date(entry.dateIso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+                                                    : 'Date TBC';
+                                                const canOpenFixture = !!entry?.fixtureId;
+                                                const rowContent = (
+                                                    <>
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <div className="min-w-0">
+                                                                <div className="text-[11px] font-bold text-slate-900">{entry.description}</div>
+                                                                <div className="text-[10px] text-slate-500">
+                                                                    {dateLabel} · {entry.category}
+                                                                    {entry.payee ? ` · ${entry.payee}` : ''}
+                                                                    {entry.fixtureOpponent ? ` · vs ${entry.fixtureOpponent}` : ''}
+                                                                </div>
+                                                            </div>
+                                                            <div className={`text-[11px] font-bold shrink-0 ${entry.amount >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                                {formatCurrency(entry.amount)}
+                                                            </div>
+                                                        </div>
+                                                    </>
+                                                );
+                                                if (canOpenFixture) {
+                                                    return (
+                                                        <button
+                                                            type="button"
+                                                            key={`month-entry-${activeMonthlyRow.key}-${entry.id}`}
+                                                            onClick={() => openFixtureFromMonthlyEntry(entry)}
+                                                            className="w-full text-left rounded-lg border border-slate-100 bg-slate-50 hover:border-brand-200 p-2"
+                                                        >
+                                                            {rowContent}
+                                                        </button>
+                                                    );
+                                                }
+                                                return (
+                                                    <div key={`month-entry-${activeMonthlyRow.key}-${entry.id}`} className="rounded-lg border border-slate-100 bg-slate-50 p-2">
+                                                        {rowContent}
+                                                    </div>
+                                                );
+                                            })}
+                                            {activeMonthlyBreakdown.entries.length > REPORT_MONTH_TX_INITIAL_LIMIT && (
+                                                <div className="space-y-2">
+                                                    <div className="text-[11px] text-slate-500">
+                                                        Showing {activeMonthVisibleEntries.length} of {activeMonthlyBreakdown.entries.length} transactions.
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {canShowMoreMonthEntries && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setMonthEntryLimitByKey((prev) => ({
+                                                                    ...prev,
+                                                                    [activeMonthlyRow.key]: activeMonthEntryLimit + REPORT_MONTH_TX_PAGE_SIZE
+                                                                }))}
+                                                                className="min-h-[34px] px-3 rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-slate-700"
+                                                            >
+                                                                Show {Math.min(REPORT_MONTH_TX_PAGE_SIZE, activeMonthRemainingEntryCount)} more
+                                                            </button>
+                                                        )}
+                                                        {canShowMoreMonthEntries && activeMonthRemainingEntryCount > REPORT_MONTH_TX_PAGE_SIZE && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setMonthEntryLimitByKey((prev) => ({
+                                                                    ...prev,
+                                                                    [activeMonthlyRow.key]: activeMonthlyBreakdown.entries.length
+                                                                }))}
+                                                                className="min-h-[34px] px-3 rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-slate-700"
+                                                            >
+                                                                Show all
+                                                            </button>
+                                                        )}
+                                                        {canShowFewerMonthEntries && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setMonthEntryLimitByKey((prev) => ({
+                                                                    ...prev,
+                                                                    [activeMonthlyRow.key]: REPORT_MONTH_TX_INITIAL_LIMIT
+                                                                }))}
+                                                                className="min-h-[34px] px-3 rounded-lg border border-slate-200 bg-slate-50 text-[10px] font-bold text-slate-600"
+                                                            >
+                                                                Show fewer
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <div className="text-[11px] text-slate-400">No cash-impact transactions in this month.</div>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedMonthKey('')}
+                                    className="w-full min-h-[42px] rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        )}
+                    </Modal>
+                    <Modal
                         isOpen={!!activeFixtureFinance}
                         onClose={() => setActiveFixtureFinanceId(null)}
                         title={activeFixtureFinance ? `vs ${activeFixtureFinance.opponent}` : 'Fixture Finance'}
                         placement="center"
                     >
                         {activeFixtureFinance && (
-                            <div className="space-y-3">
+                            <div className="space-y-3 pb-[max(5rem,env(safe-area-inset-bottom))] sm:pb-2">
                                 <div className="text-[11px] text-slate-500">
                                     {(activeFixtureFinance.date ? new Date(activeFixtureFinance.date).toLocaleDateString('en-GB') : 'Date TBC')}
                                     {` · ${activeFixtureFinance.resultLabel}`}
@@ -11396,7 +11673,7 @@
                                     <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Ledger Lines</div>
                                     {activeFixtureFinance.entries?.length ? (
                                         <>
-                                            {activeFixtureFinance.entries.slice(0, 25).map((entry) => (
+                                            {activeFixtureVisibleEntries.map((entry) => (
                                                 <div key={`fixture-modal-entry-${entry.id}`} className="rounded-lg border border-slate-100 bg-slate-50 p-2">
                                                     <div className="flex items-start justify-between gap-2">
                                                         <div className="min-w-0">
@@ -11420,8 +11697,48 @@
                                                     </div>
                                                 </div>
                                             ))}
-                                            {activeFixtureFinance.entries.length > 25 && (
-                                                <div className="text-[11px] text-slate-500">Showing 25 of {activeFixtureFinance.entries.length} ledger lines.</div>
+                                            {activeFixtureFinance.entries.length > REPORT_FIXTURE_LEDGER_INITIAL_LIMIT && (
+                                                <div className="space-y-2">
+                                                    <div className="text-[11px] text-slate-500">Showing {activeFixtureVisibleEntries.length} of {activeFixtureFinance.entries.length} ledger lines.</div>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {canShowMoreFixtureEntries && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setFixtureLedgerLimitById((prev) => ({
+                                                                    ...prev,
+                                                                    [String(activeFixtureFinance.fixtureId)]: activeFixtureLedgerLimit + REPORT_FIXTURE_LEDGER_PAGE_SIZE
+                                                                }))}
+                                                                className="min-h-[34px] px-3 rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-slate-700"
+                                                            >
+                                                                Show {Math.min(REPORT_FIXTURE_LEDGER_PAGE_SIZE, activeFixtureRemainingEntryCount)} more
+                                                            </button>
+                                                        )}
+                                                        {canShowMoreFixtureEntries && activeFixtureRemainingEntryCount > REPORT_FIXTURE_LEDGER_PAGE_SIZE && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setFixtureLedgerLimitById((prev) => ({
+                                                                    ...prev,
+                                                                    [String(activeFixtureFinance.fixtureId)]: activeFixtureFinance.entries.length
+                                                                }))}
+                                                                className="min-h-[34px] px-3 rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-slate-700"
+                                                            >
+                                                                Show all
+                                                            </button>
+                                                        )}
+                                                        {canShowFewerFixtureEntries && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setFixtureLedgerLimitById((prev) => ({
+                                                                    ...prev,
+                                                                    [String(activeFixtureFinance.fixtureId)]: REPORT_FIXTURE_LEDGER_INITIAL_LIMIT
+                                                                }))}
+                                                                className="min-h-[34px] px-3 rounded-lg border border-slate-200 bg-slate-50 text-[10px] font-bold text-slate-600"
+                                                            >
+                                                                Show fewer
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
                                             )}
                                         </>
                                     ) : (
@@ -11764,8 +12081,11 @@
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            localStorage.setItem('gaffer:focusFixtureId', String(nextMeeting.id));
-                                            if (nextMeeting.opponent) localStorage.setItem('gaffer:focusFixtureOpponent', nextMeeting.opponent);
+                                            setFixtureFocusContext({
+                                                fixtureId: nextMeeting.id,
+                                                opponent: nextMeeting.opponent || '',
+                                                backTab: 'opponentintel'
+                                            });
                                             onNavigate('fixtures');
                                         }}
                                         className="w-full text-left rounded-xl border border-slate-200 bg-slate-50 p-3 hover:border-brand-200"
@@ -12570,13 +12890,19 @@
 
             const jumpToOpponentGames = (name) => {
                 if (!name) return;
-                localStorage.setItem('gaffer:focusFixtureOpponent', name);
+                setFixtureFocusContext({
+                    opponent: name,
+                    backTab: viewTab === 'venues' ? 'venues' : 'opponents'
+                });
                 onNavigate && onNavigate('fixtures');
             };
 
             const jumpToVenueGames = (name) => {
                 if (!name) return;
-                localStorage.setItem('gaffer:focusFixtureVenue', name);
+                setFixtureFocusContext({
+                    venue: name,
+                    backTab: viewTab === 'venues' ? 'venues' : 'opponents'
+                });
                 onNavigate && onNavigate('fixtures');
             };
 
@@ -16790,22 +17116,7 @@
                 if (!proceed) return;
                 setIsRefreshingApp(true);
                 try {
-                    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
-                        const registrations = await navigator.serviceWorker.getRegistrations();
-                        await Promise.all(registrations.map(reg => reg.unregister().catch(() => false)));
-                    }
-                    if (typeof caches !== 'undefined' && caches.keys) {
-                        const cacheNames = await caches.keys();
-                        await Promise.all(cacheNames.map(name => caches.delete(name).catch(() => false)));
-                    }
-                    try {
-                        localStorage.removeItem(VERSION_STORAGE_KEY);
-                    } catch (err) {
-                        // localStorage may be unavailable in some contexts.
-                    }
-                    const url = new URL(window.location.href);
-                    url.searchParams.set('refresh', String(Date.now()));
-                    window.location.replace(url.toString());
+                    await performHardPwaRefresh();
                 } catch (err) {
                     console.error('Full refresh failed', err);
                     setIsRefreshingApp(false);
