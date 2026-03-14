@@ -12581,12 +12581,10 @@
                 <h2>Reconciliation Audit (Flagged Fixtures)</h2>
                 <table><thead><tr><th>Date</th><th>Opponent</th><th>Billed</th><th>Collected</th><th>Outstanding</th><th>Cash P/L</th><th>Issues</th></tr></thead><tbody>${auditHtml}</tbody></table>
                 </body></html>`;
-                const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-                if (!printWindow) return;
-                printWindow.document.write(docHtml);
-                printWindow.document.close();
-                printWindow.focus();
-                setTimeout(() => printWindow.print(), 250);
+                const opened = openPrintDocument(docHtml, { title: 'Reports Snapshot' });
+                if (!opened) {
+                    window.alert('Unable to open the print view. Please allow pop-ups or try again.');
+                }
             };
 
             const averageFixtureNet = fixtureRows.length
