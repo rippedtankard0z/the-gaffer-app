@@ -3037,6 +3037,7 @@
                 setPlannerLiveActionModal({ open: false, slotId: '', action: '' });
                 setIsPlannerClockActionsOpen(false);
                 setPlannerScoreActionModal({ open: false, side: 'home', cardType: 'yellow', playerId: '' });
+                setPlannerSubRecommendationsModal({ open: false, trigger: '', minute: 0, recommendations: [] });
                 setPlannerSwapFlash({ slotA: '', slotB: '', token: 0 });
             }, [selectedFixture?.id, launchMode]);
             useEffect(() => {
@@ -3062,6 +3063,7 @@
                     setPlannerLiveActionModal({ open: false, slotId: '', action: '' });
                     setIsPlannerClockActionsOpen(false);
                     setPlannerScoreActionModal({ open: false, side: 'home', cardType: 'yellow', playerId: '' });
+                    setPlannerSubRecommendationsModal({ open: false, trigger: '', minute: 0, recommendations: [] });
                     setPlannerSwapFlash({ slotA: '', slotB: '', token: 0 });
                     return;
                 }
@@ -3078,6 +3080,7 @@
                 setPlannerLiveActionModal({ open: false, slotId: '', action: '' });
                 setIsPlannerClockActionsOpen(false);
                 setPlannerScoreActionModal({ open: false, side: 'home', cardType: 'yellow', playerId: '' });
+                setPlannerSubRecommendationsModal({ open: false, trigger: '', minute: 0, recommendations: [] });
                 setPlannerSwapFlash({ slotA: '', slotB: '', token: 0 });
             }, [selectedFixture?.id]);
             useEffect(() => {
@@ -3116,6 +3119,7 @@
             const [plannerLiveActionModal, setPlannerLiveActionModal] = useState({ open: false, slotId: '', action: '' });
             const [isPlannerClockActionsOpen, setIsPlannerClockActionsOpen] = useState(false);
             const [plannerScoreActionModal, setPlannerScoreActionModal] = useState({ open: false, side: 'home', cardType: 'yellow', playerId: '' });
+            const [plannerSubRecommendationsModal, setPlannerSubRecommendationsModal] = useState({ open: false, trigger: '', minute: 0, recommendations: [] });
             const [plannerSwapFlash, setPlannerSwapFlash] = useState({ slotA: '', slotB: '', token: 0 });
             const [plannerLiveNowMs, setPlannerLiveNowMs] = useState(() => Date.now());
             const [matchdayFlowTab, setMatchdayFlowTab] = useState('roster');
@@ -3437,6 +3441,115 @@
                         return a.playerName.localeCompare(b.playerName);
                     });
             }, [plannerRosterIds, plannerPlayerLookup, plannerLivePlayerStats, plannerLiveMinute, plannerOnPitchIds]);
+            const maybeSuggestBreakSubstitutions = useCallback((triggerKey = '', minuteRaw = 0, plannerSnapshotRaw = null) => {
+                const trigger = (triggerKey || '').toString();
+                if (!['wb1', 'ht', 'start2h', 'wb2'].includes(trigger)) return;
+                const plannerSnapshot = plannerSnapshotRaw || (plannerRef.current || matchdayPlanner);
+                const minute = clampMatchMinute(minuteRaw);
+                const starters = plannerSnapshot?.starters || {};
+                const onPitchMap = plannerSnapshot?.live?.active
+                    ? (plannerSnapshot?.live?.onPitch || {})
+                    : starters;
+                const liveStats = normalizeLivePlayerStats(plannerSnapshot?.live?.playerStats || {});
+                const benchState = normalizeBenchState(plannerSnapshot?.bench || {});
+                const onPitchRows = Object.entries(onPitchMap)
+                    .map(([slotId, playerId]) => {
+                        const normalizedPlayerId = normalizePlayerIdValue(playerId);
+                        if (!normalizedPlayerId) return null;
+                        const stat = liveStats[normalizedPlayerId];
+                        let onMinutes = Math.max(0, Number(stat?.totalOn || 0));
+                        const currentOnMinute = stat?.currentOnMinute;
+                        if (currentOnMinute !== null && currentOnMinute !== undefined && currentOnMinute !== '') {
+                            onMinutes += Math.max(0, minute - clampMatchMinute(currentOnMinute));
+                        }
+                        const slotInfo = plannerSlotLookup[slotId] || {};
+                        return {
+                            slotId,
+                            slotLabel: slotInfo.label || slotId.toUpperCase(),
+                            line: slotInfo.line || 'defence',
+                            playerId: normalizedPlayerId,
+                            playerName: plannerPlayerName(normalizedPlayerId),
+                            onMinutes: Math.min(MATCHDAY_CLOCK_MAX_MINUTES, Math.round(onMinutes))
+                        };
+                    })
+                    .filter(Boolean)
+                    .filter((row) => row.line !== 'goalkeeper')
+                    .sort((a, b) => b.onMinutes - a.onMinutes);
+                if (!onPitchRows.length) return;
+                const incomingIds = uniquePlayerIds([
+                    ...(benchState.defence || []),
+                    ...(benchState.midfield || []),
+                    ...(benchState.forward || []),
+                    ...plannerReserveIds
+                ]).filter((playerId) => !plannerOnPitchIds.includes(playerId));
+                const incomingLookup = incomingIds.reduce((acc, playerId) => {
+                    const stat = liveStats[playerId];
+                    let onMinutes = Math.max(0, Number(stat?.totalOn || 0));
+                    const currentOnMinute = stat?.currentOnMinute;
+                    if (currentOnMinute !== null && currentOnMinute !== undefined && currentOnMinute !== '') {
+                        onMinutes += Math.max(0, minute - clampMatchMinute(currentOnMinute));
+                    }
+                    const benchGroup = plannerBenchLookup[playerId] || 'reserve';
+                    acc[playerId] = {
+                        playerId,
+                        playerName: plannerPlayerName(playerId),
+                        onMinutes: Math.min(MATCHDAY_CLOCK_MAX_MINUTES, Math.round(onMinutes)),
+                        benchGroup
+                    };
+                    return acc;
+                }, {});
+                const maxSuggestions = trigger === 'ht' || trigger === 'start2h' ? 3 : 2;
+                const usedIncomingIds = new Set();
+                const recommendations = [];
+                onPitchRows.forEach((outgoing) => {
+                    if (recommendations.length >= maxSuggestions) return;
+                    const preferredGroup = getBenchGroupFromLine(outgoing.line);
+                    const candidateOrder = [
+                        ...incomingIds.filter((id) => incomingLookup[id]?.benchGroup === preferredGroup),
+                        ...incomingIds.filter((id) => incomingLookup[id]?.benchGroup !== preferredGroup && incomingLookup[id]?.benchGroup !== 'reserve'),
+                        ...incomingIds.filter((id) => incomingLookup[id]?.benchGroup === 'reserve')
+                    ].filter((id) => !usedIncomingIds.has(id) && id !== outgoing.playerId);
+                    const incomingId = candidateOrder
+                        .map((id) => incomingLookup[id])
+                        .filter(Boolean)
+                        .sort((a, b) => {
+                            if (a.onMinutes !== b.onMinutes) return a.onMinutes - b.onMinutes;
+                            return a.playerName.localeCompare(b.playerName);
+                        })[0]?.playerId;
+                    if (!incomingId) return;
+                    usedIncomingIds.add(incomingId);
+                    const incoming = incomingLookup[incomingId];
+                    const reason = trigger === 'ht' || trigger === 'start2h'
+                        ? 'Rotate for second-half freshness.'
+                        : 'Use the break to refresh this position.';
+                    recommendations.push({
+                        id: `${outgoing.slotId}-${outgoing.playerId}-${incomingId}`,
+                        slotId: outgoing.slotId,
+                        slotLabel: outgoing.slotLabel,
+                        outgoingId: outgoing.playerId,
+                        outgoingName: outgoing.playerName,
+                        outgoingMinutes: outgoing.onMinutes,
+                        incomingId,
+                        incomingName: incoming.playerName,
+                        incomingMinutes: incoming.onMinutes,
+                        benchGroup: incoming.benchGroup,
+                        reason
+                    });
+                });
+                if (!recommendations.length) return;
+                const triggerLabelLookup = {
+                    wb1: 'Water break 1',
+                    ht: 'Half-time',
+                    start2h: 'Start 2H',
+                    wb2: 'Water break 2'
+                };
+                setPlannerSubRecommendationsModal({
+                    open: true,
+                    trigger: triggerLabelLookup[trigger] || 'Break',
+                    minute,
+                    recommendations
+                });
+            }, [matchdayPlanner, plannerBenchLookup, plannerOnPitchIds, plannerPlayerName, plannerReserveIds, plannerSlotLookup]);
             const plannerVsHistory = useMemo(() => {
                 const opponent = (selectedFixture?.opponent || '').trim().toLowerCase();
                 if (!opponent) return { played: 0, wins: 0, draws: 0, losses: 0, lastFive: [] };
@@ -4077,6 +4190,9 @@
                         note: resume ? `Resume 1st half (${minute}')` : `Water break 1 (${minute}')`,
                         eventType: 'clock-marker'
                     });
+                    if (!resume) {
+                        maybeSuggestBreakSubstitutions('wb1', minute, current);
+                    }
                     return;
                 }
                 if (actionKey === 'ht') {
@@ -4085,6 +4201,7 @@
                         note: `Half-time (${minute}')`,
                         eventType: 'clock-marker'
                     });
+                    maybeSuggestBreakSubstitutions('ht', minute, current);
                     return;
                 }
                 if (actionKey === 'start2h') {
@@ -4093,6 +4210,7 @@
                         note: '2nd half start (40\')',
                         eventType: 'clock-marker'
                     });
+                    maybeSuggestBreakSubstitutions('start2h', 40, current);
                     return;
                 }
                 if (actionKey === 'wb2') {
@@ -4102,6 +4220,9 @@
                         note: resume ? `Resume 2nd half (${minute}')` : `Water break 2 (${minute}')`,
                         eventType: 'clock-marker'
                     });
+                    if (!resume) {
+                        maybeSuggestBreakSubstitutions('wb2', minute, current);
+                    }
                     return;
                 }
                 if (actionKey === 'ft') {
@@ -4326,9 +4447,51 @@
                 }
                 setPlannerSubSlotId(slotId);
                 setPlannerBoardSelectedSlotId(slotId);
-                pushFixtureToast(`${incomingName} substituted in.`, 'success');
+                if (!options.silentToast) {
+                    pushFixtureToast(`${incomingName} substituted in.`, 'success');
+                }
                 return true;
             };
+            const applyPlannerSubRecommendation = useCallback(async (recommendation) => {
+                if (!recommendation?.slotId || !recommendation?.incomingId) return;
+                const ok = await plannerApplySubAtSlot(recommendation.slotId, recommendation.incomingId, { keepIncomingSelection: true });
+                if (!ok) return;
+                setPlannerSubRecommendationsModal((prev) => {
+                    const remaining = (prev.recommendations || []).filter((row) => row.id !== recommendation.id);
+                    return { ...prev, recommendations: remaining, open: remaining.length > 0 };
+                });
+            }, [plannerApplySubAtSlot]);
+            const applyAllPlannerSubRecommendations = useCallback(async () => {
+                const rows = [...(plannerSubRecommendationsModal.recommendations || [])];
+                if (!rows.length) return;
+                let applied = 0;
+                let skipped = 0;
+                for (const row of rows) {
+                    const currentOnPitchId = normalizePlayerIdValue((plannerRef.current?.live?.onPitch || {})[row.slotId]);
+                    const expectedOutgoingId = normalizePlayerIdValue(row.outgoingId);
+                    if (!currentOnPitchId || currentOnPitchId === normalizePlayerIdValue(row.incomingId)) {
+                        skipped += 1;
+                        continue;
+                    }
+                    if (expectedOutgoingId && currentOnPitchId !== expectedOutgoingId) {
+                        skipped += 1;
+                        continue;
+                    }
+                    const ok = await plannerApplySubAtSlot(row.slotId, row.incomingId, {
+                        keepIncomingSelection: true,
+                        silentToast: true
+                    });
+                    if (ok) applied += 1;
+                    else skipped += 1;
+                }
+                setPlannerSubRecommendationsModal({ open: false, trigger: '', minute: 0, recommendations: [] });
+                if (applied > 0) {
+                    pushFixtureToast(`Auto-filled ${applied} suggested sub${applied === 1 ? '' : 's'}.`, 'success');
+                }
+                if (!applied && skipped > 0) {
+                    pushFixtureToast('No suggestions applied (lineup has changed).', 'info');
+                }
+            }, [plannerApplySubAtSlot, plannerSubRecommendationsModal.recommendations]);
 
             const plannerApplySwapBetweenSlots = async (slotARaw, slotBRaw, options = {}) => {
                 const slotA = (slotARaw || '').trim();
@@ -4475,6 +4638,9 @@
 
             const closePlannerLiveActionModal = () => {
                 setPlannerLiveActionModal({ open: false, slotId: '', action: '' });
+            };
+            const closePlannerSubRecommendationsModal = () => {
+                setPlannerSubRecommendationsModal({ open: false, trigger: '', minute: 0, recommendations: [] });
             };
 
             const closePlannerScoreActionModal = () => {
@@ -5140,15 +5306,138 @@
             const plannerRecentEvents = useMemo(() => {
                 return [...(matchdayPlanner?.live?.events || [])].slice(-8).reverse();
             }, [matchdayPlanner?.live?.events]);
+            const plannerLiveEventsChronological = useMemo(() => {
+                return [...(matchdayPlanner?.live?.events || [])].sort((a, b) => {
+                    const minuteA = a?.minute === null || a?.minute === undefined ? -1 : clampMatchMinute(a.minute);
+                    const minuteB = b?.minute === null || b?.minute === undefined ? -1 : clampMatchMinute(b.minute);
+                    if (minuteA !== minuteB) return minuteA - minuteB;
+                    const atA = Date.parse(a?.at || '');
+                    const atB = Date.parse(b?.at || '');
+                    if (Number.isFinite(atA) && Number.isFinite(atB) && atA !== atB) return atA - atB;
+                    return String(a?.id || '').localeCompare(String(b?.id || ''));
+                });
+            }, [matchdayPlanner?.live?.events]);
+            const isMatchFullTime = useMemo(() => normalizeLivePhase(plannerLiveClock.phase) === 'FT', [plannerLiveClock.phase]);
+            const plannerLiveSummary = useMemo(() => {
+                const ourScore = matchdayHomeScore === null ? null : Math.max(0, Number(matchdayHomeScore || 0));
+                const theirScore = matchdayAwayScore === null ? null : Math.max(0, Number(matchdayAwayScore || 0));
+                const hasScore = ourScore !== null && theirScore !== null;
+                const resultLabel = !hasScore
+                    ? 'Score pending'
+                    : ourScore > theirScore
+                        ? 'Win'
+                        : ourScore < theirScore
+                            ? 'Loss'
+                            : 'Draw';
+                const events = plannerLiveEventsChronological;
+                const substitutions = events.filter(event => event?.type === 'sub').length;
+                const swaps = events.filter(event => event?.type === 'swap').length;
+                const yellowExiles = events.filter(event => event?.type === 'card-yellow' && /\(Exiles\)/i.test(event?.note || '')).length;
+                const yellowOpposition = events.filter(event => event?.type === 'card-yellow' && !/\(Exiles\)/i.test(event?.note || '')).length;
+                const redExiles = events.filter(event => event?.type === 'card-red' && /\(Exiles\)/i.test(event?.note || '')).length;
+                const redOpposition = events.filter(event => event?.type === 'card-red' && !/\(Exiles\)/i.test(event?.note || '')).length;
+                const clockMarkers = events.filter(event => event?.type === 'clock-marker').length;
+                const topMinutes = [...plannerLiveTimeRows]
+                    .filter(row => row.onMinutes > 0)
+                    .sort((a, b) => {
+                        if (b.onMinutes !== a.onMinutes) return b.onMinutes - a.onMinutes;
+                        return a.playerName.localeCompare(b.playerName);
+                    })
+                    .slice(0, 5);
+                const timeline = [...events]
+                    .sort((a, b) => {
+                        const minuteA = a?.minute === null || a?.minute === undefined ? -1 : clampMatchMinute(a.minute);
+                        const minuteB = b?.minute === null || b?.minute === undefined ? -1 : clampMatchMinute(b.minute);
+                        if (minuteA !== minuteB) return minuteB - minuteA;
+                        const atA = Date.parse(a?.at || '');
+                        const atB = Date.parse(b?.at || '');
+                        if (Number.isFinite(atA) && Number.isFinite(atB) && atA !== atB) return atB - atA;
+                        return String(b?.id || '').localeCompare(String(a?.id || ''));
+                    })
+                    .slice(0, 12);
+                return {
+                    ourScore,
+                    theirScore,
+                    hasScore,
+                    resultLabel,
+                    substitutions,
+                    swaps,
+                    yellowExiles,
+                    yellowOpposition,
+                    redExiles,
+                    redOpposition,
+                    clockMarkers,
+                    eventCount: events.length,
+                    topMinutes,
+                    timeline,
+                    finishedMinute: plannerLiveMinute
+                };
+            }, [matchdayHomeScore, matchdayAwayScore, plannerLiveEventsChronological, plannerLiveTimeRows, plannerLiveMinute]);
+            const plannerLiveSummaryText = useMemo(() => {
+                if (!selectedFixture) return '';
+                const opponent = selectedFixture.opponent || 'Opponent';
+                const dateLabel = selectedFixture.date ? new Date(selectedFixture.date).toLocaleDateString('en-GB') : 'Date TBC';
+                const scoreLine = plannerLiveSummary.hasScore
+                    ? `Score: Exiles ${plannerLiveSummary.ourScore}-${plannerLiveSummary.theirScore} ${opponent} (${plannerLiveSummary.resultLabel})`
+                    : `Score: Exiles - ${opponent} (pending)`;
+                const topMinutes = plannerLiveSummary.topMinutes.length
+                    ? plannerLiveSummary.topMinutes.map((row) => `${row.playerName} ${row.onMinutes}m`).join(', ')
+                    : 'No tracked minutes';
+                const timeline = plannerLiveSummary.timeline.length
+                    ? plannerLiveSummary.timeline
+                        .slice(0, 10)
+                        .map((event) => {
+                            const minute = event?.minute === null || event?.minute === undefined ? '-' : clampMatchMinute(event.minute);
+                            return `- ${minute}' ${event?.note || 'Event logged'}`;
+                        })
+                        .join('\n')
+                    : '- No live events logged';
+                return [
+                    `Match Summary · Exiles vs ${opponent}`,
+                    `${dateLabel} · ${selectedFixture.venue || 'Venue TBC'}`,
+                    scoreLine,
+                    `Finished minute: ${plannerLiveSummary.finishedMinute}'`,
+                    `Subs ${plannerLiveSummary.substitutions} · Swaps ${plannerLiveSummary.swaps} · Events ${plannerLiveSummary.eventCount}`,
+                    `Cards (Exiles Y/R): ${plannerLiveSummary.yellowExiles}/${plannerLiveSummary.redExiles} · Cards (${opponent} Y/R): ${plannerLiveSummary.yellowOpposition}/${plannerLiveSummary.redOpposition}`,
+                    `Top minutes: ${topMinutes}`,
+                    'Recent timeline:',
+                    timeline
+                ].join('\n');
+            }, [selectedFixture, plannerLiveSummary]);
+            const copyPlannerLiveSummary = useCallback(async () => {
+                if (!plannerLiveSummaryText) return;
+                try {
+                    await navigator.clipboard.writeText(plannerLiveSummaryText);
+                    pushFixtureToast('Match summary copied.', 'success');
+                } catch (error) {
+                    const ta = document.createElement('textarea');
+                    ta.value = plannerLiveSummaryText;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    pushFixtureToast('Match summary copied.', 'success');
+                }
+            }, [plannerLiveSummaryText]);
             useEffect(() => {
                 if (!isMatchdayWorkspace) return;
                 if (plannerLiveActive && matchdayFlowTab !== 'live') {
                     setMatchdayFlowTab('live');
                 }
-                if (plannerLiveActive && !['pitch', 'log'].includes(matchdayLiveView)) {
+                if (plannerLiveActive && !['pitch', 'log', 'summary'].includes(matchdayLiveView)) {
                     setMatchdayLiveView('pitch');
                 }
-            }, [isMatchdayWorkspace, plannerLiveActive, matchdayFlowTab, matchdayLiveView]);
+                if (plannerLiveActive && !isMatchFullTime && matchdayLiveView === 'summary') {
+                    setMatchdayLiveView('pitch');
+                }
+            }, [isMatchdayWorkspace, plannerLiveActive, matchdayFlowTab, matchdayLiveView, isMatchFullTime]);
+            useEffect(() => {
+                if (!isMatchFullTime) return;
+                if (matchdayFlowTab !== 'live') return;
+                if (matchdayLiveView !== 'summary') {
+                    setMatchdayLiveView('summary');
+                }
+            }, [isMatchFullTime, matchdayFlowTab, matchdayLiveView]);
             useEffect(() => {
                 if (plannerLiveActive) {
                     if (plannerBoardMode === 'assign') {
@@ -6740,13 +7029,18 @@
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-2 gap-2">
+                                        <div className={`grid gap-2 ${(isMatchFullTime || matchdayLiveView === 'summary') ? 'grid-cols-3' : 'grid-cols-2'}`}>
                                             <button onClick={() => setMatchdayLiveView('pitch')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'pitch' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
                                                 Pitch
                                             </button>
                                             <button onClick={() => setMatchdayLiveView('log')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'log' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
                                                 Log
                                             </button>
+                                            {(isMatchFullTime || matchdayLiveView === 'summary') && (
+                                                <button onClick={() => setMatchdayLiveView('summary')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'summary' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                                    Summary
+                                                </button>
+                                            )}
                                         </div>
 
                                         {matchdayLiveView === 'pitch' && (
@@ -6911,6 +7205,67 @@
                                                         })}
                                                     </div>
                                                 )}
+                                            </div>
+                                        )}
+                                        {matchdayLiveView === 'summary' && (
+                                            <div className="space-y-3">
+                                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <div className="text-[11px] font-bold uppercase text-slate-500">Full-time Summary</div>
+                                                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold border ${plannerLiveSummary.resultLabel === 'Win' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : plannerLiveSummary.resultLabel === 'Loss' ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+                                                            {plannerLiveSummary.resultLabel}
+                                                        </span>
+                                                    </div>
+                                                    <div className="mt-2 text-base font-bold text-slate-900">
+                                                        Exiles {plannerLiveSummary.ourScore ?? '-'} - {plannerLiveSummary.theirScore ?? '-'} {selectedFixture?.opponent || 'Opponent'}
+                                                    </div>
+                                                    <div className="mt-1 text-[11px] text-slate-500">
+                                                        Finished at {plannerLiveSummary.finishedMinute}' · Events {plannerLiveSummary.eventCount} · Clock markers {plannerLiveSummary.clockMarkers}
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                                    <div className="rounded-lg border border-slate-200 bg-white p-2">
+                                                        <div className="text-slate-500">Subs / swaps</div>
+                                                        <div className="font-bold text-slate-900">{plannerLiveSummary.substitutions} / {plannerLiveSummary.swaps}</div>
+                                                    </div>
+                                                    <div className="rounded-lg border border-slate-200 bg-white p-2">
+                                                        <div className="text-slate-500">Cards (Exiles Y/R)</div>
+                                                        <div className="font-bold text-slate-900">{plannerLiveSummary.yellowExiles} / {plannerLiveSummary.redExiles}</div>
+                                                    </div>
+                                                </div>
+                                                <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
+                                                    <div className="text-[11px] font-bold uppercase text-slate-500">Top Minutes</div>
+                                                    {plannerLiveSummary.topMinutes.length ? (
+                                                        <div className="space-y-1">
+                                                            {plannerLiveSummary.topMinutes.map((row) => (
+                                                                <div key={`planner-summary-minutes-${row.playerId}`} className="flex items-center justify-between rounded-lg bg-slate-50 border border-slate-100 px-2 py-1.5 text-sm">
+                                                                    <span className="font-semibold text-slate-900">{row.playerName}</span>
+                                                                    <span className="font-bold text-emerald-700">{row.onMinutes}m</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-sm text-slate-400">No minutes tracked.</div>
+                                                    )}
+                                                </div>
+                                                <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
+                                                    <div className="text-[11px] font-bold uppercase text-slate-500">Recent Timeline</div>
+                                                    {plannerLiveSummary.timeline.length ? (
+                                                        <div className="space-y-1 max-h-52 overflow-y-auto pr-1">
+                                                            {plannerLiveSummary.timeline.map((event) => (
+                                                                <div key={`planner-summary-event-${event.id}`} className="rounded-lg bg-slate-50 border border-slate-100 px-2 py-1.5 text-sm text-slate-700">
+                                                                    <span className="font-bold">{event?.minute === null || event?.minute === undefined ? '-' : clampMatchMinute(event.minute)}'</span>{' '}
+                                                                    {event?.note || 'Event logged'}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-sm text-slate-400">No timeline events.</div>
+                                                    )}
+                                                </div>
+                                                <button onClick={copyPlannerLiveSummary} className="w-full min-h-[42px] rounded-lg bg-slate-900 text-white text-sm font-bold">
+                                                    Copy Match Summary
+                                                </button>
                                             </div>
                                         )}
 
@@ -7318,6 +7673,56 @@
                                 className={`w-full min-h-[46px] rounded-lg border px-3 text-sm font-bold ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerLiveClock.phase === 'FT' ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-slate-700 border-slate-200'}`}
                             >
                                 Full-time
+                            </button>
+                        </div>
+                    </Modal>
+
+                    <Modal
+                        isOpen={plannerSubRecommendationsModal.open}
+                        onClose={closePlannerSubRecommendationsModal}
+                        title={`${plannerSubRecommendationsModal.trigger || 'Break'} Sub Suggestions`}
+                        placement="center"
+                    >
+                        <div className="space-y-3">
+                            <div className="rounded-lg border border-brand-200 bg-brand-50 p-3 text-sm text-brand-800">
+                                Optional recommendations at {plannerSubRecommendationsModal.minute || 0}'. You can ignore these and make manual subs.
+                            </div>
+                            {(plannerSubRecommendationsModal.recommendations || []).length === 0 ? (
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">
+                                    No recommendations right now.
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <button
+                                        onClick={applyAllPlannerSubRecommendations}
+                                        className="w-full min-h-[42px] rounded-lg bg-emerald-600 text-white text-xs font-bold"
+                                    >
+                                        Auto-fill suggested subs
+                                    </button>
+                                    {(plannerSubRecommendationsModal.recommendations || []).map((row) => (
+                                        <div key={`planner-sub-rec-${row.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+                                            <div className="text-[11px] font-bold uppercase text-slate-500">{row.slotLabel}</div>
+                                            <div className="text-sm text-slate-700">
+                                                <span className="font-semibold">{row.outgoingName}</span> ({row.outgoingMinutes}m)
+                                                {' -> '}
+                                                <span className="font-semibold">{row.incomingName}</span> ({row.incomingMinutes}m)
+                                            </div>
+                                            <div className="text-[11px] text-slate-500">{row.reason}</div>
+                                            <button
+                                                onClick={() => applyPlannerSubRecommendation(row)}
+                                                className="w-full min-h-[40px] rounded-lg bg-slate-900 text-white text-xs font-bold"
+                                            >
+                                                Apply suggestion
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <button
+                                onClick={closePlannerSubRecommendationsModal}
+                                className="w-full min-h-[42px] rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700"
+                            >
+                                Ignore suggestions
                             </button>
                         </div>
                     </Modal>
