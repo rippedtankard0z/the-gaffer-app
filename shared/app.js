@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-75';
+        const MASTER_BUILD_VERSION = '2026.03.14-77';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -516,6 +516,34 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-14-fixture-status-control',
+                at: '2026-03-14T22:35:00+08:00',
+                build: '2026.03.14-77',
+                area: 'Games',
+                title: 'Fixtures can now be manually marked as Upcoming or Played',
+                summary: 'A dedicated status control was added to fixture advanced fields so past games no longer need a score or live flow just to appear as played.',
+                changes: [
+                    { label: 'Fixture status control', from: 'Implicit via score, forfeit, or live flow', to: 'Explicit Upcoming/Played selector in create and edit flows' }
+                ],
+                details: [
+                    'This is especially useful for historical fixtures where the game happened but the score or detailed match tracking was never entered.'
+                ]
+            },
+            {
+                id: '2026-03-14-home-money-simplified',
+                at: '2026-03-14T22:20:00+08:00',
+                build: '2026.03.14-76',
+                area: 'Home',
+                title: 'Home money card simplified to show bank cash only',
+                summary: 'The Home dashboard no longer shows raw ledger and pending-adjustment detail on the money card, keeping the focus on how much money is actually in the bank.',
+                changes: [
+                    { label: 'Home money card', from: 'Club funds total plus raw ledger and pending movement detail', to: 'Cleared bank cash only' }
+                ],
+                details: [
+                    'The raw ledger net and pending movement breakdown remain available in the Bank area, while Home now answers the simpler day-to-day question of what is in the bank.'
+                ]
+            },
             {
                 id: '2026-03-14-money-position-split',
                 at: '2026-03-14T22:05:00+08:00',
@@ -3238,6 +3266,10 @@
             { value: FORFEIT_RESULT.OPPOSITION, label: 'Opposition forfeited (default 3-0 to Exiles)' },
             { value: FORFEIT_RESULT.OURS, label: 'We forfeited (default 0-3 to opposition)' }
         ];
+        const fixtureStatusOptions = [
+            { value: 'SCHEDULED', label: 'Upcoming' },
+            { value: 'PLAYED', label: 'Played' }
+        ];
         const MATCHDAY_FORMATION_PRESETS = {
             '4-3-3': [
                 { id: 'gk', label: 'GK', line: 'goalkeeper' },
@@ -3796,7 +3828,8 @@
             competitionType: 'LEAGUE',
             seasonTag: seasonCategories?.[0] || '2025/2026 Season',
             manOfTheMatch: '',
-            forfeitResult: FORFEIT_RESULT.NONE
+            forfeitResult: FORFEIT_RESULT.NONE,
+            status: 'SCHEDULED'
         });
 
         const Fixtures = ({ categories, opponents, venues, referees, refDefaults, seasonCategories, setOpponents, setVenues, onNavigate, launchMode = 'schedule', playerNameMatchHistory = {}, onRememberPlayerNameMatches = null }) => {
@@ -4093,6 +4126,7 @@
                 setSelectedFixture({
                     ...selectedFixture,
                     forfeitResult,
+                    status: forfeitResult !== FORFEIT_RESULT.NONE ? 'PLAYED' : (selectedFixture.status || 'SCHEDULED'),
                     homeScore: resolved.homeScore,
                     awayScore: resolved.awayScore
                 });
@@ -6825,7 +6859,7 @@
                 const fixturePayload = {
                     ...newFixture,
                     forfeitResult,
-                    status: forfeitResult !== FORFEIT_RESULT.NONE ? 'PLAYED' : 'SCHEDULED'
+                    status: forfeitResult !== FORFEIT_RESULT.NONE ? 'PLAYED' : (newFixture.status || 'SCHEDULED')
                 };
                 if (resolved.homeScore !== null && resolved.awayScore !== null) {
                     fixturePayload.homeScore = resolved.homeScore;
@@ -7588,12 +7622,16 @@
                                     <select className={touchModalSelectClass} value={newFixture.competitionType} onChange={e => setNewFixture({ ...newFixture, competitionType: e.target.value })}>
                                         {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
                                     </select>
+                                    <select className={touchModalSelectClass} value={newFixture.status || 'SCHEDULED'} onChange={e => setNewFixture({ ...newFixture, status: e.target.value })}>
+                                        {fixtureStatusOptions.map(opt => <option key={`new-fixture-status-${opt.value}`} value={opt.value}>{opt.label}</option>)}
+                                    </select>
                                     <select className={touchModalSelectClass} value={normalizeForfeitResult(newFixture.forfeitResult)} onChange={e => {
                                         const forfeitResult = normalizeForfeitResult(e.target.value);
                                         const resolved = resolveFixtureScoresForForfeit(newFixture, forfeitResult);
                                         setNewFixture({
                                             ...newFixture,
                                             forfeitResult,
+                                            status: forfeitResult !== FORFEIT_RESULT.NONE ? 'PLAYED' : (newFixture.status || 'SCHEDULED'),
                                             homeScore: resolved.homeScore,
                                             awayScore: resolved.awayScore
                                         });
@@ -7719,6 +7757,9 @@
                                         <>
                                             <select className={touchPanelSelectClass} value={selectedFixture.competitionType || 'LEAGUE'} onChange={e => setSelectedFixture({ ...selectedFixture, competitionType: e.target.value })}>
                                                 {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
+                                            </select>
+                                            <select className={touchPanelSelectClass} value={selectedFixture.status || 'SCHEDULED'} onChange={e => setSelectedFixture({ ...selectedFixture, status: e.target.value })}>
+                                                {fixtureStatusOptions.map(opt => <option key={`selected-fixture-status-${opt.value}`} value={opt.value}>{opt.label}</option>)}
                                             </select>
                                             <select className={touchPanelSelectClass} value={normalizeForfeitResult(selectedFixture.forfeitResult)} onChange={e => applySelectedFixtureForfeitChange(e.target.value)}>
                                                 {fixtureForfeitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
@@ -10734,7 +10775,6 @@
                 }
             };
             const todayLabel = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-            const netOpenExposure = Number(stats.pendingNet || 0);
             const nextFixtureCountdown = (() => {
                 if (!nextFixture?.date) return '';
                 const today = new Date();
@@ -10792,40 +10832,19 @@
                         <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Money Position</div>
-                                <div className="text-3xl font-display font-bold text-slate-900 leading-none mt-1">{formatCurrency(stats.clubFundsTotal, { minimumFractionDigits: 0 })}</div>
-                                <div className="mt-1 text-[11px] text-slate-500">
-                                    Ledger total {formatCurrency(stats.accrualBalance, { minimumFractionDigits: 0 })}
-                                    {Math.abs(Number(stats.nonCashDelta || 0)) >= 0.01 && (
-                                        <span className={`ml-1 font-semibold ${stats.nonCashDelta >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                            ({stats.nonCashDelta >= 0 ? '+' : ''}{formatCurrency(stats.nonCashDelta, { maximumFractionDigits: 0 })} non-cash adjustment)
-                                        </span>
-                                    )}
-                                </div>
-                                <div className={`mt-2 text-[11px] font-semibold ${netOpenExposure >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                    Pending net on top of cleared bank cash: {stats.pendingNet >= 0 ? '+' : ''}{formatCurrency(stats.pendingNet, { maximumFractionDigits: 0 })}
-                                </div>
+                                <div className="text-3xl font-display font-bold text-slate-900 leading-none mt-1">{formatCurrency(stats.clearedBankCash, { minimumFractionDigits: 0 })}</div>
+                                <div className="mt-1 text-[11px] font-semibold text-slate-500">Cleared bank cash</div>
                             </div>
                             <div className="h-16 w-32 rounded-xl border border-slate-200 bg-slate-50/80 p-2">
                                 <Sparkline data={stats.history} color="#2563eb" />
                             </div>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-semibold">
-                            <div className="rounded-xl border border-sky-200 bg-sky-50/80 p-2.5 text-sky-900">
-                                <div className="text-[10px] uppercase tracking-wider font-bold text-sky-700">Cleared bank cash</div>
-                                <div className="text-sm font-bold mt-0.5">{formatCurrency(stats.clearedBankCash, { maximumFractionDigits: 0 })}</div>
-                            </div>
-                            <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-2.5 text-emerald-800">
-                                <div className="text-[10px] uppercase tracking-wider font-bold">Pending incoming</div>
-                                <div className="text-sm font-bold mt-0.5">{formatCurrency(stats.pendingIncoming, { maximumFractionDigits: 0 })}</div>
-                            </div>
-                            <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-2.5 text-amber-800">
-                                <div className="text-[10px] uppercase tracking-wider font-bold">Pending outgoing</div>
-                                <div className="text-sm font-bold mt-0.5">{formatCurrency(stats.pendingOutgoing, { maximumFractionDigits: 0 })}</div>
-                            </div>
-                        </div>
-                        <div className="text-[10px] text-slate-500">
-                            Use cleared bank cash for what has actually landed or been paid. Pending incoming and outgoing show expected movement that still sits outside cleared cash.
-                        </div>
+                        <button
+                            onClick={() => onNavigate('finances')}
+                            className="min-h-[44px] w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-left text-sm font-semibold text-slate-700"
+                        >
+                            Open Bank for full ledger and pending details
+                        </button>
                     </div>
 
                     <div className="rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft space-y-3 backdrop-blur-sm">
