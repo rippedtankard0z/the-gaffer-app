@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-56';
+        const MASTER_BUILD_VERSION = '2026.03.14-59';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -187,6 +187,255 @@
             url.searchParams.set('refresh', String(Date.now()));
             window.location.replace(url.toString());
         };
+        const USER_GUIDE_SECTIONS = [
+            {
+                id: 'glenn-rhythm',
+                badge: 'Start Here',
+                title: 'Glenn\'s recommended weekly rhythm',
+                summary: 'This is the simplest way to run the club in the app without missing key admin or money steps.',
+                actions: [
+                    { label: 'Open Home', tab: 'dashboard' },
+                    { label: 'Open Reports', tab: 'reports' }
+                ],
+                steps: [
+                    'Start on Home. Check unpaid player fees, club receivables, your next fixture, and the latest match snapshot.',
+                    'Before each game, open Games and confirm opponent, venue, date, kickoff time, season, competition type, and the player fee amount for that fixture.',
+                    'On match day, open Match Day to load the player list, confirm who is ready, set starters, assign the bench groups, and save the plan before kickoff.',
+                    'During the game, use live tracking for goals, cards, injuries, substitutions, and score changes so the match record stays complete.',
+                    'After full time, finish the admin inside the game: save the final result, review payments, add pitch fees and costs, and then check Reports for any audit flags.'
+                ],
+                checkpoints: [
+                    'Every played game should have a result, squad, and any real cash activity recorded.',
+                    'Every game should have some form of pitch-fee treatment, even if it is zero or settled outside the app.',
+                    'If a card or badge in Reports looks wrong, drill into it immediately while the match is still fresh in your head.'
+                ],
+                notes: [
+                    'Use the app as the source of truth from the moment a fixture is real, not only after the match.',
+                    'If you miss a live event, you can still fix it later in the game screen.',
+                    'The app works best when Glenn updates little and often instead of doing everything at month-end.'
+                ]
+            },
+            {
+                id: 'first-time-setup',
+                badge: 'Setup',
+                title: 'First-time setup and season prep',
+                summary: 'Do this once at the start of a season or whenever the club structure changes.',
+                actions: [
+                    { label: 'Open Settings', tab: 'settings' },
+                    { label: 'Open Squad', tab: 'players' },
+                    { label: 'Open Opponents', tab: 'opponents' }
+                ],
+                steps: [
+                    'Open Settings and confirm your season names, referee defaults, categories, repair tools, and backup options make sense for the current season.',
+                    'Open Squad and make sure every player is in the system with the right name and any balance history you want to track.',
+                    'Open Opponents and Venues to enter clubs, grounds, payees, venue costs, and any notes you rely on during the season.',
+                    'Open Kit if you want to track numbers, assignments, sizes, and queue items for orders.',
+                    'Take a backup from Settings before major imports or season-wide cleanup work.'
+                ],
+                checkpoints: [
+                    'Current season exists in Settings before you create new fixtures.',
+                    'Common opponents and venues already exist so fixture entry is faster and cleaner.',
+                    'Players you expect to charge fees to are already in Squad.'
+                ],
+                notes: [
+                    'A good setup phase makes match-day workflow much faster.',
+                    'If you import historical data, review it before treating it as final.',
+                    'Use backups before large repairs, imports, or cleanup work.'
+                ]
+            },
+            {
+                id: 'create-game',
+                badge: 'Games',
+                title: 'Create and prepare a game properly',
+                summary: 'Use the Games screen to build the fixture record before anyone pays, plays, or incurs a cost.',
+                actions: [
+                    { label: 'Open Games', tab: 'fixtures' },
+                    { label: 'Open Match Day', tab: 'matchday' }
+                ],
+                steps: [
+                    'Create the fixture with the opponent, date, time, venue, competition type, season, and default player fee amount.',
+                    'If the match is forfeited, choose whether Exiles forfeited or the opposition forfeited. The score defaults to 3-0 for the non-forfeiting side, but you can adjust it if the league agreed a different result.',
+                    'Add the squad for that game so the right players are linked before fees or payments are generated.',
+                    'Generate player fees only for the players who should actually be billed for that fixture.',
+                    'Add any known cost lines such as referees, pitch fees, or venue-related charges as soon as you know them instead of waiting until the end of the month.'
+                ],
+                checkpoints: [
+                    'The fixture opens with the correct opponent and venue.',
+                    'The fee amount for this specific game is correct before generating player fees.',
+                    'If the game has unusual rules, such as a forfeit or no fees, those choices are already reflected in the fixture.'
+                ],
+                notes: [
+                    'The game screen is the place to fix most issues later, so a clean fixture record matters.',
+                    'If the app did not exist at the time of an old game, you can still add the match and mark it as settled outside the app later in audit.',
+                    'Do not leave fixture basics blank unless the information is genuinely unknown.'
+                ]
+            },
+            {
+                id: 'matchday-setup',
+                badge: 'Match Day',
+                title: 'Set up Match Day before kickoff',
+                summary: 'Match Day is where you turn a fixture into an actual lineup and live plan.',
+                actions: [
+                    { label: 'Open Match Day', tab: 'matchday' },
+                    { label: 'Open Games', tab: 'fixtures' }
+                ],
+                steps: [
+                    'Load the player list into Match Day and resolve who is matched, who is temporary, and who is genuinely new.',
+                    'Use the roster step to make sure the correct players are marked ready before you build the lineup.',
+                    'Set starters on the pitch and use auto-fill starters if you want the app to speed up the first pass.',
+                    'In lineup step 2, assign bench groups so each bench player is tagged as defence, midfield, or forward. Use Auto-fill subs if you want the app to suggest the first grouping.',
+                    'Save the plan before kickoff so the live screen begins from a clean, known state.'
+                ],
+                checkpoints: [
+                    'Ready count matches the real players available for the game.',
+                    'Starters are filled and bench players are not left in the wrong group by accident.',
+                    'The plan is saved before live tracking begins.'
+                ],
+                notes: [
+                    'Auto-fill helps you move faster, but manual changes always win.',
+                    'Bench groups matter because they influence substitution recommendations later.',
+                    'If a player is missing before kickoff, fix the roster first rather than patching the live board later.'
+                ]
+            },
+            {
+                id: 'live-matchday',
+                badge: 'Live',
+                title: 'Run live tracking during the match',
+                summary: 'This is the in-game workflow for scores, cards, injuries, and substitutions.',
+                actions: [
+                    { label: 'Open Match Day', tab: 'matchday' }
+                ],
+                steps: [
+                    'Start live tracking only when your starters are correct. The app uses that moment as the baseline for game-time logic.',
+                    'Log goals, yellow cards, red cards, and injuries as they happen so the match log stays accurate.',
+                    'When you tap a player during live play, the action sheet can show useful context such as whether they have scored, are injured, or have already received a yellow or red card.',
+                    'Use manual subs whenever you want. At water breaks, half-time, start of the second half, or the second water break, the app can also recommend substitutions based on game time.',
+                    'You can ignore recommendations completely and still make your own manual changes. The recommendations are there to help, not to force the decision.',
+                    'When the game ends, review the match summary so the final state is sensible before you leave Match Day.'
+                ],
+                checkpoints: [
+                    'The live score matches the real match score.',
+                    'Major incidents like goals, cards, injuries, and substitutions were captured before closing.',
+                    'The final summary looks believable and complete.'
+                ],
+                notes: [
+                    'Live tracking is most valuable when it is kept current, but late corrections are still better than missing data.',
+                    'If the match was abandoned or unusual, add enough notes through the events and fixture state so future reports still make sense.',
+                    'The more accurate the live record is, the easier post-match reconciliation becomes.'
+                ]
+            },
+            {
+                id: 'after-full-time',
+                badge: 'Closeout',
+                title: 'Close out the game after full time',
+                summary: 'This is where Glenn turns a live match into a financially complete fixture record.',
+                actions: [
+                    { label: 'Open Games', tab: 'fixtures' },
+                    { label: 'Open Reports', tab: 'reports' }
+                ],
+                steps: [
+                    'Open the game and confirm the final score, scorers, cards, injuries, and man of the match are all correct.',
+                    'Review Payments so billed player fees, collected amounts, write-offs, and unpaid counts match what really happened.',
+                    'Review Costs and add any missing lines such as referee fees, pitch fees, venue payments, or other match expenses.',
+                    'Make sure every fixture has some sort of pitch-fee treatment. If the match was at SIA, remember the home flow can involve money coming in from the opposition and money going out from Exiles to SIA or Glenn.',
+                    'Save and close only when the game record, fees, and costs all tell the same story.'
+                ],
+                checkpoints: [
+                    'The player fee billing total is believable for the squad used.',
+                    'Pitch fees are present or intentionally handled.',
+                    'No obvious orphan payments or unexplained over-collection remain in the game.'
+                ],
+                notes: [
+                    'Do not wait too long to add costs because pitch-fee details are easy to forget.',
+                    'If you collected cash outside the app during the match, capture it as soon as possible while names and amounts are fresh.',
+                    'The game should be complete enough that someone else could understand it later without asking Glenn what happened.'
+                ]
+            },
+            {
+                id: 'money-and-audit',
+                badge: 'Money',
+                title: 'Use Reports, Bank, and Reconciliation Audit',
+                summary: 'This is where you verify whether the money story is complete and consistent.',
+                actions: [
+                    { label: 'Open Reports', tab: 'reports' },
+                    { label: 'Open Bank', tab: 'finances' }
+                ],
+                steps: [
+                    'Open Monthly P&L to review each month\'s income, expense, and closing balance. Tap a month to drill into the ledger lines behind the total.',
+                    'Open Fixture Profitability to see which games made or lost money. Tap a fixture to inspect its finance lines and jump straight back to the game if something needs fixing.',
+                    'Run Reconciliation Audit and wait for the scan overlay to complete so you know the findings have actually refreshed.',
+                    'Read each audit card carefully. The audit can flag unpaid fees, orphan payments, over-covered fixtures, missing pitch fees, and SIA home-flow gaps.',
+                    'For older fixtures that were fully settled outside the app, use Settled outside app on the audit card so those fixtures stop coming back after rescans.',
+                    'Use the Bank page when you need raw ledger visibility across receivables, payables, and exports.'
+                ],
+                checkpoints: [
+                    'The monthly totals feel believable based on what Glenn expects for that period.',
+                    'Every flagged fixture in audit has either been fixed or intentionally hidden as externally settled.',
+                    'SIA home games show the correct receivable and payable treatment when relevant.'
+                ],
+                notes: [
+                    'Reports are for investigation, not just summary. Click into them whenever a number looks off.',
+                    'Audit is most useful when you run it regularly instead of waiting until the end of the season.',
+                    'If a game is missing pitch fees, fix the game itself rather than trying to explain the report away.'
+                ]
+            },
+            {
+                id: 'reference-pages',
+                badge: 'Reference',
+                title: 'Use the rest of the More section fully',
+                summary: 'The More area is not just storage. It is where Glenn can drill into people, clubs, venues, sponsorship, and governance.',
+                actions: [
+                    { label: 'Open Opponent Intel', tab: 'opponentintel' },
+                    { label: 'Open Sponsors', tab: 'sponsors' },
+                    { label: 'Open Audit & Controls', tab: 'auditcontrols' }
+                ],
+                steps: [
+                    'Use Squad for player records, balances, attendance context, and fee-related follow-up.',
+                    'Use Opponents and Venues to maintain clubs, grounds, payees, contacts, and historical records.',
+                    'Use Opponent Intel for head-to-head trends, danger-player context, and the next scheduled meeting.',
+                    'Use Man of the Match Board when you want a clean history of awards and a quick route back into the underlying games.',
+                    'Use Sponsors & Revenue to manage deals, invoices, schedules, and return-on-value tracking.',
+                    'Use Audit & Controls to review change logs, backup integrity, and reconciliation health at a higher level.'
+                ],
+                checkpoints: [
+                    'Important club reference pages are not left stale for months at a time.',
+                    'Contacts, payees, and venue details are current before they matter on match day.',
+                    'Extra admin pages are being used to prevent future confusion, not only to store data.'
+                ],
+                notes: [
+                    'If Glenn wants the app to feel complete, these reference pages must stay alive.',
+                    'A strong reference dataset saves time everywhere else in the app.',
+                    'Use More as your club operations toolbox, not as a forgotten menu.'
+                ]
+            },
+            {
+                id: 'troubleshooting',
+                badge: 'Support',
+                title: 'Troubleshooting, old games, backups, and refresh',
+                summary: 'Use this section whenever something looks wrong, stale, duplicated, or historically incomplete.',
+                actions: [
+                    { label: 'Open Settings', tab: 'settings' },
+                    { label: 'Open App & Database', tab: 'appdb' }
+                ],
+                steps: [
+                    'If the UI looks stale after a release, use the hard refresh button in More or the full refresh option in Settings. This clears PWA cache and reloads the app cleanly.',
+                    'If an old fixture was handled outside the app, keep the game for history but hide it from future audit noise by marking it settled outside app in Reconciliation Audit.',
+                    'If a report total looks suspicious, click through to the month or fixture modal first and trace the exact ledger lines before editing anything.',
+                    'If you are about to do major cleanup, exports, imports, or repair tools, download a backup first.',
+                    'Use App & Database when you need to confirm build details or login state for the underlying app database.'
+                ],
+                checkpoints: [
+                    'You have a backup before high-risk maintenance work.',
+                    'Historical games are either properly recorded or intentionally suppressed from audit.',
+                    'A stale PWA was ruled out before deeper debugging.'
+                ],
+                notes: [
+                    'A hard refresh is useful when the app shell updates but your browser still shows the old build.',
+                    'Do not delete history just because it predates the app. Often it is better to document it and suppress audit noise.',
+                    'When in doubt, investigate with reports first, then edit the fixture or ledger source of truth.'
+                ]
+            }
+        ];
         const resolveDefaultLogo = () => {
             if (typeof window === 'undefined') return './assets/images/Exiles-Logo.jpg.webp';
             const base = (window.GAFFER_ASSET_BASE || '.').toString().replace(/\/$/, '');
@@ -4327,7 +4576,7 @@
                     bench: normalizeBenchState(nextBench)
                 }), { silent: true });
                 const summary = `Def ${nextBench.defence.length} · Mid ${nextBench.midfield.length} · Fwd ${nextBench.forward.length}`;
-                pushFixtureToast(`Auto-filled subs. ${summary}`, 'success');
+                pushFixtureToast(`Bench groups auto-assigned. ${summary}`, 'success');
             };
 
             const plannerSetLiveMinute = async (minuteRaw, options = {}) => {
@@ -5687,7 +5936,7 @@
                 : fixtureSaveStatus === 'saved'
                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                     : 'bg-rose-50 text-rose-700 border-rose-200';
-            const touchModalSelectClass = 'w-full min-h-[60px] bg-slate-50 border-2 border-slate-200 rounded-2xl px-4 py-3 text-[19px] font-semibold leading-tight outline-none';
+            const touchModalSelectClass = 'w-full min-h-[72px] bg-slate-50 border-2 border-slate-200 rounded-2xl px-5 pr-14 py-4 text-[22px] font-semibold leading-tight outline-none';
             const touchPanelSelectClass = 'w-full min-h-[60px] bg-white border-2 border-slate-200 rounded-xl px-4 py-3 text-[18px] font-semibold leading-tight';
             const touchModalInputClass = 'w-full min-h-[60px] bg-slate-50 border-2 border-slate-200 rounded-2xl px-4 py-3 text-[19px] font-semibold leading-tight outline-none';
             const touchPanelInputClass = 'w-full min-h-[60px] bg-white border-2 border-slate-200 rounded-xl px-4 py-3 text-[18px] font-semibold leading-tight outline-none';
@@ -7060,23 +7309,26 @@
                                     )}
 
                                     {matchdayLineupView === 'subs' && (
-                                        <div className="space-y-2">
-                                            <div className="text-[11px] font-bold text-slate-600 uppercase">Bench Groups</div>
-                                            <div className="text-[11px] text-slate-500">Pick each player's sub line. This is where you set defence/midfield/forward substitutes.</div>
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={plannerAutoFillBenchGroups}
-                                                    disabled={plannerLiveActive || !plannerBenchAssignableIds.length}
-                                                    className={`min-h-[40px] px-3 rounded-lg border text-xs font-bold ${plannerLiveActive || !plannerBenchAssignableIds.length ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700'}`}
-                                                >
-                                                    Auto-fill subs
-                                                </button>
-                                                <div className="text-[11px] text-slate-500">
-                                                    Bench candidates: {plannerBenchAssignableIds.length}
+                                            <div className="space-y-2">
+                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Bench Groups</div>
+                                                <div className="text-[11px] text-slate-500">Pick each player's bench area. This is where you place non-starters into Defence, Midfield, or Forward.</div>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={plannerAutoFillBenchGroups}
+                                                        disabled={plannerLiveActive || !plannerBenchAssignableIds.length}
+                                                        className={`min-h-[40px] px-3 rounded-lg border text-xs font-bold ${plannerLiveActive || !plannerBenchAssignableIds.length ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700'}`}
+                                                    >
+                                                        Auto-assign bench
+                                                    </button>
+                                                    <div className="text-[11px] text-slate-500">
+                                                        Bench candidates: {plannerBenchAssignableIds.length}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                                <div className="text-[11px] text-slate-500">
+                                                    Auto-assign bench places every non-starter into the top Defence, Midfield, or Forward areas automatically.
+                                                </div>
+                                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                                 {MATCHDAY_BENCH_GROUPS.map((group) => (
                                                     <div key={`planner-bench-summary-${group}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
                                                         <div className="text-[11px] font-bold text-slate-600 uppercase">{getBenchGroupLabel(group)}</div>
@@ -10058,7 +10310,7 @@
 
         // --- SHELL ---
         const Nav = ({ activeTab, setTab }) => {
-            const isMoreSection = ['more', 'players', 'kit', 'opponents', 'venues', 'settings', 'finances', 'appdb', 'motmboard', 'reports', 'opponentintel', 'sponsors', 'auditcontrols'].includes(activeTab);
+            const isMoreSection = ['more', 'players', 'kit', 'opponents', 'venues', 'settings', 'finances', 'appdb', 'motmboard', 'reports', 'opponentintel', 'sponsors', 'auditcontrols', 'userguide'].includes(activeTab);
             const items = [
                 { id: 'dashboard', icon: 'LayoutGrid', label: 'Home' },
                 { id: 'fixtures', icon: 'Calendar', label: 'Games' },
@@ -10171,6 +10423,13 @@
                     sub: 'Backups, imports, repair tools, app controls',
                     icon: 'Settings',
                     tab: 'settings'
+                },
+                {
+                    id: 'userguide',
+                    label: 'User Guide',
+                    sub: 'Step-by-step help for running the club in-app',
+                    icon: 'BookOpen',
+                    tab: 'userguide'
                 }
             ].sort((a, b) => a.label.localeCompare(b.label, 'en', { sensitivity: 'base' }));
             const handleHardRefresh = async () => {
@@ -10221,6 +10480,259 @@
                                 <Icon name="ChevronRight" size={18} className="text-slate-400" />
                             </button>
                         ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const UserGuideHub = ({ onNavigate = () => {} }) => {
+            const [search, setSearch] = useState('');
+            const [openSections, setOpenSections] = useState(() => (
+                USER_GUIDE_SECTIONS.reduce((acc, section, index) => {
+                    acc[section.id] = index < 2;
+                    return acc;
+                }, {})
+            ));
+            const normalizedSearch = (search || '').trim().toLowerCase();
+            const visibleSections = USER_GUIDE_SECTIONS.filter((section) => {
+                if (!normalizedSearch) return true;
+                const haystack = [
+                    section.badge,
+                    section.title,
+                    section.summary,
+                    ...(section.steps || []),
+                    ...(section.checkpoints || []),
+                    ...(section.notes || []),
+                    ...((section.actions || []).map((action) => action.label))
+                ].join(' ').toLowerCase();
+                return haystack.includes(normalizedSearch);
+            });
+            const visibleCount = visibleSections.length;
+            const toggleSection = (sectionId) => {
+                setOpenSections((prev) => ({ ...prev, [sectionId]: !prev[sectionId] }));
+            };
+            const setVisibleSectionsOpen = (nextValue) => {
+                setOpenSections((prev) => {
+                    const next = { ...prev };
+                    visibleSections.forEach((section) => {
+                        next[section.id] = nextValue;
+                    });
+                    return next;
+                });
+            };
+            const quickLinks = [
+                { label: 'Home', tab: 'dashboard', icon: 'LayoutGrid' },
+                { label: 'Games', tab: 'fixtures', icon: 'Calendar' },
+                { label: 'Match Day', tab: 'matchday', icon: 'History' },
+                { label: 'Reports', tab: 'reports', icon: 'Wallet' },
+                { label: 'Settings', tab: 'settings', icon: 'Settings' }
+            ];
+
+            return (
+                <div className="space-y-5 pb-20 animate-fade-in">
+                    <PageHeader
+                        title="User Guide"
+                        subtitle="A practical, step-by-step playbook for running Exiles in the app."
+                        actions={(
+                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                                Back to More
+                            </button>
+                        )}
+                    />
+
+                    <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft space-y-4">
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Guide Overview</div>
+                                <div className="mt-1 text-lg font-display font-bold text-slate-900">Built for Glenn and anyone running the club end to end.</div>
+                                <div className="mt-2 text-[13px] text-slate-500">
+                                    Use this guide when you want the full operating rhythm: setup, fixtures, live match day, money, reports, audit, and troubleshooting.
+                                </div>
+                            </div>
+                            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-right shrink-0">
+                                <div className="text-[10px] uppercase tracking-wider font-bold text-blue-600">Sections</div>
+                                <div className="text-2xl leading-none font-display font-bold text-blue-900">{USER_GUIDE_SECTIONS.length}</div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                            {quickLinks.map((item) => (
+                                <button
+                                    key={`guide-quick-${item.tab}`}
+                                    type="button"
+                                    onClick={() => onNavigate(item.tab)}
+                                    className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-left hover:border-brand-200"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className="h-8 w-8 rounded-xl border border-slate-200 bg-white flex items-center justify-center text-slate-700">
+                                            <Icon name={item.icon} size={15} />
+                                        </div>
+                                        <div className="text-[12px] font-bold text-slate-900">{item.label}</div>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Recommended Rhythm</div>
+                                <div className="text-[12px] text-slate-500 mt-1">The normal flow is Home -> Games -> Match Day -> Game Closeout -> Reports.</div>
+                            </div>
+                            <div className="text-[11px] font-bold text-slate-400">{visibleCount} visible</div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+                            {[
+                                'Check Home first',
+                                'Prepare the fixture',
+                                'Run Match Day',
+                                'Close out the game',
+                                'Audit the money'
+                            ].map((item, index) => (
+                                <div key={`guide-rhythm-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Step {index + 1}</div>
+                                    <div className="mt-1 text-[13px] font-bold text-slate-900">{item}</div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div className="relative flex-1">
+                                <Icon name="Search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                <input
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    placeholder="Search the guide: pitch fee, audit, forfeit, match day, payments..."
+                                    className="w-full min-h-[46px] rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-900 outline-none"
+                                />
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setVisibleSectionsOpen(true)}
+                                    className="min-h-[40px] px-3 rounded-xl border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
+                                >
+                                    Open all
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setVisibleSectionsOpen(false)}
+                                    className="min-h-[40px] px-3 rounded-xl border border-slate-200 bg-slate-50 text-[11px] font-bold text-slate-600"
+                                >
+                                    Collapse all
+                                </button>
+                            </div>
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                            Search filters the full guide text, so you can quickly jump to topics like SIA, settled outside app, auto-fill subs, or reconciliation audit.
+                        </div>
+                    </div>
+
+                    <div className="space-y-3">
+                        {visibleSections.length ? visibleSections.map((section) => {
+                            const isOpen = !!openSections[section.id];
+                            return (
+                                <div key={section.id} className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft">
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleSection(section.id)}
+                                        className="w-full text-left"
+                                    >
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{section.badge}</div>
+                                                <div className="mt-1 text-xl font-display font-bold text-slate-900">{section.title}</div>
+                                                <div className="mt-2 text-[13px] text-slate-500">{section.summary}</div>
+                                                <div className="mt-3 flex flex-wrap gap-2">
+                                                    <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-[10px] font-semibold text-slate-600">
+                                                        {section.steps.length} step{section.steps.length === 1 ? '' : 's'}
+                                                    </span>
+                                                    <span className="px-2 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[10px] font-semibold text-emerald-700">
+                                                        {section.checkpoints.length} check{section.checkpoints.length === 1 ? '' : 's'}
+                                                    </span>
+                                                    <span className="px-2 py-1 rounded-full border border-blue-200 bg-blue-50 text-[10px] font-semibold text-blue-700">
+                                                        {section.notes.length} note{section.notes.length === 1 ? '' : 's'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="h-10 w-10 rounded-2xl border border-slate-200 bg-slate-50 flex items-center justify-center text-slate-500 shrink-0">
+                                                <Icon name={isOpen ? 'ChevronUp' : 'ChevronDown'} size={18} />
+                                            </div>
+                                        </div>
+                                    </button>
+
+                                    {isOpen && (
+                                        <div className="mt-4 space-y-4">
+                                            <div className="space-y-2">
+                                                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Step-by-step</div>
+                                                <div className="space-y-2">
+                                                    {section.steps.map((step, index) => (
+                                                        <div key={`${section.id}-step-${index}`} className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                                                            <div className="h-7 w-7 rounded-full bg-slate-900 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                                                                {index + 1}
+                                                            </div>
+                                                            <div className="text-[13px] text-slate-700">{step}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 space-y-2">
+                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">Check Before You Move On</div>
+                                                    <div className="space-y-2">
+                                                        {section.checkpoints.map((item, index) => (
+                                                            <div key={`${section.id}-check-${index}`} className="flex items-start gap-2">
+                                                                <div className="mt-0.5 text-emerald-600">
+                                                                    <Icon name="Check" size={14} />
+                                                                </div>
+                                                                <div className="text-[12px] text-emerald-900">{item}</div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
+                                                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 space-y-2">
+                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-blue-700">Important Notes</div>
+                                                    <div className="space-y-2">
+                                                        {section.notes.map((item, index) => (
+                                                            <div key={`${section.id}-note-${index}`} className="flex items-start gap-2">
+                                                                <div className="mt-0.5 text-blue-600">
+                                                                    <Icon name="Info" size={14} />
+                                                                </div>
+                                                                <div className="text-[12px] text-blue-900">{item}</div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {!!section.actions?.length && (
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                    {section.actions.map((action) => (
+                                                        <button
+                                                            key={`${section.id}-action-${action.tab}`}
+                                                            type="button"
+                                                            onClick={() => onNavigate(action.tab)}
+                                                            className="min-h-[42px] rounded-2xl border border-slate-200 bg-white text-sm font-bold text-slate-700 hover:border-brand-200"
+                                                        >
+                                                            {action.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        }) : (
+                            <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-soft text-sm text-slate-500">
+                                No guide sections matched that search. Try a term like <span className="font-bold text-slate-700">pitch fee</span>, <span className="font-bold text-slate-700">audit</span>, <span className="font-bold text-slate-700">forfeit</span>, or <span className="font-bold text-slate-700">match day</span>.
+                            </div>
+                        )}
                     </div>
                 </div>
             );
@@ -18670,6 +19182,11 @@
                             {activeTab === 'more' && (
                                 <div data-tab-container="more">
                                     <MoreHub onNavigate={navigate} />
+                                </div>
+                            )}
+                            {activeTab === 'userguide' && (
+                                <div data-tab-container="userguide">
+                                    <UserGuideHub onNavigate={navigate} />
                                 </div>
                             )}
                             {activeTab === 'appdb' && (
