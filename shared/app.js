@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-59';
+        const MASTER_BUILD_VERSION = '2026.03.14-60';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -395,7 +395,7 @@
                     'Use Opponent Intel for head-to-head trends, danger-player context, and the next scheduled meeting.',
                     'Use Man of the Match Board when you want a clean history of awards and a quick route back into the underlying games.',
                     'Use Sponsors & Revenue to manage deals, invoices, schedules, and return-on-value tracking.',
-                    'Use Audit & Controls to review change logs, backup integrity, and reconciliation health at a higher level.'
+                    'Use App Log for release notes, and Audit & Controls for backup integrity and reconciliation health at a higher level.'
                 ],
                 checkpoints: [
                     'Important club reference pages are not left stale for months at a time.',
@@ -436,6 +436,341 @@
                 ]
             }
         ];
+        const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
+        const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-14-app-log',
+                at: '2026-03-14T17:20:00+08:00',
+                build: '2026.03.14-60',
+                area: 'More',
+                title: 'App Log added to More',
+                summary: 'There is now a dedicated in-app release log so Glenn can see what changed without relying on memory or chat history.',
+                changes: [
+                    { label: 'Release history', from: 'Not visible inside the app', to: 'More -> App Log with searchable shipped updates' },
+                    { label: 'Storage', from: 'Remembered manually or via thread history', to: 'Saved in the shared settings document and pulled into the app' }
+                ],
+                details: [
+                    'The log defaults to the last 48 hours but can also show all stored entries.',
+                    'Entries can include plain-English summaries plus from/to notes where the workflow changed.',
+                    'Because it lives in server-backed settings, the same log can be shared across devices.'
+                ]
+            },
+            {
+                id: '2026-03-14-bench-wording',
+                at: '2026-03-14T16:45:00+08:00',
+                build: '2026.03.14-59',
+                area: 'Match Day',
+                title: 'Bench auto-fill wording clarified',
+                summary: 'The setup-flow control now clearly says it auto-assigns bench groups rather than making live substitutions.',
+                changes: [
+                    { label: 'Button label', from: 'Auto-fill subs', to: 'Auto-assign bench' },
+                    { label: 'Help text', from: 'Ambiguous about what happens', to: 'Explicitly says every non-starter is placed into Defence, Midfield, or Forward bench areas' }
+                ],
+                details: [
+                    'This lives in the lineup setup flow, not the live match controls.',
+                    'The success toast now confirms the bench groups that were assigned.'
+                ]
+            },
+            {
+                id: '2026-03-14-plan-selects',
+                at: '2026-03-14T16:30:00+08:00',
+                build: '2026.03.14-58',
+                area: 'Match Day',
+                title: 'Create Match Day Plan dropdowns enlarged',
+                summary: 'The opponent and venue selectors in the create-plan modal are now easier to tap and read on mobile.',
+                changes: [
+                    { label: 'Selector size', from: 'Standard touch target', to: 'Larger, taller dropdown controls in the modal' }
+                ],
+                details: [
+                    'This was aimed at quicker setup on a phone before kickoff.'
+                ]
+            },
+            {
+                id: '2026-03-14-user-guide',
+                at: '2026-03-14T15:56:00+08:00',
+                build: '2026.03.14-57',
+                area: 'More',
+                title: 'Full User Guide added',
+                summary: 'More now includes a Glenn-friendly user guide covering setup, games, Match Day, money, reports, audit, and troubleshooting.',
+                changes: [
+                    { label: 'Help experience', from: 'No structured in-app walkthrough', to: 'Dedicated searchable User Guide page under More' }
+                ],
+                details: [
+                    'The guide includes quick links into key app areas.',
+                    'Sections open and collapse so people can read only what they need.',
+                    'The wording is operational rather than technical.'
+                ]
+            },
+            {
+                id: '2026-03-14-monthly-pnl-modal',
+                at: '2026-03-14T15:50:00+08:00',
+                build: '2026.03.14-56',
+                area: 'Reports',
+                title: 'Monthly P&L now opens in a modal',
+                summary: 'Tapping a month now opens a dedicated drill-down modal, matching the Fixture Profitability experience.',
+                changes: [
+                    { label: 'Month drill-down', from: 'Inline expand/collapse inside the list', to: 'Pop-up modal with the full month breakdown' },
+                    { label: 'Navigation', from: 'Harder to inspect and get back out cleanly', to: 'Easier modal navigation with a focused breakdown view' }
+                ],
+                details: [
+                    'The modal shows income, expense, net, closing balance, category chips, and transaction rows.',
+                    'Fixture-linked rows can jump straight into the underlying game.'
+                ]
+            },
+            {
+                id: '2026-03-14-report-pagination',
+                at: '2026-03-14T15:47:00+08:00',
+                build: '2026.03.14-56',
+                area: 'Reports',
+                title: 'Month and fixture drill-downs can show more rows',
+                summary: 'Both month and fixture finance pop-ups now let you expand beyond the initial preview when you want a proper audit trail.',
+                changes: [
+                    { label: 'Ledger visibility', from: 'Short preview only', to: 'Show more, Show all, and Show fewer inside the modal' }
+                ],
+                details: [
+                    'This was added for month-end and fixture-level investigation.',
+                    'The reports area also has enough bottom spacing so controls are not hidden behind the bottom nav.'
+                ]
+            },
+            {
+                id: '2026-03-14-true-back',
+                at: '2026-03-14T15:44:00+08:00',
+                build: '2026.03.14-55',
+                area: 'Navigation',
+                title: 'Game Back now returns to the source area',
+                summary: 'When a game is opened from Reports or another hub, the Back button now returns you to where you actually came from.',
+                changes: [
+                    { label: 'Back behavior', from: 'Generic return within Games', to: 'Contextual return to the originating tab when possible' }
+                ],
+                details: [
+                    'This works for reports, dashboard shortcuts, Man of the Match Board, Opponent Intel, and Opponents/Venues routes.'
+                ]
+            },
+            {
+                id: '2026-03-14-more-refresh',
+                at: '2026-03-14T15:38:00+08:00',
+                build: '2026.03.14-55',
+                area: 'More',
+                title: 'More page alphabetized and given a hard refresh button',
+                summary: 'The More menu is now easier to scan, and there is a one-tap hard PWA refresh in the page header.',
+                changes: [
+                    { label: 'Menu order', from: 'Manual/custom ordering', to: 'Alphabetical cards in More' },
+                    { label: 'Refresh path', from: 'Browser-level hard refresh only', to: 'Dedicated refresh icon in More header' }
+                ],
+                details: [
+                    'The hard refresh clears service workers, clears caches, removes the stored version marker, and reloads with a cache-busting query string.'
+                ]
+            },
+            {
+                id: '2026-03-14-fixture-profitability-modal',
+                at: '2026-03-14T15:34:00+08:00',
+                build: '2026.03.14-55',
+                area: 'Reports',
+                title: 'Fixture Profitability is now drill-down friendly',
+                summary: 'Fixture profitability cards can now open a finance modal so suspicious games can be investigated without leaving the report flow.',
+                changes: [
+                    { label: 'Fixture insight', from: 'Static profitability list', to: 'Tap a fixture to inspect its finances in a modal' }
+                ],
+                details: [
+                    'The modal can jump directly into the game if something needs editing.'
+                ]
+            },
+            {
+                id: '2026-03-14-bench-auto-assign',
+                at: '2026-03-14T15:25:00+08:00',
+                build: '2026.03.14-55',
+                area: 'Match Day',
+                title: 'Bench groups can be auto-assigned during setup',
+                summary: 'Lineup step 2 now has a one-tap control to place non-starters into Defence, Midfield, and Forward bench areas automatically.',
+                changes: [
+                    { label: 'Bench setup', from: 'Manual group assignment only', to: 'Manual assignment or one-tap auto-assignment in setup flow' }
+                ],
+                details: [
+                    'This is a setup aid before kickoff, not an in-match auto-substitution engine.'
+                ]
+            },
+            {
+                id: '2026-03-14-player-status-sheet',
+                at: '2026-03-14T14:55:00+08:00',
+                build: '2026.03.14-54',
+                area: 'Match Day',
+                title: 'Live player action sheet shows richer player context',
+                summary: 'When you tap a player during live play, the action sheet now shows whether they have scored, picked up cards, or are injured.',
+                changes: [
+                    { label: 'Player context', from: 'Basic player selection and sub actions', to: 'Goals, yellow/red cards, and injury status in the action modal' }
+                ],
+                details: [
+                    'This context is driven from the match log and live tracking data.'
+                ]
+            },
+            {
+                id: '2026-03-14-sub-recommendations',
+                at: '2026-03-14T14:35:00+08:00',
+                build: '2026.03.14-54',
+                area: 'Match Day',
+                title: 'Break moments can suggest substitutions',
+                summary: 'Water breaks, half-time, and second-half restart can now offer optional substitution recommendations based on game-time patterns.',
+                changes: [
+                    { label: 'Break actions', from: 'Only timing checkpoints', to: 'Timing checkpoints plus optional sub recommendations' }
+                ],
+                details: [
+                    'Recommendations can be ignored completely and manual subs still work as before.',
+                    'Recommendation state resets cleanly when the lineup changes.'
+                ]
+            },
+            {
+                id: '2026-03-14-match-summary',
+                at: '2026-03-14T14:20:00+08:00',
+                build: '2026.03.14-53',
+                area: 'Match Day',
+                title: 'Full-time summary added to Match Day',
+                summary: 'When the game ends, Match Day can now show a full summary of the game rather than dropping you back into raw controls only.',
+                changes: [
+                    { label: 'End-of-game view', from: 'No consolidated match wrap-up', to: 'Dedicated summary view at full time' }
+                ],
+                details: [
+                    'The summary pulls together score, cards, goals, minutes, and the event trail.',
+                    'It is designed as a quick sanity check before leaving Match Day.'
+                ]
+            },
+            {
+                id: '2026-03-14-settled-outside-app',
+                at: '2026-03-14T13:20:00+08:00',
+                build: '2026.03.14-53',
+                area: 'Audit',
+                title: 'Legacy fixtures can be marked Settled outside app',
+                summary: 'Older games that were already settled outside the app can now be suppressed from future audit noise instead of being flagged forever.',
+                changes: [
+                    { label: 'Legacy handling', from: 'Old fixtures kept reappearing on each scan', to: 'Settled outside app hides them from future audit scans' }
+                ],
+                details: [
+                    'This keeps historical fixtures for reference without letting them pollute current reconciliation work.'
+                ]
+            },
+            {
+                id: '2026-03-14-rescan-overlay',
+                at: '2026-03-14T13:13:00+08:00',
+                build: '2026.03.14-52',
+                area: 'Audit',
+                title: 'Rescan now shows live progress and completion',
+                summary: 'The audit Rescan button now gives visible feedback while the scan is running so you know when the findings are genuinely refreshed.',
+                changes: [
+                    { label: 'Rescan feedback', from: 'Button click with no clear scan state', to: 'Progress overlay with steps, running state, and completion summary' }
+                ],
+                details: [
+                    'This was added specifically to make rescans feel real and trustworthy.'
+                ]
+            },
+            {
+                id: '2026-03-14-pitch-fee-audit',
+                at: '2026-03-14T12:57:00+08:00',
+                build: '2026.03.14-51',
+                area: 'Audit',
+                title: 'Pitch fee checks added to Reconciliation Audit',
+                summary: 'Audit now checks whether fixtures have pitch fee attribution and flags missing pitch fees directly on the game cards.',
+                changes: [
+                    { label: 'Audit scope', from: 'Player-fee reconciliation only', to: 'Player-fee checks plus pitch fee attribution checks' },
+                    { label: 'Fixture callouts', from: 'No pitch-fee issue chip on cards', to: 'Missing pitch fee appears directly on flagged fixtures' }
+                ],
+                details: [
+                    'This catches cases like a game having player fee movement but no pitch fee treatment.'
+                ]
+            },
+            {
+                id: '2026-03-14-sia-home-flow',
+                at: '2026-03-14T12:54:00+08:00',
+                build: '2026.03.14-50',
+                area: 'Audit',
+                title: 'SIA home-flow checks added',
+                summary: 'SIA home games now get dedicated audit checks for both the club receivable and the SIA/Glenn payable pitch-fee sides of the flow.',
+                changes: [
+                    { label: 'SIA handling', from: 'No dedicated home-pitch flow validation', to: 'Checks for club -> Exiles receivable and Exiles -> SIA/Glenn payable pitch-fee lines' }
+                ],
+                details: [
+                    'Audit can also flag when the payable exists but is not tagged clearly to SIA or Glenn.'
+                ]
+            },
+            {
+                id: '2026-03-14-pitch-fee-direction',
+                at: '2026-03-14T12:50:00+08:00',
+                build: '2026.03.14-50',
+                area: 'Finance',
+                title: 'Pitch fees now support both directions',
+                summary: 'Pitch fees are no longer treated as a home-only incoming concept; they can also represent money Exiles owes out.',
+                changes: [
+                    { label: 'Pitch fee flow', from: 'Only geared toward money coming in', to: 'Supports receivable and payable pitch-fee flows' }
+                ],
+                details: [
+                    'This is the model that lets away or opposition pitch costs be represented properly.'
+                ]
+            },
+            {
+                id: '2026-03-14-forfeit-model',
+                at: '2026-03-14T12:45:00+08:00',
+                build: '2026.03.14-49',
+                area: 'Fixtures',
+                title: 'Forfeit handling expanded',
+                summary: 'Games can now record whether Exiles forfeited or the opposition forfeited, with an editable default score for the non-forfeiting side.',
+                changes: [
+                    { label: 'Forfeit status', from: 'Single/limited forfeit handling', to: 'Explicit Exiles-forfeited or Opposition-forfeited states' },
+                    { label: 'Score default', from: 'No guided default outcome', to: 'Defaults to 3-0 for the non-forfeiting team but stays editable' }
+                ],
+                details: [
+                    'Forfeits are treated as played results in reporting and records.'
+                ]
+            }
+        ];
+        const normalizeAppChangeLogEntries = (entries = []) => {
+            if (!Array.isArray(entries)) return [];
+            const normalized = entries.map((entry, index) => {
+                if (!entry || typeof entry !== 'object') return null;
+                const id = (entry.id || `change-${index + 1}`).toString().trim();
+                const title = (entry.title || '').toString().trim();
+                const summary = (entry.summary || '').toString().trim();
+                if (!id || !title || !summary) return null;
+                const timestamp = Date.parse(entry.at || '');
+                const safeTimestamp = Number.isNaN(timestamp) ? 0 : timestamp;
+                const changes = Array.isArray(entry.changes)
+                    ? entry.changes.map((change, changeIndex) => {
+                        const label = (change?.label || `Change ${changeIndex + 1}`).toString().trim();
+                        const from = (change?.from || '').toString().trim();
+                        const to = (change?.to || '').toString().trim();
+                        if (!from && !to) return null;
+                        return { label, from, to };
+                    }).filter(Boolean)
+                    : [];
+                const details = Array.isArray(entry.details)
+                    ? entry.details.map((detail) => (detail || '').toString().trim()).filter(Boolean)
+                    : [];
+                return {
+                    id,
+                    at: safeTimestamp ? new Date(safeTimestamp).toISOString() : '',
+                    timestamp: safeTimestamp,
+                    build: (entry.build || '').toString().trim(),
+                    area: (entry.area || 'Update').toString().trim(),
+                    title,
+                    summary,
+                    changes,
+                    details
+                };
+            }).filter(Boolean);
+            const deduped = new Map();
+            normalized.forEach((entry) => {
+                deduped.set(entry.id, entry);
+            });
+            return Array.from(deduped.values()).sort((a, b) => b.timestamp - a.timestamp || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' }));
+        };
+        const mergeAppChangeLogEntries = (remoteEntries = [], seededEntries = DEFAULT_APP_CHANGE_LOG) => {
+            const merged = new Map();
+            normalizeAppChangeLogEntries(seededEntries).forEach((entry) => merged.set(entry.id, entry));
+            normalizeAppChangeLogEntries(remoteEntries).forEach((entry) => merged.set(entry.id, entry));
+            return Array.from(merged.values()).sort((a, b) => b.timestamp - a.timestamp || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' }));
+        };
+        const serializeAppChangeLogEntries = (entries = []) => {
+            return JSON.stringify(
+                normalizeAppChangeLogEntries(entries).map(({ timestamp, ...entry }) => entry)
+            );
+        };
         const resolveDefaultLogo = () => {
             if (typeof window === 'undefined') return './assets/images/Exiles-Logo.jpg.webp';
             const base = (window.GAFFER_ASSET_BASE || '.').toString().replace(/\/$/, '');
@@ -819,6 +1154,7 @@
             kitSizeOptions: [...DEFAULT_KIT_SIZE_OPTIONS],
             positionDefinitions: clonePositionDefinitions(DEFAULT_POSITION_DEFINITIONS),
             playerNameMatchHistory: {},
+            appChangeLog: normalizeAppChangeLogEntries(DEFAULT_APP_CHANGE_LOG),
             buildVersion: APP_VERSION
         });
 
@@ -838,6 +1174,7 @@
                 kitSizeOptions: Array.isArray(data.kitSizeOptions) && data.kitSizeOptions.length ? data.kitSizeOptions : defaults.kitSizeOptions,
                 positionDefinitions: normalizePositionDefinitions(data.positionDefinitions, defaults.positionDefinitions),
                 playerNameMatchHistory: normalizePlayerNameMatchHistory(data.playerNameMatchHistory),
+                appChangeLog: mergeAppChangeLogEntries(data.appChangeLog, defaults.appChangeLog),
                 buildVersion: extractBuildVersion(data) || defaults.buildVersion
             };
         };
@@ -10310,7 +10647,7 @@
 
         // --- SHELL ---
         const Nav = ({ activeTab, setTab }) => {
-            const isMoreSection = ['more', 'players', 'kit', 'opponents', 'venues', 'settings', 'finances', 'appdb', 'motmboard', 'reports', 'opponentintel', 'sponsors', 'auditcontrols', 'userguide'].includes(activeTab);
+            const isMoreSection = ['more', 'players', 'kit', 'opponents', 'venues', 'settings', 'finances', 'appdb', 'applog', 'motmboard', 'reports', 'opponentintel', 'sponsors', 'auditcontrols', 'userguide'].includes(activeTab);
             const items = [
                 { id: 'dashboard', icon: 'LayoutGrid', label: 'Home' },
                 { id: 'fixtures', icon: 'Calendar', label: 'Games' },
@@ -10348,6 +10685,13 @@
                     tab: 'appdb'
                 },
                 {
+                    id: 'applog',
+                    label: 'App Log',
+                    sub: 'Everything shipped recently, in plain English',
+                    icon: 'FileText',
+                    tab: 'applog'
+                },
+                {
                     id: 'motmboard',
                     label: 'Man of the Match Board',
                     sub: 'All MOTM awards from recorded games',
@@ -10378,7 +10722,7 @@
                 {
                     id: 'auditcontrols',
                     label: 'Audit & Controls',
-                    sub: 'Change log, reconciliation, backup integrity',
+                    sub: 'Reconciliation, backup integrity, governance',
                     icon: 'Settings',
                     tab: 'auditcontrols'
                 },
@@ -10480,6 +10824,195 @@
                                 <Icon name="ChevronRight" size={18} className="text-slate-400" />
                             </button>
                         ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const AppLogHub = ({ onNavigate = () => {}, entries = [] }) => {
+            const [search, setSearch] = useState('');
+            const [scope, setScope] = useState('recent');
+            const allEntries = useMemo(() => normalizeAppChangeLogEntries(entries), [entries]);
+            const cutoffTimestamp = Date.now() - (APP_CHANGE_LOG_LOOKBACK_HOURS * 60 * 60 * 1000);
+            const recentEntries = useMemo(
+                () => allEntries.filter((entry) => Number(entry.timestamp || 0) >= cutoffTimestamp),
+                [allEntries, cutoffTimestamp]
+            );
+            const effectiveScope = scope === 'recent' && !recentEntries.length ? 'all' : scope;
+            const baseEntries = effectiveScope === 'all' ? allEntries : recentEntries;
+            const query = (search || '').trim().toLowerCase();
+            const visibleEntries = useMemo(() => {
+                if (!query) return baseEntries;
+                return baseEntries.filter((entry) => {
+                    const haystack = [
+                        entry.area,
+                        entry.build,
+                        entry.title,
+                        entry.summary,
+                        ...(entry.details || []),
+                        ...((entry.changes || []).flatMap((change) => [change.label, change.from, change.to]))
+                    ].join(' ').toLowerCase();
+                    return haystack.includes(query);
+                });
+            }, [baseEntries, query]);
+            const latestBuild = allEntries[0]?.build || APP_VERSION;
+            const formatEntryDate = (iso) => {
+                const timestamp = Date.parse(iso || '');
+                if (Number.isNaN(timestamp)) return 'Time not recorded';
+                return new Date(timestamp).toLocaleString('en-GB', {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit'
+                });
+            };
+
+            return (
+                <div className="space-y-5 pb-20 animate-fade-in">
+                    <PageHeader
+                        title="App Log"
+                        subtitle="Everything we shipped recently, explained clearly for club use."
+                        actions={(
+                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                                Back to More
+                            </button>
+                        )}
+                    />
+
+                    <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft space-y-4">
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Release Memory</div>
+                                <div className="mt-1 text-lg font-display font-bold text-slate-900">A shared changelog Glenn can actually read.</div>
+                                <div className="mt-2 text-[13px] text-slate-500">
+                                    These entries are stored in the shared app settings document, so the log can be pulled into the app instead of living only in chat history.
+                                </div>
+                            </div>
+                            <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-right shrink-0">
+                                <div className="text-[10px] uppercase tracking-wider font-bold text-indigo-600">Latest build</div>
+                                <div className="text-lg leading-none font-display font-bold text-indigo-900">{latestBuild || 'Current'}</div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Last 48h</div>
+                                <div className="mt-1 text-2xl font-display font-bold text-slate-900">{recentEntries.length}</div>
+                            </div>
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">All logged</div>
+                                <div className="mt-1 text-2xl font-display font-bold text-slate-900">{allEntries.length}</div>
+                            </div>
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Visible</div>
+                                <div className="mt-1 text-2xl font-display font-bold text-slate-900">{visibleEntries.length}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div className="relative flex-1">
+                                <Icon name="Search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                <input
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    placeholder="Search changes: audit, pitch fee, match day, monthly P&L..."
+                                    className="w-full min-h-[46px] rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm text-slate-900 outline-none"
+                                />
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setScope('recent')}
+                                    className={`min-h-[40px] px-3 rounded-xl border text-[11px] font-bold ${effectiveScope === 'recent' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700'}`}
+                                >
+                                    Last 48 hours
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setScope('all')}
+                                    className={`min-h-[40px] px-3 rounded-xl border text-[11px] font-bold ${effectiveScope === 'all' ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700'}`}
+                                >
+                                    All
+                                </button>
+                            </div>
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                            {effectiveScope === 'recent'
+                                ? `Showing shipped updates from the last ${APP_CHANGE_LOG_LOOKBACK_HOURS} hours.`
+                                : 'Showing the full stored change history currently available in the app.'}
+                        </div>
+                    </div>
+
+                    <div className="space-y-3">
+                        {visibleEntries.length ? visibleEntries.map((entry) => (
+                            <div key={entry.id} className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft space-y-4">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                                                {entry.area}
+                                            </span>
+                                            {entry.build && (
+                                                <span className="px-2 py-1 rounded-full border border-indigo-200 bg-indigo-50 text-[10px] font-semibold text-indigo-700">
+                                                    Build {entry.build}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="mt-2 text-xl font-display font-bold text-slate-900">{entry.title}</div>
+                                        <div className="mt-1 text-[13px] text-slate-500">{entry.summary}</div>
+                                    </div>
+                                    <div className="text-[11px] font-semibold text-slate-400 shrink-0 text-right">
+                                        {formatEntryDate(entry.at)}
+                                    </div>
+                                </div>
+
+                                {!!entry.changes?.length && (
+                                    <div className="space-y-2">
+                                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">From -> To</div>
+                                        <div className="space-y-2">
+                                            {entry.changes.map((change, index) => (
+                                                <div key={`${entry.id}-change-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{change.label}</div>
+                                                    {change.from && (
+                                                        <div className="mt-2 text-[12px] text-slate-600">
+                                                            <span className="font-bold text-slate-900">From:</span> {change.from}
+                                                        </div>
+                                                    )}
+                                                    {change.to && (
+                                                        <div className="mt-1 text-[12px] text-slate-700">
+                                                            <span className="font-bold text-emerald-700">To:</span> {change.to}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {!!entry.details?.length && (
+                                    <div className="space-y-2">
+                                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Why it matters</div>
+                                        <div className="space-y-2">
+                                            {entry.details.map((detail, index) => (
+                                                <div key={`${entry.id}-detail-${index}`} className="flex items-start gap-2 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2">
+                                                    <div className="mt-0.5 text-blue-600">
+                                                        <Icon name="Check" size={14} />
+                                                    </div>
+                                                    <div className="text-[12px] text-blue-900">{detail}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )) : (
+                            <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-soft text-sm text-slate-500">
+                                No app-log entries matched that view. Try switching scope or searching for a different term.
+                            </div>
+                        )}
                     </div>
                 </div>
             );
@@ -18645,6 +19178,7 @@
             const [kitNumberLimit, setKitNumberLimit] = useState(loadKitNumberLimit());
             const [kitSizeOptions, setKitSizeOptions] = useState(loadKitSizeOptions());
             const [playerNameMatchHistory, setPlayerNameMatchHistory] = useState({});
+            const [appChangeLog, setAppChangeLog] = useState(() => normalizeAppChangeLogEntries(DEFAULT_APP_CHANGE_LOG));
             const [hasLocalVersionMismatch, setHasLocalVersionMismatch] = useState(false);
             const [hasRemoteVersionMismatch, setHasRemoteVersionMismatch] = useState(false);
             const [availableBuildVersion, setAvailableBuildVersion] = useState(APP_VERSION);
@@ -18811,6 +19345,7 @@
                     setKitNumberLimit(settings.kitNumberLimit);
                     setKitSizeOptions(settings.kitSizeOptions);
                     setPlayerNameMatchHistory(settings.playerNameMatchHistory || {});
+                    setAppChangeLog(settings.appChangeLog || normalizeAppChangeLogEntries(DEFAULT_APP_CHANGE_LOG));
                 };
                 const handleRemoteBuildVersion = async (rawSettings = {}) => {
                     const remoteVersion = extractBuildVersion(rawSettings);
@@ -18850,9 +19385,15 @@
                             const normalizedCategories = normalizeCostCategories(normalized.categories);
                             const categoriesChanged = normalizedCategories.length !== normalized.categories.length
                                 || normalizedCategories.some((cat, idx) => cat !== normalized.categories[idx]);
+                            const mergedAppChangeLog = mergeAppChangeLogEntries(normalized.appChangeLog, DEFAULT_APP_CHANGE_LOG);
+                            const appChangeLogChanged = serializeAppChangeLogEntries(mergedAppChangeLog) !== serializeAppChangeLogEntries(normalized.appChangeLog);
                             if (categoriesChanged) {
                                 normalized = { ...normalized, categories: normalizedCategories };
                                 if (!READ_ONLY) await saveSettingsPatch({ categories: normalizedCategories });
+                            }
+                            if (appChangeLogChanged) {
+                                normalized = { ...normalized, appChangeLog: mergedAppChangeLog };
+                                if (!READ_ONLY) await saveSettingsPatch({ appChangeLog: mergedAppChangeLog });
                             }
                             applySettings(normalized);
                             clearLegacySettings();
@@ -19182,6 +19723,11 @@
                             {activeTab === 'more' && (
                                 <div data-tab-container="more">
                                     <MoreHub onNavigate={navigate} />
+                                </div>
+                            )}
+                            {activeTab === 'applog' && (
+                                <div data-tab-container="applog">
+                                    <AppLogHub onNavigate={navigate} entries={appChangeLog} />
                                 </div>
                             )}
                             {activeTab === 'userguide' && (
