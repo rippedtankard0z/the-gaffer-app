@@ -9719,9 +9719,27 @@
                         .filter((fixture) => (fixture.status || 'SCHEDULED') !== 'ARCHIVED')
                         .map((fixture) => {
                             const txList = txByFixture[String(fixture.id)] || [];
+                            const isSiaHomeFixture = (fixture?.venue || '').toString().trim().toLowerCase().includes('sia sports club');
                             const playerCharges = txList.filter(tx => isPlayerFeeCategory(tx.category) && Number(tx.amount || 0) < 0 && tx.playerId !== undefined && tx.playerId !== null);
                             const playerPayments = txList.filter(tx => isPlayerFeeCategory(tx.category) && Number(tx.amount || 0) > 0 && !tx.isWriteOff && tx.playerId !== undefined && tx.playerId !== null);
                             const playerWriteOffs = txList.filter(tx => isPlayerFeeCategory(tx.category) && Number(tx.amount || 0) > 0 && !!tx.isWriteOff && tx.playerId !== undefined && tx.playerId !== null);
+                            const pitchFeeTx = txList.filter(tx => normalizeFeeCategory(tx.category) === PITCH_FEE_CATEGORY);
+                            const pitchFeeReceivables = pitchFeeTx.filter((tx) => {
+                                const flow = (tx.flow || '').toString().trim().toLowerCase();
+                                if (flow === 'receivable') return true;
+                                if (flow === 'payable') return false;
+                                return Number(tx.amount || 0) > 0;
+                            });
+                            const pitchFeePayables = pitchFeeTx.filter((tx) => {
+                                const flow = (tx.flow || '').toString().trim().toLowerCase();
+                                if (flow === 'payable') return true;
+                                if (flow === 'receivable') return false;
+                                return Number(tx.amount || 0) < 0;
+                            });
+                            const hasPayableTaggedToSiaOrGlenn = pitchFeePayables.some((tx) => {
+                                const searchable = `${tx.payee || ''} ${tx.description || ''}`.toLowerCase();
+                                return searchable.includes('sia') || searchable.includes('glenn');
+                            });
 
                             const billedFixture = playerCharges.reduce((sum, tx) => sum + Math.abs(Number(tx.amount || 0)), 0);
                             const collectedFixture = playerPayments.reduce((sum, tx) => sum + Math.abs(Number(tx.amount || 0)), 0);
@@ -9766,6 +9784,11 @@
                             if (mismatchedCoverageCount > 0) issues.push(`${mismatchedCoverageCount} amount mismatch${mismatchedCoverageCount === 1 ? '' : 'es'}`);
                             if (overCollectedFixture > 0.009) issues.push(`Over-covered ${formatCurrency(overCollectedFixture)}`);
                             if (Math.abs(cashVariance) > 0.009) issues.push(`Cash variance ${formatCurrency(cashVariance)}`);
+                            if (isSiaHomeFixture) {
+                                if (!pitchFeeReceivables.length) issues.push('SIA home: missing receivable pitch fee (club -> Exiles)');
+                                if (!pitchFeePayables.length) issues.push('SIA home: missing payable pitch fee (Exiles -> SIA/Glenn)');
+                                if (pitchFeePayables.length && !hasPayableTaggedToSiaOrGlenn) issues.push('SIA home: payable pitch fee not tagged to SIA/Glenn');
+                            }
 
                             return {
                                 fixtureId: fixture.id,
@@ -10028,7 +10051,7 @@
                         <div className="flex items-center justify-between gap-2">
                             <div>
                                 <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Reconciliation Audit</div>
-                                <div className="text-[11px] text-slate-500 mt-1">Flags fixtures where player fee billing, collection, and cash P/L do not align.</div>
+                                <div className="text-[11px] text-slate-500 mt-1">Flags player-fee reconciliation gaps plus missing/misaligned pitch fee attribution (including SIA home flow checks).</div>
                             </div>
                             <button onClick={loadReports} className="min-h-[40px] px-3 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700">
                                 Rescan
