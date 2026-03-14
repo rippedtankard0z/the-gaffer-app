@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.08-54';
+        const MASTER_BUILD_VERSION = '2026.03.14-55';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -7953,6 +7953,10 @@
                     return { ...original, amount, cashImpact, runningBalance: running };
                 });
             }, [transactions]);
+            const ledgerRows = useMemo(() => {
+                // Show newest first in UI, but keep running balance based on full chronological order.
+                return buildLedgerWithRunningBalance().slice().reverse();
+            }, [buildLedgerWithRunningBalance]);
 
             const escapeCsv = (value) => {
                 if (value === undefined || value === null) return '';
@@ -8195,7 +8199,7 @@
                             <button type="button" onClick={() => setIsBreakdownOpen(true)} className="text-[11px] font-bold text-brand-600 underline">Full breakdown</button>
                         </div>
                         <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-900 text-white">
-                            <div className="text-[11px] font-semibold uppercase tracking-wide opacity-80">Current Cash</div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wide opacity-80">Current Cash (Settled)</div>
                             <div className="text-lg font-display font-bold">{formatCurrency(currentCash, { minimumFractionDigits: 0 })}</div>
                         </div>
                         <div className="space-y-3">
@@ -8283,6 +8287,7 @@
                             </div>
                         </div>
                         <div className="px-1 text-[10px] text-slate-500">Outstanding balances only. Covered player fees are excluded.</div>
+                        <div className="px-1 text-[10px] text-slate-500">Each row now shows cash after that line item so you can audit exact running cash.</div>
                         <div className="flex flex-wrap gap-2 px-1">
                             <button type="button" onClick={exportLedgerCsv} className="flex-1 min-w-[120px] bg-slate-900 text-white text-[11px] font-bold py-2 rounded-lg shadow-sm">
                                 Export CSV
@@ -8292,7 +8297,7 @@
                             </button>
                         </div>
                         <div className="space-y-1.5 pr-1">
-                            {transactions.map(tx => {
+                            {ledgerRows.map(tx => {
                                 const outstandingTx = isOutstandingTransaction(tx, transactions);
                                 const coveredPlayerCharge = !tx.isReconciled && isCoveredPlayerCharge(tx, transactions);
                                 const flowDirection = getTxFlowDirection(tx);
@@ -8319,27 +8324,34 @@
                                                 </div>
                                             </div>
                                         </div>
-                                        <div className="flex items-center gap-1">
-                                            {outstandingTx && (
-                                                <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-100">
-                                                    {flowDirection === 'receivable' ? 'Receivable' : 'Payable'}
-                                                </span>
-                                            )}
-                                            {coveredPlayerCharge && (
-                                                <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                                                    Covered
-                                                </span>
-                                            )}
-                                            {!cashImpact && Number(tx.amount || 0) !== 0 && (
-                                                <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                                                    Non-cash
-                                                </span>
-                                            )}
-                                            <div className={`font-mono font-extrabold text-sm ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                                {tx.amount > 0 ? '+' : ''}{formatCurrency(Math.abs(tx.amount))}
+                                        <div className="flex flex-col items-end gap-1">
+                                            <div className="flex items-center gap-1 flex-wrap justify-end">
+                                                {outstandingTx && (
+                                                    <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-100">
+                                                        {flowDirection === 'receivable' ? 'Receivable' : 'Payable'}
+                                                    </span>
+                                                )}
+                                                {coveredPlayerCharge && (
+                                                    <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                                        Covered
+                                                    </span>
+                                                )}
+                                                {!cashImpact && Number(tx.amount || 0) !== 0 && (
+                                                    <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                                                        Non-cash
+                                                    </span>
+                                                )}
+                                                <div className={`font-mono font-extrabold text-sm ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                                    {tx.amount > 0 ? '+' : ''}{formatCurrency(Math.abs(tx.amount))}
+                                                </div>
                                             </div>
-                                            <button onClick={() => editLedgerTx(tx)} className="text-[10px] text-slate-600 font-bold px-2 py-1 rounded-full border border-slate-200 bg-white hover:bg-slate-50">Edit</button>
-                                            <button onClick={() => deleteLedgerTx(tx)} className="text-[10px] text-rose-600 font-bold px-2 py-1 rounded-full border border-rose-200 bg-rose-50 hover:bg-rose-100">Delete</button>
+                                            <div className="text-[10px] font-semibold text-slate-600">
+                                                Cash after line: {formatCurrency(tx.runningBalance || 0)}
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                <button onClick={() => editLedgerTx(tx)} className="text-[10px] text-slate-600 font-bold px-2 py-1 rounded-full border border-slate-200 bg-white hover:bg-slate-50">Edit</button>
+                                                <button onClick={() => deleteLedgerTx(tx)} className="text-[10px] text-rose-600 font-bold px-2 py-1 rounded-full border border-rose-200 bg-rose-50 hover:bg-rose-100">Delete</button>
+                                            </div>
                                         </div>
                                     </div>
                                 );
