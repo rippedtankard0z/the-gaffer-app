@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-77';
+        const MASTER_BUILD_VERSION = '2026.03.14-78';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -516,6 +516,20 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-14-fixture-card-pl-pill',
+                at: '2026-03-14T22:50:00+08:00',
+                build: '2026.03.14-78',
+                area: 'Games',
+                title: 'Season fixture cards now show per-game P&L pills',
+                summary: 'Each game card in the season list now surfaces its cash P&L with a green pill for positive results and a red pill for negative ones.',
+                changes: [
+                    { label: 'Fixture cards', from: 'Status and score only', to: 'Status, score, and cash P&L pill' }
+                ],
+                details: [
+                    'The pill uses the same cash-impact calculation as Reports so the number stays aligned across the app.'
+                ]
+            },
             {
                 id: '2026-03-14-fixture-status-control',
                 at: '2026-03-14T22:35:00+08:00',
@@ -7526,10 +7540,16 @@
                                                         const forfeitLabel = getFixtureForfeitLabel(f);
                                                         const hasScore = typeof f.homeScore === 'number' && typeof f.awayScore === 'number';
                                                         const outcome = getFixtureOutcome(f);
+                                                        const fixtureNet = Number(fixtureNetLookup[f.id] || 0);
                                                         const statusLabel = outcome.played ? 'Played' : 'Upcoming';
                                                         const statusTone = outcome.played
                                                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                                             : 'bg-sky-50 text-sky-700 border-sky-200';
+                                                        const netTone = fixtureNet > 0
+                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                            : fixtureNet < 0
+                                                                ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                                : 'bg-slate-50 text-slate-600 border-slate-200';
                                                         return (
                                                         <div
                                                             key={f.id}
@@ -7562,6 +7582,9 @@
                                                                         {hasScore ? `Exiles ${f.homeScore ?? '-'}-${f.awayScore ?? '-'} ${f.opponent || ''}` : 'Score TBC'}
                                                                     </span>
                                                                 )}
+                                                                <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-bold ${netTone}`}>
+                                                                    P&amp;L {fixtureNet > 0 ? '+' : fixtureNet < 0 ? '-' : ''}{formatCurrency(Math.abs(fixtureNet), { maximumFractionDigits: 0 })}
+                                                                </span>
                                                             </div>
                                                         </div>
                                                     );
