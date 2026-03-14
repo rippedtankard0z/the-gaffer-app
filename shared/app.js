@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-66';
+        const MASTER_BUILD_VERSION = '2026.03.14-73';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -187,6 +187,84 @@
             url.searchParams.set('refresh', String(Date.now()));
             window.location.replace(url.toString());
         };
+        const openPrintDocument = (docHtml = '', options = {}) => {
+            const title = (options?.title || 'Print View').toString();
+            if (typeof window === 'undefined' || typeof document === 'undefined' || !docHtml) return false;
+            try {
+                const blob = new Blob([docHtml], { type: 'text/html;charset=utf-8' });
+                const blobUrl = URL.createObjectURL(blob);
+                const iframe = document.createElement('iframe');
+                iframe.setAttribute('title', title);
+                iframe.setAttribute('aria-hidden', 'true');
+                iframe.style.position = 'fixed';
+                iframe.style.right = '0';
+                iframe.style.bottom = '0';
+                iframe.style.width = '0';
+                iframe.style.height = '0';
+                iframe.style.border = '0';
+                iframe.style.opacity = '0';
+                iframe.style.pointerEvents = 'none';
+                let cleaned = false;
+                const cleanup = () => {
+                    if (cleaned) return;
+                    cleaned = true;
+                    window.setTimeout(() => {
+                        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+                        URL.revokeObjectURL(blobUrl);
+                    }, 0);
+                };
+                iframe.onload = () => {
+                    const frameWindow = iframe.contentWindow;
+                    if (!frameWindow) {
+                        cleanup();
+                        return;
+                    }
+                    const afterPrint = () => {
+                        try {
+                            frameWindow.removeEventListener('afterprint', afterPrint);
+                        } catch (err) {
+                            // ignore
+                        }
+                        cleanup();
+                    };
+                    try {
+                        frameWindow.addEventListener('afterprint', afterPrint);
+                    } catch (err) {
+                        // ignore
+                    }
+                    window.setTimeout(() => {
+                        try {
+                            frameWindow.focus();
+                            frameWindow.print();
+                        } catch (err) {
+                            cleanup();
+                        }
+                        window.setTimeout(cleanup, 60000);
+                    }, 200);
+                };
+                iframe.src = blobUrl;
+                document.body.appendChild(iframe);
+                return true;
+            } catch (err) {
+                try {
+                    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+                    if (!printWindow) return false;
+                    printWindow.document.write(docHtml);
+                    printWindow.document.close();
+                    printWindow.focus();
+                    window.setTimeout(() => {
+                        try {
+                            printWindow.print();
+                        } catch (printErr) {
+                            // ignore
+                        }
+                    }, 250);
+                    return true;
+                } catch (popupErr) {
+                    return false;
+                }
+            }
+        };
         const USER_GUIDE_SECTIONS = [
             {
                 id: 'weekly-rhythm',
@@ -283,7 +361,7 @@
                     'Load the player list into Match Day and resolve who is matched, who is temporary, and who is genuinely new.',
                     'Use the roster step to make sure the correct players are marked ready before you build the lineup.',
                     'Set starters on the pitch and use auto-fill starters if you want the app to speed up the first pass.',
-                    'In lineup step 2, assign bench groups so each bench player is tagged as defence, midfield, or forward. Use Auto-fill subs if you want the app to suggest the first grouping.',
+                    'In lineup step 2, assign bench groups so each bench player is tagged as defence, midfield, or forward. Use Auto-assign bench if you want the app to place the first grouping for you.',
                     'Save the plan before kickoff so the live screen begins from a clean, known state.'
                 ],
                 checkpoints: [
@@ -337,7 +415,7 @@
                     'Open the game and confirm the final score, scorers, cards, injuries, and man of the match are all correct.',
                     'Review Payments so billed player fees, collected amounts, write-offs, and unpaid counts match what really happened.',
                     'Review Costs and add any missing lines such as referee fees, pitch fees, venue payments, or other match expenses.',
-                    'Make sure every fixture has some sort of pitch-fee treatment. If the match was at SIA, remember the home flow can involve money coming in from the opposition and money going out from Exiles to SIA or Glenn.',
+                    'Make sure every fixture has some sort of pitch-fee treatment. If the match was at SIA, remember the home flow can involve money coming in from the opposition and money going out from Exiles to the home-pitch payee.',
                     'Save and close only when the game record, fees, and costs all tell the same story.'
                 ],
                 checkpoints: [
@@ -438,6 +516,110 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-14-print-view-fallback',
+                at: '2026-03-14T21:05:00+08:00',
+                build: '2026.03.14-73',
+                area: 'Reports',
+                title: 'Print / PDF view now uses a safer print path',
+                summary: 'Reports printing no longer relies only on popup windows, which were failing silently in the app shell.',
+                changes: [
+                    { label: 'Print launch', from: 'Popup-only print window', to: 'Hidden iframe print flow with popup fallback' }
+                ],
+                details: [
+                    'This improves Print / PDF View reliability in the PWA and mobile browser shell, and the same print helper is now reused by the itemised ledger export too.'
+                ]
+            },
+            {
+                id: '2026-03-14-bulk-audit-settle-legacy',
+                at: '2026-03-14T20:50:00+08:00',
+                build: '2026.03.14-72',
+                area: 'Reports',
+                title: 'Bulk settle added for 2024-and-earlier fixtures',
+                summary: 'Reconciliation Audit now includes a batch flow for older fixtures that were settled outside the app.',
+                changes: [
+                    { label: 'Legacy handling', from: 'One fixture at a time', to: 'Bulk-settle modal for 2024-and-earlier fixtures with manual selection before confirming' }
+                ],
+                details: [
+                    'The modal shows all eligible fixtures, defaults them selected, and lets you clear or refine the batch before marking them as settled outside the app.'
+                ]
+            },
+            {
+                id: '2026-03-14-audit-settle-position-lock',
+                at: '2026-03-14T20:35:00+08:00',
+                build: '2026.03.14-71',
+                area: 'Reports',
+                title: 'Audit settlement now keeps your place in the list',
+                summary: 'Marking a fixture settled outside the app no longer drops you out of the flagged-fixture triage flow.',
+                changes: [
+                    { label: 'Flagged list expansion', from: 'Audit refresh collapsed back to a short list', to: 'Expanded flagged list stays open after settlement updates' },
+                    { label: 'Scroll position', from: 'Page could jump away from the current audit card', to: 'Scroll position is restored so you can keep settling the next card' }
+                ],
+                details: [
+                    'This keeps Reconciliation Audit usable as a fast queue when you are clearing several historical fixtures in one pass.'
+                ]
+            },
+            {
+                id: '2026-03-14-live-leave-protection',
+                at: '2026-03-14T20:20:00+08:00',
+                build: '2026.03.14-70',
+                area: 'Match Day',
+                title: 'Live matches now have leave and refresh protection',
+                summary: 'Running matches now warn before exit and are easier to resume after coming back into the app.',
+                changes: [
+                    { label: 'Leaving live view', from: 'Back would just leave the screen', to: 'Back now offers stay, leave live running, or stop live and leave' },
+                    { label: 'Refresh/close', from: 'No explicit warning while a match was live', to: 'Browser/PWA unload warning while any live match is active' },
+                    { label: 'Resuming later', from: 'Match Day only surfaced the next scheduled game', to: 'Match Day now prioritizes the active live game as the resume entry point' }
+                ],
+                details: [
+                    'The live clock already persists from its stored timestamp, so these changes focus on protecting the operator and making recovery obvious.'
+                ]
+            },
+            {
+                id: '2026-03-14-sub-suggestions-safe-area',
+                at: '2026-03-14T19:55:00+08:00',
+                build: '2026.03.14-69',
+                area: 'Match Day',
+                title: 'Sub suggestions modal lifted above bottom nav',
+                summary: 'The Ignore suggestions action now sits clear of the fixed tab bar on mobile.',
+                changes: [
+                    { label: 'Bottom spacing', from: 'Ignore button could sit under the tab bar', to: 'Extra safe-area padding keeps the footer action visible and tappable' }
+                ],
+                details: [
+                    'This keeps the break recommendations modal usable without the bottom navigation covering the final action.'
+                ]
+            },
+            {
+                id: '2026-03-14-live-player-quick-actions',
+                at: '2026-03-14T19:45:00+08:00',
+                build: '2026.03.14-68',
+                area: 'Match Day',
+                title: 'Live player modal can now log incidents directly',
+                summary: 'The live player action modal is now a quick logging surface instead of a read-only status card.',
+                changes: [
+                    { label: 'Goals', from: 'Status only', to: 'Tap Goals to add a goal for that player and update the live score' },
+                    { label: 'Cards', from: 'Status only', to: 'Tap Yellow or Red to log the card immediately for that player' },
+                    { label: 'Injury', from: 'Status only', to: 'Tap Injury to mark injured or clear the injury with a fit-to-continue log' }
+                ],
+                details: [
+                    'This keeps the live player modal useful during fast moments when you need to log incidents without leaving the selected player.'
+                ]
+            },
+            {
+                id: '2026-03-14-guide-copy-aligned',
+                at: '2026-03-14T19:20:00+08:00',
+                build: '2026.03.14-67',
+                area: 'User Guide',
+                title: 'Guide wording aligned with current UI',
+                summary: 'The help guide now uses the live button names and keeps its audience neutral.',
+                changes: [
+                    { label: 'Bench setup wording', from: 'Auto-fill subs', to: 'Auto-assign bench' },
+                    { label: 'Guide phrasing', from: 'Glenn-specific wording in help copy', to: 'Neutral wording for any app user' }
+                ],
+                details: [
+                    'This keeps the guide consistent with the Match Day setup flow and avoids role-specific wording inside help content.'
+                ]
+            },
             {
                 id: '2026-03-14-more-version-status',
                 at: '2026-03-14T18:55:00+08:00',
@@ -2981,7 +3163,7 @@
                     </Modal>
 
                     <Modal isOpen={isDebtOpen} onClose={() => setIsDebtOpen(false)} title="WhatsApp Debt Blast">
-                        <div className="space-y-3">
+                        <div className="space-y-3 pb-[max(6rem,calc(4rem+env(safe-area-inset-bottom)))] sm:pb-3">
                             <p className="text-xs text-slate-500">Copy this and drop it into WhatsApp so everyone sees what they owe.</p>
                             <textarea readOnly className="w-full h-48 bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-mono no-scrollbar" value={buildDebtDigest()} />
                             <button onClick={copyDebtDigest} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
@@ -3566,6 +3748,7 @@
             const [fixtures, setFixtures] = useState([]);
             const [selectedFixture, setSelectedFixture] = useState(null);
             const [selectedFixtureBackTab, setSelectedFixtureBackTab] = useState('');
+            const [liveExitPrompt, setLiveExitPrompt] = useState({ open: false });
             const [players, setPlayers] = useState([]);
             const [squad, setSquad] = useState({});
             const [fixtureTx, setFixtureTx] = useState([]);
@@ -4491,12 +4674,34 @@
                     .sort((a, b) => a.ts - b.ts)
                     .map(row => row.fixture);
             }, [fixtures]);
-            const matchdayPrimaryFixture = matchdayUpcomingFixtures[0] || null;
-            const matchdayHiddenCount = Math.max(0, matchdayUpcomingFixtures.length - 1);
+            const matchdayLiveFixture = useMemo(() => {
+                return [...fixtures]
+                    .filter((fixture) => !!fixture?.matchdayPlanner?.live?.active)
+                    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))[0] || null;
+            }, [fixtures]);
+            const matchdayUpcomingQueue = useMemo(() => {
+                if (!matchdayLiveFixture?.id) return matchdayUpcomingFixtures;
+                return matchdayUpcomingFixtures.filter((fixture) => String(fixture.id) !== String(matchdayLiveFixture.id));
+            }, [matchdayUpcomingFixtures, matchdayLiveFixture]);
+            const matchdayPrimaryFixture = matchdayLiveFixture || matchdayUpcomingQueue[0] || null;
+            const matchdayHiddenCount = matchdayLiveFixture
+                ? matchdayUpcomingQueue.length
+                : Math.max(0, matchdayUpcomingQueue.length - 1);
+            const hasAnyLiveFixture = !!matchdayLiveFixture;
             useEffect(() => {
                 // Prune any open seasons that no longer exist after data refresh.
                 setOpenSeasonTags(prev => prev.filter(tag => fixturesBySeason.grouped[tag]));
             }, [fixturesBySeason]);
+            useEffect(() => {
+                if (!hasAnyLiveFixture) return undefined;
+                const warnBeforeUnload = (event) => {
+                    event.preventDefault();
+                    event.returnValue = 'A live match is still running. Leave it running and resume later, or stop live first.';
+                    return event.returnValue;
+                };
+                window.addEventListener('beforeunload', warnBeforeUnload);
+                return () => window.removeEventListener('beforeunload', warnBeforeUnload);
+            }, [hasAnyLiveFixture]);
 
             const refresh = async () => {
                 await waitForDb();
@@ -4590,6 +4795,21 @@
                     onNavigate(backTab);
                 }
             }, [selectedFixtureBackTab, onNavigate]);
+            const requestCloseSelectedFixtureView = useCallback(() => {
+                if (matchdayPlanner?.live?.active) {
+                    setLiveExitPrompt({ open: true });
+                    return;
+                }
+                closeSelectedFixtureView();
+            }, [matchdayPlanner?.live?.active, closeSelectedFixtureView]);
+            const dismissLiveExitPrompt = useCallback(() => {
+                setLiveExitPrompt({ open: false });
+            }, []);
+            const leaveSelectedFixtureKeepLive = useCallback(() => {
+                setLiveExitPrompt({ open: false });
+                closeSelectedFixtureView();
+                pushFixtureToast('Live match left running. Reopen Match Day to resume.', 'info');
+            }, [closeSelectedFixtureView, pushFixtureToast]);
 
             const pickMatchdayFixture = useCallback((list = []) => {
                 if (!Array.isArray(list) || !list.length) return null;
@@ -5607,6 +5827,103 @@
                 });
                 pushFixtureToast(`${cardLabel} card logged for ${teamLabel}.`, 'success');
                 closePlannerScoreActionModal();
+            };
+            const plannerLogGoalForPlayer = async (playerIdRaw) => {
+                const playerId = normalizePlayerIdValue(playerIdRaw);
+                if (!selectedFixture?.id || !playerId) {
+                    pushFixtureToast('Select a player first.', 'warning');
+                    return false;
+                }
+                const homeNow = Math.max(0, Number(selectedFixture?.homeScore || 0));
+                const awayNow = Math.max(0, Number(selectedFixture?.awayScore || 0));
+                const nextHome = homeNow + 1;
+                const playerName = plannerPlayerName(playerId);
+                const nextScorers = [...(Array.isArray(selectedFixture?.scorers) ? selectedFixture.scorers : []), String(playerId)];
+                const fixtureId = selectedFixture.id;
+                try {
+                    await db.fixtures.update(fixtureId, {
+                        homeScore: nextHome,
+                        awayScore: awayNow,
+                        scorers: nextScorers,
+                        status: 'PLAYED'
+                    });
+                    setSelectedFixture((prev) => {
+                        if (!prev || String(prev.id) !== String(fixtureId)) return prev;
+                        return {
+                            ...prev,
+                            homeScore: nextHome,
+                            awayScore: awayNow,
+                            scorers: nextScorers,
+                            status: 'PLAYED'
+                        };
+                    });
+                    setFixtures((prev) => prev.map((fixture) => (
+                        String(fixture.id) === String(fixtureId)
+                            ? { ...fixture, homeScore: nextHome, awayScore: awayNow, scorers: nextScorers, status: 'PLAYED' }
+                            : fixture
+                    )));
+                    setScoreForm((prev) => ({
+                        ...prev,
+                        our: nextHome,
+                        their: awayNow,
+                        scorersArr: [...(Array.isArray(prev.scorersArr) ? prev.scorersArr : []), String(playerId)]
+                    }));
+                    await plannerAppendLiveEvent({
+                        type: 'goal',
+                        note: `${playerName} goal (Exiles). Score Exiles ${nextHome}-${awayNow}.`
+                    });
+                    pushFixtureToast(`Goal logged for ${playerName}.`, 'success');
+                    return true;
+                } catch (err) {
+                    pushFixtureToast('Unable to log goal: ' + (err?.message || 'Unexpected error'), 'error');
+                    return false;
+                }
+            };
+            const plannerLogCardForPlayer = async (playerIdRaw, cardTypeRaw = 'yellow') => {
+                const playerId = normalizePlayerIdValue(playerIdRaw);
+                if (!playerId) {
+                    pushFixtureToast('Select a player first.', 'warning');
+                    return false;
+                }
+                const playerName = plannerPlayerName(playerId);
+                const cardType = cardTypeRaw === 'red' ? 'red' : 'yellow';
+                const cardLabel = cardType === 'red' ? 'Red' : 'Yellow';
+                try {
+                    await plannerAppendLiveEvent({
+                        type: cardType === 'red' ? 'card-red' : 'card-yellow',
+                        note: `${cardLabel} card: ${playerName} (Exiles).`
+                    });
+                    pushFixtureToast(`${cardLabel} card logged for ${playerName}.`, 'success');
+                    return true;
+                } catch (err) {
+                    pushFixtureToast('Unable to log card: ' + (err?.message || 'Unexpected error'), 'error');
+                    return false;
+                }
+            };
+            const plannerTogglePlayerInjuryStatus = async (playerIdRaw) => {
+                const playerId = normalizePlayerIdValue(playerIdRaw);
+                if (!playerId) {
+                    pushFixtureToast('Select a player first.', 'warning');
+                    return false;
+                }
+                const playerName = plannerPlayerName(playerId);
+                const isCurrentlyInjured = !!plannerLiveActionPlayerStatus?.isInjured;
+                try {
+                    await plannerAppendLiveEvent({
+                        type: isCurrentlyInjured ? 'medical' : 'injury',
+                        note: isCurrentlyInjured
+                            ? `${playerName} fit to continue (Exiles).`
+                            : `${playerName} injured (Exiles).`
+                    });
+                    pushFixtureToast(
+                        isCurrentlyInjured ? `${playerName} marked fit to continue.` : `${playerName} marked injured.`,
+                        'success'
+                    );
+                    return true;
+                } catch (err) {
+                    pushFixtureToast('Unable to log injury update: ' + (err?.message || 'Unexpected error'), 'error');
+                    return false;
+                }
             };
 
             const openPlannerLiveActionModalForSlot = (slotIdRaw) => {
@@ -7052,7 +7369,7 @@
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
-                                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Current Match Day</div>
+                                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{matchdayLiveFixture ? 'Live Match' : 'Current Match Day'}</div>
                                         <button
                                             type="button"
                                             onClick={() => openMatchMode(matchdayPrimaryFixture)}
@@ -7066,14 +7383,27 @@
                                                     </div>
                                                 </div>
                                                 <div className="text-right">
-                                                    <div className="text-sm font-bold text-slate-900">{renderTimeLabel(matchdayPrimaryFixture.time)}</div>
-                                                    <div className="text-[10px] font-bold mt-1 text-emerald-600">UPCOMING</div>
+                                                    <div className="text-sm font-bold text-slate-900">
+                                                        {matchdayLiveFixture
+                                                            ? getLiveClockDisplay(matchdayPrimaryFixture?.matchdayPlanner?.live?.clock || {})
+                                                            : renderTimeLabel(matchdayPrimaryFixture.time)}
+                                                    </div>
+                                                    <div className={`text-[10px] font-bold mt-1 ${matchdayLiveFixture ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                        {matchdayLiveFixture
+                                                            ? `${MATCHDAY_LIVE_PHASE_LABELS[normalizeLivePhase(matchdayPrimaryFixture?.matchdayPlanner?.live?.clock?.phase)] || 'LIVE'} · RESUME`
+                                                            : 'UPCOMING'}
+                                                    </div>
                                                 </div>
                                             </div>
+                                            {matchdayLiveFixture && (
+                                                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 font-semibold">
+                                                    Live tracking is still running for this game. Reopen it to continue logging, even after leaving the screen or reloading the app.
+                                                </div>
+                                            )}
                                         </button>
                                         {matchdayHiddenCount > 0 && (
                                             <div className="text-[11px] text-slate-500">
-                                                {matchdayHiddenCount} later upcoming game{matchdayHiddenCount === 1 ? '' : 's'} hidden. Match Day tracks one game at a time.
+                                                {matchdayHiddenCount} {matchdayLiveFixture ? 'upcoming' : 'later upcoming'} game{matchdayHiddenCount === 1 ? '' : 's'} hidden. Match Day tracks one game at a time.
                                             </div>
                                         )}
                                         </div>
@@ -7260,7 +7590,7 @@
                                         {isMatchdayWorkspace ? (
                                             <div className="flex items-center gap-2 shrink-0">
                                                 <button
-                                                    onClick={closeSelectedFixtureView}
+                                                    onClick={requestCloseSelectedFixtureView}
                                                     className="min-h-[34px] px-3 rounded-md border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
                                                 >
                                                     Back
@@ -7274,7 +7604,7 @@
                                             </div>
                                         ) : (
                                             <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:justify-end">
-                                                <button onClick={closeSelectedFixtureView} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
+                                                <button onClick={requestCloseSelectedFixtureView} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
                                                 <button onClick={() => deleteFixture(selectedFixture)} className="min-h-[46px] px-4 py-2 rounded-lg border border-rose-200 bg-rose-50 text-sm font-bold text-rose-700">Delete</button>
                                             </div>
                                         )}
@@ -7893,6 +8223,11 @@
                                                 <span className="px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-600 font-semibold">On pitch {plannerOnPitchIds.length}</span>
                                             </div>
                                         </div>
+                                        {plannerLiveActive && (
+                                            <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-800">
+                                                Live tracking keeps running from the saved match clock even if you leave this screen or refresh the app. You will be warned before exiting, and Match Day will show this game as the one to resume.
+                                            </div>
+                                        )}
 
                                         <div className={`grid gap-2 ${(isMatchFullTime || matchdayLiveView === 'summary') ? 'grid-cols-3' : 'grid-cols-2'}`}>
                                             <button onClick={() => setMatchdayLiveView('pitch')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'pitch' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
@@ -8377,7 +8712,7 @@
                             <div className="fixed inset-x-0 bottom-0 z-[72] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-white via-white/95 to-white/0">
                                 <div className="max-w-4xl mx-auto space-y-2">
                                     <div className={`grid gap-2 ${isMatchdayWorkspace ? 'grid-cols-2' : 'grid-cols-3'}`}>
-                                        <button onClick={closeSelectedFixtureView} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
+                                        <button onClick={requestCloseSelectedFixtureView} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
                                             Back
                                         </button>
                                         {!isMatchdayWorkspace && (
@@ -8401,12 +8736,58 @@
                     )}
 
                     <Modal
+                        isOpen={liveExitPrompt.open}
+                        onClose={dismissLiveExitPrompt}
+                        title="Leave Live Match?"
+                        placement="center"
+                    >
+                        <div className="space-y-3">
+                            <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                                The live clock is stored with the match, so it will keep running in the background. You can leave now and resume later, or stop live before you leave.
+                            </div>
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[12px] text-slate-700">
+                                Fixture: <span className="font-bold text-slate-900">vs {selectedFixture?.opponent || 'Opponent'}</span>
+                                <div className="mt-1 text-slate-500">
+                                    {plannerLivePhaseLabel} · {matchdayClockDisplay} · {plannerLiveMinute}' / {MATCHDAY_TOTAL_MINUTES}'
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={dismissLiveExitPrompt}
+                                    className="min-h-[44px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700"
+                                >
+                                    Stay on live screen
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={leaveSelectedFixtureKeepLive}
+                                    className="min-h-[44px] rounded-xl border border-blue-200 bg-blue-50 text-sm font-bold text-blue-800"
+                                >
+                                    Leave and keep live running
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        await plannerStopLive();
+                                        dismissLiveExitPrompt();
+                                        closeSelectedFixtureView();
+                                    }}
+                                    className="min-h-[44px] rounded-xl bg-amber-500 text-sm font-bold text-white"
+                                >
+                                    Stop live and leave
+                                </button>
+                            </div>
+                        </div>
+                    </Modal>
+
+                    <Modal
                         isOpen={plannerLiveActionModal.open}
                         onClose={closePlannerLiveActionModal}
                         title={plannerLiveActionOutgoingId ? `${plannerSlotLookup[plannerLiveActionSlotId]?.label || plannerLiveActionSlotId.toUpperCase()} · ${plannerPlayerShortName(plannerLiveActionOutgoingId)}` : 'Player Action'}
                         placement="center"
                     >
-                        <div className="space-y-3">
+                        <div className="space-y-3 pb-[max(6rem,calc(4rem+env(safe-area-inset-bottom)))] sm:pb-3">
                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                                 <div className="text-[11px] font-bold uppercase text-slate-500">Selected Player</div>
                                 <div className="text-base font-bold text-slate-900 mt-1">
@@ -8418,20 +8799,50 @@
                                 {plannerLiveActionOutgoingId && (
                                     <>
                                         <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
-                                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1">
-                                                <div className="text-emerald-700">Goals</div>
+                                            <button
+                                                type="button"
+                                                onClick={() => plannerLogGoalForPlayer(plannerLiveActionOutgoingId)}
+                                                className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-2 text-left transition hover:border-emerald-300"
+                                            >
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="text-emerald-700">Goals</div>
+                                                    <div className="text-[10px] font-bold text-emerald-700">Tap to log</div>
+                                                </div>
                                                 <div className="text-sm font-bold text-emerald-900">{plannerLiveActionPlayerStatus.goals}</div>
-                                            </div>
-                                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1">
-                                                <div className="text-amber-700">Yellow</div>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => plannerLogCardForPlayer(plannerLiveActionOutgoingId, 'yellow')}
+                                                className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-left transition hover:border-amber-300"
+                                            >
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="text-amber-700">Yellow</div>
+                                                    <div className="text-[10px] font-bold text-amber-700">Tap to log</div>
+                                                </div>
                                                 <div className="text-sm font-bold text-amber-900">{plannerLiveActionPlayerStatus.yellow}</div>
-                                            </div>
-                                            <div className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1">
-                                                <div className="text-rose-700">Red</div>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => plannerLogCardForPlayer(plannerLiveActionOutgoingId, 'red')}
+                                                className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-2 text-left transition hover:border-rose-300"
+                                            >
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="text-rose-700">Red</div>
+                                                    <div className="text-[10px] font-bold text-rose-700">Tap to log</div>
+                                                </div>
                                                 <div className="text-sm font-bold text-rose-900">{plannerLiveActionPlayerStatus.red}</div>
-                                            </div>
-                                            <div className={`rounded-lg border px-2 py-1 ${plannerLiveActionPlayerStatus.isInjured ? 'border-orange-200 bg-orange-50' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white'}`}>
-                                                <div className={`${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-700' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'text-emerald-700' : 'text-slate-500'}`}>Injury</div>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => plannerTogglePlayerInjuryStatus(plannerLiveActionOutgoingId)}
+                                                className={`rounded-lg border px-2 py-2 text-left transition ${plannerLiveActionPlayerStatus.isInjured ? 'border-orange-200 bg-orange-50 hover:border-orange-300' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'border-emerald-200 bg-emerald-50 hover:border-emerald-300' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                                            >
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className={`${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-700' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'text-emerald-700' : 'text-slate-500'}`}>Injury</div>
+                                                    <div className={`text-[10px] font-bold ${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-700' : 'text-slate-500'}`}>
+                                                        {plannerLiveActionPlayerStatus.isInjured ? 'Tap to clear' : 'Tap to log'}
+                                                    </div>
+                                                </div>
                                                 <div className={`text-xs font-bold ${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-900' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'text-emerald-900' : 'text-slate-700'}`}>
                                                     {plannerLiveActionPlayerStatus.isInjured
                                                         ? 'Injured'
@@ -8439,7 +8850,10 @@
                                                             ? 'Cleared'
                                                             : 'None logged'}
                                                 </div>
-                                            </div>
+                                            </button>
+                                        </div>
+                                        <div className="text-[11px] text-slate-500 mt-2">
+                                            Tap a tile to log it quickly for this player.
                                         </div>
                                         {plannerLiveActionPlayerStatus.lastIncidentMinute !== null && (
                                             <div className="text-[11px] text-slate-500 mt-2">
@@ -8581,7 +8995,7 @@
                         title={`${plannerSubRecommendationsModal.trigger || 'Break'} Sub Suggestions`}
                         placement="center"
                     >
-                        <div className="space-y-3">
+                        <div className="space-y-3 pb-[max(6rem,calc(4rem+env(safe-area-inset-bottom)))] sm:pb-3">
                             <div className="rounded-lg border border-brand-200 bg-brand-50 p-3 text-sm text-brand-800">
                                 Optional recommendations at {plannerSubRecommendationsModal.minute || 0}'. You can ignore these and make manual subs.
                             </div>
@@ -9417,15 +9831,10 @@
                             </table>
                         </body>
                     </html>`;
-                const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-                if (!printWindow) {
-                    alert('Please allow pop-ups to export the PDF view.');
-                    return;
+                const opened = openPrintDocument(docHtml, { title: 'Ledger Export' });
+                if (!opened) {
+                    alert('Unable to open the print view. Please allow pop-ups or try again.');
                 }
-                printWindow.document.write(docHtml);
-                printWindow.document.close();
-                printWindow.focus();
-                setTimeout(() => printWindow.print(), 250);
             }, [transactions, buildLedgerWithRunningBalance]);
 
             const addTransaction = async () => {
@@ -11256,7 +11665,7 @@
                             </div>
                         </div>
                         <div className="text-[11px] text-slate-500">
-                            Search filters the full guide text, so you can quickly jump to topics like SIA, settled outside app, auto-fill subs, or reconciliation audit.
+                            Search filters the full guide text, so you can quickly jump to topics like SIA, settled outside app, auto-assign bench, or reconciliation audit.
                         </div>
                     </div>
 
@@ -11547,10 +11956,12 @@
             const [collectionSummary, setCollectionSummary] = useState({ billed: 0, collected: 0, writtenOff: 0, outstanding: 0, rate: 0 });
             const [cashSummary, setCashSummary] = useState({ income: 0, expense: 0, net: 0, avgNet: 0 });
             const [auditRows, setAuditRows] = useState([]);
+            const [allAuditRows, setAllAuditRows] = useState([]);
             const [auditSummary, setAuditSummary] = useState({ scanned: 0, flagged: 0, billed: 0, collected: 0, outstanding: 0, overCollected: 0 });
             const [showAllAuditRows, setShowAllAuditRows] = useState(false);
             const [showIgnoredAuditRows, setShowIgnoredAuditRows] = useState(false);
             const [ignoredAuditRows, setIgnoredAuditRows] = useState([]);
+            const auditScrollRestoreRef = useRef(null);
             const [isRescanning, setIsRescanning] = useState(false);
             const [lastAuditScanAt, setLastAuditScanAt] = useState(null);
             const [auditScanRuns, setAuditScanRuns] = useState(0);
@@ -11568,6 +11979,8 @@
             const [lastManualAuditScanResult, setLastManualAuditScanResult] = useState(null);
             const [auditSettlementDialog, setAuditSettlementDialog] = useState({ open: false, mode: 'hide', row: null, error: '' });
             const [isSavingAuditSettlement, setIsSavingAuditSettlement] = useState(false);
+            const [bulkAuditSettlementDialog, setBulkAuditSettlementDialog] = useState({ open: false, cutoffYear: 2024, selectedIds: [], error: '' });
+            const [isSavingBulkAuditSettlement, setIsSavingBulkAuditSettlement] = useState(false);
             const auditSummaryRef = useRef(auditSummary);
 
             useEffect(() => {
@@ -11948,6 +12361,7 @@
                     });
                     setCollectionSummary({ billed, collected, writtenOff, outstanding, rate });
                     setCashSummary({ income: totalIncome, expense: totalExpense, net: totalNet, avgNet });
+                    setAllAuditRows(fixtureAuditRows);
                     setAuditRows(flaggedFixtureRows);
                     setIgnoredAuditRows(ignoredFixtureRows);
                     const nextAuditSummary = {
@@ -11959,7 +12373,6 @@
                         overCollected: auditTotals.overCollected
                     };
                     setAuditSummary(nextAuditSummary);
-                    setShowAllAuditRows(false);
                     if (!ignoredFixtureRows.length) {
                         setShowIgnoredAuditRows(false);
                     }
@@ -12249,13 +12662,81 @@
                 if (Number.isNaN(parsed.getTime())) return 'Date TBC';
                 return parsed.toLocaleDateString('en-GB');
             };
+            const getAuditRowYear = (row) => {
+                const timestamp = Number(row?.parsedDate || 0);
+                if (timestamp > 0) return new Date(timestamp).getFullYear();
+                const parsed = Date.parse(row?.date || '');
+                if (!Number.isFinite(parsed)) return null;
+                return new Date(parsed).getFullYear();
+            };
+            const restoreAuditScrollPosition = () => {
+                const nextTop = Number(auditScrollRestoreRef.current?.top);
+                if (!Number.isFinite(nextTop)) return;
+                window.setTimeout(() => {
+                    window.scrollTo({ top: nextTop, behavior: 'auto' });
+                }, 0);
+            };
+            const bulkAuditEligibleRows = allAuditRows
+                .filter((row) => {
+                    const year = getAuditRowYear(row);
+                    return !!row?.fixtureId && !row?.auditIgnored && year !== null && year <= Number(bulkAuditSettlementDialog.cutoffYear || 2024);
+                })
+                .sort((a, b) => (b.parsedDate || 0) - (a.parsedDate || 0));
+            const bulkAuditSelectedIds = (bulkAuditSettlementDialog.selectedIds || []).map((id) => String(id));
+            const bulkAuditSelectedRows = bulkAuditEligibleRows.filter((row) => bulkAuditSelectedIds.includes(String(row.fixtureId)));
             const openAuditSettlementDialog = (row, mode = 'hide') => {
                 if (!row?.fixtureId) return;
+                auditScrollRestoreRef.current = {
+                    top: typeof window !== 'undefined' ? window.scrollY : 0,
+                    fixtureId: row.fixtureId,
+                    mode
+                };
                 setAuditSettlementDialog({ open: true, mode: mode === 'restore' ? 'restore' : 'hide', row, error: '' });
             };
             const closeAuditSettlementDialog = () => {
                 if (isSavingAuditSettlement) return;
                 setAuditSettlementDialog({ open: false, mode: 'hide', row: null, error: '' });
+            };
+            const openBulkAuditSettlementDialog = () => {
+                const eligibleRows = allAuditRows
+                    .filter((row) => {
+                        const year = getAuditRowYear(row);
+                        return !!row?.fixtureId && !row?.auditIgnored && year !== null && year <= 2024;
+                    })
+                    .sort((a, b) => (b.parsedDate || 0) - (a.parsedDate || 0));
+                auditScrollRestoreRef.current = {
+                    top: typeof window !== 'undefined' ? window.scrollY : 0,
+                    fixtureId: '',
+                    mode: 'bulk-hide'
+                };
+                setBulkAuditSettlementDialog({
+                    open: true,
+                    cutoffYear: 2024,
+                    selectedIds: eligibleRows.map((row) => String(row.fixtureId)),
+                    error: ''
+                });
+                setShowAllAuditRows(true);
+            };
+            const closeBulkAuditSettlementDialog = () => {
+                if (isSavingBulkAuditSettlement) return;
+                setBulkAuditSettlementDialog({ open: false, cutoffYear: 2024, selectedIds: [], error: '' });
+            };
+            const toggleBulkAuditFixtureSelection = (fixtureId) => {
+                const normalizedId = String(fixtureId || '');
+                if (!normalizedId) return;
+                setBulkAuditSettlementDialog((prev) => {
+                    const selected = new Set((prev.selectedIds || []).map((id) => String(id)));
+                    if (selected.has(normalizedId)) selected.delete(normalizedId);
+                    else selected.add(normalizedId);
+                    return { ...prev, selectedIds: Array.from(selected), error: '' };
+                });
+            };
+            const setBulkAuditSelection = (mode = 'all') => {
+                setBulkAuditSettlementDialog((prev) => ({
+                    ...prev,
+                    selectedIds: mode === 'none' ? [] : bulkAuditEligibleRows.map((row) => String(row.fixtureId)),
+                    error: ''
+                }));
             };
             const submitAuditSettlementDialog = async () => {
                 const row = auditSettlementDialog?.row;
@@ -12275,8 +12756,12 @@
                                 auditIgnoreReconciliationAt: new Date().toISOString()
                             }
                     );
+                    if (mode === 'hide') {
+                        setShowAllAuditRows(true);
+                    }
                     await loadReports();
                     setAuditSettlementDialog({ open: false, mode: 'hide', row: null, error: '' });
+                    restoreAuditScrollPosition();
                 } catch (err) {
                     setAuditSettlementDialog((prev) => ({
                         ...prev,
@@ -12286,6 +12771,35 @@
                     }));
                 } finally {
                     setIsSavingAuditSettlement(false);
+                }
+            };
+            const submitBulkAuditSettlementDialog = async () => {
+                if (isSavingBulkAuditSettlement) return;
+                const selectedIds = bulkAuditSelectedRows.map((row) => row.fixtureId).filter((id) => id !== undefined && id !== null);
+                if (!selectedIds.length) {
+                    setBulkAuditSettlementDialog((prev) => ({ ...prev, error: 'Select at least one fixture to mark as settled outside the app.' }));
+                    return;
+                }
+                setIsSavingBulkAuditSettlement(true);
+                try {
+                    const ignoredAt = new Date().toISOString();
+                    for (const fixtureId of selectedIds) {
+                        await db.fixtures.update(fixtureId, {
+                            auditIgnoreReconciliation: true,
+                            auditIgnoreReconciliationAt: ignoredAt
+                        });
+                    }
+                    setShowAllAuditRows(true);
+                    await loadReports();
+                    setBulkAuditSettlementDialog({ open: false, cutoffYear: 2024, selectedIds: [], error: '' });
+                    restoreAuditScrollPosition();
+                } catch (err) {
+                    setBulkAuditSettlementDialog((prev) => ({
+                        ...prev,
+                        error: `Unable to bulk-settle fixtures: ${err?.message || 'Unexpected error'}`
+                    }));
+                } finally {
+                    setIsSavingBulkAuditSettlement(false);
                 }
             };
             const openFixtureById = (fixtureId, opponent = '') => {
@@ -12396,6 +12910,28 @@
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Flagged: <span className={`font-bold ${auditSummary.flagged ? 'text-rose-700' : 'text-emerald-700'}`}>{auditSummary.flagged}</span></div>
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Outstanding: <span className="font-bold text-amber-700">{formatCurrency(auditSummary.outstanding)}</span></div>
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Over-covered: <span className="font-bold text-rose-700">{formatCurrency(auditSummary.overCollected)}</span></div>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Legacy Bulk Settle</div>
+                                    <div className="text-[11px] text-slate-500 mt-1">
+                                        Select older fixtures once and mark them as settled outside the app in bulk.
+                                    </div>
+                                </div>
+                                <div className="shrink-0 text-right">
+                                    <div className="text-lg font-display font-bold text-slate-900">{bulkAuditEligibleRows.length}</div>
+                                    <div className="text-[10px] text-slate-400">2024 or earlier</div>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={openBulkAuditSettlementDialog}
+                                disabled={!bulkAuditEligibleRows.length}
+                                className={`w-full min-h-[42px] rounded-lg border text-xs font-bold ${bulkAuditEligibleRows.length ? 'border-slate-200 bg-white text-slate-700' : 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                            >
+                                {bulkAuditEligibleRows.length ? 'Bulk settle 2024 & earlier' : 'No eligible legacy fixtures'}
+                            </button>
                         </div>
                         {!!lastManualAuditScanResult && !isRescanning && (
                             <div className={`rounded-lg border p-2 text-[11px] ${lastManualAuditScanResult.error ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
@@ -12597,6 +13133,118 @@
                             <div className="text-sm text-slate-400">No fixture data yet.</div>
                         )}
                     </div>
+                    <Modal
+                        isOpen={!!bulkAuditSettlementDialog.open}
+                        onClose={closeBulkAuditSettlementDialog}
+                        title={`Bulk Settle ${bulkAuditSettlementDialog.cutoffYear || 2024} & Earlier`}
+                        placement="center"
+                    >
+                        <div className="space-y-4 pb-[max(5rem,env(safe-area-inset-bottom))] sm:pb-2">
+                            <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-[13px] text-blue-900">
+                                This will mark the selected fixtures as settled outside the app, so they stop appearing in future Reconciliation Audit findings unless you show them in audit again later.
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-slate-700">
+                                    Eligible fixtures
+                                    <div className="font-bold text-slate-900">{bulkAuditEligibleRows.length}</div>
+                                </div>
+                                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-emerald-800">
+                                    Selected now
+                                    <div className="font-bold">{bulkAuditSelectedRows.length}</div>
+                                </div>
+                            </div>
+
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setBulkAuditSelection('all')}
+                                    disabled={!bulkAuditEligibleRows.length}
+                                    className="flex-1 min-h-[40px] rounded-xl border border-slate-200 bg-white text-[11px] font-bold text-slate-700 disabled:opacity-60"
+                                >
+                                    Select all
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setBulkAuditSelection('none')}
+                                    disabled={!bulkAuditSelectedRows.length}
+                                    className="flex-1 min-h-[40px] rounded-xl border border-slate-200 bg-slate-50 text-[11px] font-bold text-slate-600 disabled:opacity-60"
+                                >
+                                    Clear all
+                                </button>
+                            </div>
+
+                            {bulkAuditEligibleRows.length ? (
+                                <div className="max-h-[52dvh] overflow-y-auto space-y-2 pr-1">
+                                    {bulkAuditEligibleRows.map((row) => {
+                                        const isSelected = bulkAuditSelectedIds.includes(String(row.fixtureId));
+                                        const year = getAuditRowYear(row);
+                                        return (
+                                            <button
+                                                key={`bulk-audit-row-${row.fixtureId}`}
+                                                type="button"
+                                                onClick={() => toggleBulkAuditFixtureSelection(row.fixtureId)}
+                                                className={`w-full rounded-2xl border p-3 text-left transition ${isSelected ? 'border-emerald-200 bg-emerald-50/70' : 'border-slate-200 bg-white'}`}
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <div className="text-sm font-bold text-slate-900">vs {row.opponent || 'Opponent'}</div>
+                                                        <div className="mt-1 text-[11px] text-slate-500">
+                                                            {formatAuditRowDate(row.date)}{year ? ` · ${year}` : ''} · Billed {formatCurrency(row.billed)} · Collected {formatCurrency(row.collected)} · Cash {formatCurrency(row.cashPL)}
+                                                        </div>
+                                                        <div className="mt-2 flex flex-wrap gap-1">
+                                                            {(row.detectedIssues?.length ? row.detectedIssues : ['No current audit issues']).slice(0, 3).map((issue, idx) => (
+                                                                <span
+                                                                    key={`bulk-audit-row-${row.fixtureId}-issue-${idx}`}
+                                                                    className={`px-2 py-1 rounded-full border text-[10px] font-semibold ${row.detectedIssues?.length ? 'border-rose-200 bg-white text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
+                                                                >
+                                                                    {issue}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <div className={`h-6 w-6 rounded-full border flex items-center justify-center shrink-0 ${isSelected ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 bg-white text-transparent'}`}>
+                                                        <Icon name="Check" size={14} />
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                                    No fixtures dated 2024 or earlier are currently eligible for bulk settlement.
+                                </div>
+                            )}
+
+                            {bulkAuditSettlementDialog.error ? (
+                                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700">
+                                    {bulkAuditSettlementDialog.error}
+                                </div>
+                            ) : null}
+
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={closeBulkAuditSettlementDialog}
+                                    disabled={isSavingBulkAuditSettlement}
+                                    className="flex-1 min-h-[44px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700 disabled:opacity-60"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={submitBulkAuditSettlementDialog}
+                                    disabled={isSavingBulkAuditSettlement || !bulkAuditSelectedRows.length}
+                                    className="flex-1 min-h-[44px] rounded-xl bg-emerald-600 text-sm font-bold text-white disabled:opacity-60"
+                                >
+                                    {isSavingBulkAuditSettlement
+                                        ? 'Saving...'
+                                        : `Mark ${bulkAuditSelectedRows.length} settled`}
+                                </button>
+                            </div>
+                        </div>
+                    </Modal>
                     <Modal
                         isOpen={!!auditSettlementDialog.open}
                         onClose={closeAuditSettlementDialog}
