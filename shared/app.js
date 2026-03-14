@@ -3002,13 +3002,6 @@
                     setNewCost(c => ({ ...c, flow: 'payable' }));
                 }
             }, [payee]);
-            const isOpponentPitchFee = useMemo(() => {
-                return payee.type === 'opponent' && normalizeFeeCategory(newCost.category) === PITCH_FEE_CATEGORY;
-            }, [payee.type, newCost.category]);
-            useEffect(() => {
-                if (!isOpponentPitchFee) return;
-                setNewCost(prev => prev.flow === 'receivable' ? prev : { ...prev, flow: 'receivable' });
-            }, [isOpponentPitchFee]);
             useEffect(() => {
                 if (!selectedFixture) return;
                 setNewCost(prev => {
@@ -4920,8 +4913,7 @@
                 }
                 const fallbackTarget = payeeName || selectedFixture?.opponent || 'game';
                 const description = (newCost.description && newCost.description.trim()) ? newCost.description.trim() : `${categoryToUse} for ${fallbackTarget}`;
-                const forceReceivable = payee.type === 'opponent' && normalizedCategory === PITCH_FEE_CATEGORY;
-                const flow = forceReceivable ? 'receivable' : (newCost.flow === 'receivable' ? 'receivable' : 'payable');
+                const flow = newCost.flow === 'receivable' ? 'receivable' : 'payable';
                 const txType = flow === 'receivable' ? 'INCOME' : 'EXPENSE';
                 const signedAmt = flow === 'receivable' ? Math.abs(amt) : -Math.abs(amt);
                 await db.transactions.add({
@@ -7033,11 +7025,9 @@
                                         </select>
                                         <input className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm" type="number" placeholder={isSiaVenue ? 'Amount (SIA: 187 / 85 / 374)' : `Amount (ref default ${formatCurrency(refDefaults.total)})`} value={newCost.amount} onChange={e => setNewCost({ ...newCost, amount: e.target.value })} />
                                         <select
-                                            className={`bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm ${isOpponentPitchFee ? 'text-slate-400 cursor-not-allowed' : ''}`}
+                                            className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm"
                                             value={newCost.flow}
                                             onChange={e => setNewCost({ ...newCost, flow: e.target.value })}
-                                            disabled={isOpponentPitchFee}
-                                            title={isOpponentPitchFee ? 'Opponent pitch fees are always treated as receivable.' : ''}
                                         >
                                             <option value="payable">We pay</option>
                                             <option value="receivable">Opposition owes us</option>
@@ -7056,11 +7046,6 @@
                                         <button onClick={addCost} className="bg-slate-900 text-white font-bold rounded-lg text-sm px-3 py-3 col-span-2 md:col-span-1 w-full flex items-center justify-center gap-2 shadow-sm">
                                             <Icon name="PlusCircle" size={16} /> Add cost
                                         </button>
-                                        {isOpponentPitchFee && (
-                                            <div className="col-span-2 md:col-span-5 text-[11px] text-emerald-700 font-semibold">
-                                                Opponent pitch fees are saved as receivable credit.
-                                            </div>
-                                        )}
                                     </div>
                                     <div className="space-y-2">
                                         {nonPlayerFixtureTx.map(tx => {
