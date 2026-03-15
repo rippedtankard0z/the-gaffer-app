@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-103';
+        const MASTER_BUILD_VERSION = '2026.03.15-104';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,22 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-16-import-results-save-feedback',
+                at: '2026-03-16T01:48:00+08:00',
+                build: '2026.03.15-104',
+                area: 'Import results',
+                title: 'Imported results save now shows live progress and a completion modal',
+                summary: 'Saving imported results now shows a proper progress overlay while rows are being written, then switches to a clear completion modal with a close button instead of feeling silent.',
+                changes: [
+                    { label: 'Save feedback', from: 'Pressing Save could feel like nothing happened while rows were being processed', to: 'The app now shows a saving overlay with live progress details during imported-results save' },
+                    { label: 'Completion state', from: 'The review could disappear without an explicit finish state', to: 'A dedicated Import complete modal now confirms what was saved and lets you close the window intentionally' }
+                ],
+                details: [
+                    'This uses the same app-wide import progress overlay used in other import and repair flows.',
+                    'The completion summary tells you how many rows were saved, skipped as duplicates, or ignored.'
+                ]
+            },
             {
                 id: '2026-03-16-matchday-ball-nav',
                 at: '2026-03-16T01:34:00+08:00',
@@ -5057,6 +5073,7 @@
             const [isLegacyResultsOpen, setIsLegacyResultsOpen] = useState(false);
             const [legacyResultsText, setLegacyResultsText] = useState('');
             const [resultsPreview, setResultsPreview] = useState([]);
+            const [legacyImportComplete, setLegacyImportComplete] = useState({ open: false, message: '', imported: 0, duplicates: 0, ignored: 0 });
             const [isScoreOpen, setIsScoreOpen] = useState(false);
             const [scoreForm, setScoreForm] = useState({ our: 0, their: 0, scorersArr: [], motmSelection: '', motmCustom: '' });
             const [quickOpponent, setQuickOpponent] = useState({ name: '', payee: '', contact: '', phone: '' });
@@ -8368,6 +8385,13 @@
 
             const commitResultsPreview = async () => {
                 if(!resultsPreview.length) return;
+                const rowsToImport = resultsPreview.filter(item => !item.duplicate && !item.ignored);
+                const duplicateCount = resultsPreview.filter(item => item.duplicate).length;
+                const ignoredCount = resultsPreview.filter(item => item.ignored).length;
+                if (!rowsToImport.length) {
+                    pushFixtureToast('Nothing new to save. Remove duplicates or undo ignored rows first.', 'warning');
+                    return;
+                }
                 const existingFixtureFingerprints = new Set(
                     fixtures
                         .filter(row => row?.date && row?.opponent)
@@ -8385,8 +8409,12 @@
                 );
                 let addedFixtures = 0;
                 let addedIntel = 0;
-                for(const item of resultsPreview) {
-                    if (item.duplicate || item.ignored) continue;
+                startImportProgress('Saving imported results…');
+                addProgressDetail(`Preparing ${rowsToImport.length} row${rowsToImport.length === 1 ? '' : 's'} for import…`);
+                try {
+                for (let index = 0; index < rowsToImport.length; index++) {
+                    const item = rowsToImport[index];
+                    addProgressDetail(`(${index + 1}/${rowsToImport.length}) ${formatLocalIsoDateLabel(item.resultDate || item.date)} · ${(item.homeTeam || item.opponent || 'Home')} ${item.homeScore}-${item.awayScore} ${(item.awayTeam || '')}`.trim());
                     let venueName = item.venue;
                     let venueId = item.venueId || null;
                     if(item.venue === '__new__') {
@@ -8470,11 +8498,21 @@
                 if (addedFixtures) summaryBits.push(`${addedFixtures} game${addedFixtures === 1 ? '' : 's'} into Games`);
                 if (addedIntel) summaryBits.push(`${addedIntel} result${addedIntel === 1 ? '' : 's'} into Opponent Intel`);
                 const importedTotal = addedFixtures + addedIntel;
-                pushFixtureToast(importedTotal ? `Imported ${summaryBits.join(' and ')}.` : 'Nothing new to import.', importedTotal ? 'success' : 'warning');
+                const summaryMessage = importedTotal ? `Imported ${summaryBits.join(' and ')}.` : 'Nothing new to import.';
+                pushFixtureToast(summaryMessage, importedTotal ? 'success' : 'warning');
+                setLegacyImportComplete({
+                    open: true,
+                    message: `${summaryMessage}${duplicateCount ? ` Skipped ${duplicateCount} duplicate${duplicateCount === 1 ? '' : 's'}.` : ''}${ignoredCount ? ` Ignored ${ignoredCount} row${ignoredCount === 1 ? '' : 's'}.` : ''}`,
+                    imported: importedTotal,
+                    duplicates: duplicateCount,
+                    ignored: ignoredCount
+                });
                 setResultsPreview([]);
-                setIsLegacyResultsOpen(false);
                 setLegacyResultsText('');
-                refresh();
+                await refresh();
+                } finally {
+                    finishImportProgress();
+                }
             };
 
             return (
@@ -10571,6 +10609,47 @@
                                 </div>
                             </div>
                         )}
+                    </Modal>
+
+                    <Modal
+                        isOpen={legacyImportComplete.open}
+                        onClose={() => setLegacyImportComplete({ open: false, message: '', imported: 0, duplicates: 0, ignored: 0 })}
+                        title="Import complete"
+                        placement="center"
+                    >
+                        <div className="space-y-4">
+                            <div className="rounded-2xl border border-emerald-100 bg-emerald-50/80 p-4 text-center">
+                                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg shadow-emerald-500/20">
+                                    <Icon name="Check" size={22} />
+                                </div>
+                                <div className="mt-3 text-lg font-display font-bold text-emerald-950">Imported results saved</div>
+                                <div className="mt-2 text-sm text-emerald-900">{legacyImportComplete.message}</div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Saved</div>
+                                    <div className="mt-1 text-xl font-display font-bold text-slate-900">{legacyImportComplete.imported}</div>
+                                </div>
+                                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-amber-700">Duplicates</div>
+                                    <div className="mt-1 text-xl font-display font-bold text-amber-900">{legacyImportComplete.duplicates}</div>
+                                </div>
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Ignored</div>
+                                    <div className="mt-1 text-xl font-display font-bold text-slate-900">{legacyImportComplete.ignored}</div>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setLegacyImportComplete({ open: false, message: '', imported: 0, duplicates: 0, ignored: 0 });
+                                    setIsLegacyResultsOpen(false);
+                                }}
+                                className={getButtonClass('primary', 'md', 'w-full')}
+                            >
+                                Close window
+                            </button>
+                        </div>
                     </Modal>
                     
                     {/* Magic Paste Modal */}
