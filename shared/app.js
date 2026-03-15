@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-96';
+        const MASTER_BUILD_VERSION = '2026.03.15-97';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -657,6 +657,22 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-game-score-action-restore',
+                at: '2026-03-15T23:58:00+08:00',
+                build: '2026.03.15-97',
+                area: 'Games',
+                title: 'Game score entry is visible again on mobile',
+                summary: 'The game detail footer was sitting under the bottom navigation on some phones, which hid the Score action. The action tray now sits above the taskbar, and the game header also has its own Score button.',
+                changes: [
+                    { label: 'Score access', from: 'Score entry depended on the bottom footer tray only', to: 'Score is available both in the header actions and in the raised footer tray' },
+                    { label: 'Footer safe area', from: 'The action tray could be covered by the bottom nav/taskbar', to: 'The footer and Top button now sit above the bottom nav with extra scroll space' }
+                ],
+                details: [
+                    'This specifically fixes the case where a past game opens but there is no visible place to add or edit the score.',
+                    'The content area also has more bottom padding so the last controls are not trapped behind the action tray.'
+                ]
+            },
             {
                 id: '2026-03-15-live-header-matchdayplan-fix',
                 at: '2026-03-15T23:45:00+08:00',
@@ -8557,7 +8573,7 @@
                     </Modal>
 
                     {selectedFixture && (
-                        <div ref={matchDayRef} className="fixed inset-0 z-[60] bg-white overflow-y-auto overflow-x-hidden overscroll-contain pb-32 sm:pb-20">
+                        <div ref={matchDayRef} className="fixed inset-0 z-[60] bg-white overflow-y-auto overflow-x-hidden overscroll-contain pb-[calc(12rem+env(safe-area-inset-bottom))] sm:pb-[calc(9rem+env(safe-area-inset-bottom))]">
                             <div className={isMatchdayWorkspace ? 'px-0 py-0 space-y-5' : 'max-w-4xl mx-auto px-4 py-6 space-y-5'}>
                                 <div
                                     className={isMatchdayWorkspace ? 'px-4 pb-2 border-b border-slate-100 bg-white space-y-2' : 'sticky top-0 z-[70] -mx-4 px-4 py-3 bg-white/95 backdrop-blur border-b border-slate-100 space-y-3'}
@@ -8605,6 +8621,7 @@
                                         ) : (
                                             <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:justify-end">
                                                 <button onClick={requestCloseSelectedFixtureView} className={getButtonClass('secondary', 'md')}>Back</button>
+                                                <button onClick={() => setIsScoreOpen(true)} className={getButtonClass('info', 'md')}>Score</button>
                                                 <button onClick={() => deleteFixture(selectedFixture)} className={getButtonClass('danger', 'md')}>Delete</button>
                                             </div>
                                         )}
@@ -9720,7 +9737,7 @@
                                     </button>
                                 </div>
                             </div>
-                            <div className="fixed inset-x-0 bottom-0 z-[72] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-white via-white/92 to-white/0">
+                            <div className="fixed inset-x-0 bottom-[calc(6.75rem+env(safe-area-inset-bottom))] z-[72] px-4 pt-2 bg-gradient-to-t from-white via-white/92 to-white/0">
                                 <div className="max-w-4xl mx-auto rounded-[1.35rem] border border-slate-200/80 bg-white/96 backdrop-blur-md shadow-soft p-2 space-y-2">
                                     <div className={`grid gap-2 ${isMatchdayWorkspace ? 'grid-cols-2' : 'grid-cols-3'}`}>
                                         <button onClick={requestCloseSelectedFixtureView} className={getButtonClass('secondary', 'lg', 'w-full')}>
@@ -9740,7 +9757,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <button onClick={scrollToTop} className={cx(getButtonClass('secondary', 'sm'), 'fixed bottom-24 right-4 z-[75] rounded-full px-4 shadow-lg backdrop-blur')}>
+                            <button onClick={scrollToTop} className={cx(getButtonClass('secondary', 'sm'), 'fixed bottom-[calc(13.5rem+env(safe-area-inset-bottom))] right-4 z-[75] rounded-full px-4 shadow-lg backdrop-blur')}>
                                 <Icon name="ArrowUp" size={14} /> Top
                             </button>
                         </div>
