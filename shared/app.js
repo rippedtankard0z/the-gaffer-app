@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.14-81';
+        const MASTER_BUILD_VERSION = '2026.03.15-82';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -516,6 +516,20 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-fixture-forfeit-autosave',
+                at: '2026-03-15T00:10:00+08:00',
+                build: '2026.03.15-82',
+                area: 'Games',
+                title: 'Fixture status and forfeit changes now save immediately',
+                summary: 'Editing a past game to mark it as played or forfeited now persists straight away, without depending on the footer save action.',
+                changes: [
+                    { label: 'Fixture state changes', from: 'Could be lost if you navigated away before saving', to: 'Status and forfeit update immediately' }
+                ],
+                details: [
+                    'This makes historical game cleanup much safer, especially when fixing forfeits after the fact.'
+                ]
+            },
             {
                 id: '2026-03-14-home-bank-card-tap',
                 at: '2026-03-14T23:25:00+08:00',
@@ -4016,6 +4030,70 @@
                 clearFixtureSaveTimer();
                 setFixtureSaveStatus('idle');
             }, [selectedFixture?.id]);
+            const persistFixtureDraft = useCallback(async (draft, { closeOnSave = false } = {}) => {
+                if (!draft?.id || fixtureSaveStatus === 'saving') return false;
+                clearFixtureSaveTimer();
+                setFixtureSaveStatus('saving');
+                const motmValue = draft.manOfTheMatch;
+                const normalizedMotm = typeof motmValue === 'string' ? motmValue.trim() : (motmValue ?? '');
+                const forfeitResult = normalizeForfeitResult(draft.forfeitResult);
+                const resolved = resolveFixtureScoresForForfeit(draft, forfeitResult);
+                const nextStatus = forfeitResult !== FORFEIT_RESULT.NONE
+                    ? 'PLAYED'
+                    : (draft.status || 'SCHEDULED');
+                try {
+                    await db.fixtures.update(draft.id, {
+                        opponent: draft.opponent,
+                        date: draft.date,
+                        time: draft.time,
+                        venue: draft.venue,
+                        feeAmount: draft.feeAmount || 20,
+                        competitionType: draft.competitionType || 'LEAGUE',
+                        seasonTag: draft.seasonTag || (seasonCategories?.[0] || '2025/2026 Season'),
+                        manOfTheMatch: normalizedMotm || '',
+                        paymentsSettled: !!draft.paymentsSettled,
+                        forfeitResult,
+                        homeScore: resolved.homeScore,
+                        awayScore: resolved.awayScore,
+                        status: nextStatus
+                    });
+                    if (resolved.defaultApplied) {
+                        setScoreForm(prev => ({
+                            ...prev,
+                            our: resolved.homeScore ?? prev.our,
+                            their: resolved.awayScore ?? prev.their,
+                            scorersArr: Array.isArray(prev.scorersArr)
+                                ? prev.scorersArr.slice(0, Math.max(0, Number(resolved.homeScore || 0)))
+                                : []
+                        }));
+                    }
+                    setSelectedFixture(prev => prev && String(prev.id) === String(draft.id)
+                        ? { ...prev, ...draft, forfeitResult, homeScore: resolved.homeScore, awayScore: resolved.awayScore, status: nextStatus }
+                        : prev);
+                    const [fixtureList, playerList, txList] = await Promise.all([
+                        db.fixtures.orderBy('date').reverse().toArray(),
+                        db.players.toArray(),
+                        db.transactions.toArray()
+                    ]);
+                    setFixtures(fixtureList);
+                    setPlayers(playerList);
+                    setAllTx(txList);
+                    setFixtureSaveStatus('saved');
+                    const delayMs = closeOnSave ? 700 : 1200;
+                    fixtureSaveTimerRef.current = setTimeout(() => {
+                        setFixtureSaveStatus('idle');
+                        if (closeOnSave) setSelectedFixture(null);
+                    }, delayMs);
+                    return true;
+                } catch (err) {
+                    setFixtureSaveStatus('error');
+                    fixtureSaveTimerRef.current = setTimeout(() => {
+                        setFixtureSaveStatus('idle');
+                    }, 2000);
+                    pushFixtureToast('Unable to save fixture: ' + (err?.message || 'Unexpected error'), 'error');
+                    return false;
+                }
+            }, [db.fixtures, db.players, db.transactions, fixtureSaveStatus, pushFixtureToast, resolveFixtureScoresForForfeit, seasonCategories]);
             useEffect(() => {
                 // auto-select flow direction based on payee
                 if(payee.type === 'opponent') {
@@ -4178,17 +4256,18 @@
                 }
                 return { homeScore, awayScore, defaultApplied: false };
             }, [getForfeitScoreDefaults]);
-            const applySelectedFixtureForfeitChange = useCallback((nextForfeitRaw) => {
+            const applySelectedFixtureForfeitChange = useCallback(async (nextForfeitRaw) => {
                 if (!selectedFixture) return;
                 const forfeitResult = normalizeForfeitResult(nextForfeitRaw);
                 const resolved = resolveFixtureScoresForForfeit(selectedFixture, forfeitResult);
-                setSelectedFixture({
+                const nextFixtureDraft = {
                     ...selectedFixture,
                     forfeitResult,
                     status: forfeitResult !== FORFEIT_RESULT.NONE ? 'PLAYED' : (selectedFixture.status || 'SCHEDULED'),
                     homeScore: resolved.homeScore,
                     awayScore: resolved.awayScore
-                });
+                };
+                setSelectedFixture(nextFixtureDraft);
                 if (resolved.defaultApplied) {
                     setScoreForm(prev => ({
                         ...prev,
@@ -4199,7 +4278,8 @@
                             : []
                     }));
                 }
-            }, [resolveFixtureScoresForForfeit, selectedFixture]);
+                await persistFixtureDraft(nextFixtureDraft);
+            }, [persistFixtureDraft, resolveFixtureScoresForForfeit, selectedFixture]);
             const plannerSlots = useMemo(() => {
                 const formation = matchdayPlanner?.formation || '4-3-3';
                 return MATCHDAY_FORMATION_PRESETS[formation] || MATCHDAY_FORMATION_PRESETS['4-3-3'];
@@ -6366,57 +6446,8 @@
             };
 
             const saveFixtureDetails = async ({ closeOnSave = false } = {}) => {
-                if(!selectedFixture || fixtureSaveStatus === 'saving') return;
-                clearFixtureSaveTimer();
-                setFixtureSaveStatus('saving');
-                const motmValue = selectedFixture.manOfTheMatch;
-                const normalizedMotm = typeof motmValue === 'string' ? motmValue.trim() : (motmValue ?? '');
-                const forfeitResult = normalizeForfeitResult(selectedFixture.forfeitResult);
-                const resolved = resolveFixtureScoresForForfeit(selectedFixture, forfeitResult);
-                const nextStatus = forfeitResult !== FORFEIT_RESULT.NONE
-                    ? 'PLAYED'
-                    : (selectedFixture.status || 'SCHEDULED');
-                try {
-                    await db.fixtures.update(selectedFixture.id, { 
-                        opponent: selectedFixture.opponent, 
-                        date: selectedFixture.date, 
-                        time: selectedFixture.time, 
-                        venue: selectedFixture.venue,
-                        feeAmount: selectedFixture.feeAmount || 20,
-                        competitionType: selectedFixture.competitionType || 'LEAGUE',
-                        seasonTag: selectedFixture.seasonTag || (seasonCategories?.[0] || '2025/2026 Season'),
-                        manOfTheMatch: normalizedMotm || '',
-                        paymentsSettled: !!selectedFixture.paymentsSettled,
-                        forfeitResult,
-                        homeScore: resolved.homeScore,
-                        awayScore: resolved.awayScore,
-                        status: nextStatus
-                    });
-                    if (resolved.defaultApplied) {
-                        setSelectedFixture(prev => prev ? { ...prev, homeScore: resolved.homeScore, awayScore: resolved.awayScore } : prev);
-                        setScoreForm(prev => ({
-                            ...prev,
-                            our: resolved.homeScore ?? prev.our,
-                            their: resolved.awayScore ?? prev.their,
-                            scorersArr: Array.isArray(prev.scorersArr)
-                                ? prev.scorersArr.slice(0, Math.max(0, Number(resolved.homeScore || 0)))
-                                : []
-                        }));
-                    }
-                    refresh();
-                    setFixtureSaveStatus('saved');
-                    const delayMs = closeOnSave ? 700 : 1200;
-                    fixtureSaveTimerRef.current = setTimeout(() => {
-                        setFixtureSaveStatus('idle');
-                        if (closeOnSave) setSelectedFixture(null);
-                    }, delayMs);
-                } catch (err) {
-                    setFixtureSaveStatus('error');
-                    fixtureSaveTimerRef.current = setTimeout(() => {
-                        setFixtureSaveStatus('idle');
-                    }, 2000);
-                    pushFixtureToast('Unable to save fixture: ' + (err?.message || 'Unexpected error'), 'error');
-                }
+                if(!selectedFixture) return;
+                await persistFixtureDraft(selectedFixture, { closeOnSave });
             };
 
             const updatePaymentsSettled = async (nextValue) => {
@@ -7826,7 +7857,15 @@
                                             <select className={touchPanelSelectClass} value={selectedFixture.competitionType || 'LEAGUE'} onChange={e => setSelectedFixture({ ...selectedFixture, competitionType: e.target.value })}>
                                                 {competitionTypes.map(t => <option key={t} value={t}>{t[0] + t.slice(1).toLowerCase()}</option>)}
                                             </select>
-                                            <select className={touchPanelSelectClass} value={selectedFixture.status || 'SCHEDULED'} onChange={e => setSelectedFixture({ ...selectedFixture, status: e.target.value })}>
+                                            <select
+                                                className={touchPanelSelectClass}
+                                                value={selectedFixture.status || 'SCHEDULED'}
+                                                onChange={async e => {
+                                                    const nextFixtureDraft = { ...selectedFixture, status: e.target.value };
+                                                    setSelectedFixture(nextFixtureDraft);
+                                                    await persistFixtureDraft(nextFixtureDraft);
+                                                }}
+                                            >
                                                 {fixtureStatusOptions.map(opt => <option key={`selected-fixture-status-${opt.value}`} value={opt.value}>{opt.label}</option>)}
                                             </select>
                                             <select className={touchPanelSelectClass} value={normalizeForfeitResult(selectedFixture.forfeitResult)} onChange={e => applySelectedFixtureForfeitChange(e.target.value)}>
