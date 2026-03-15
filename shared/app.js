@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-82';
+        const MASTER_BUILD_VERSION = '2026.03.15-84';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -442,7 +442,7 @@
                     'Open Monthly P&L to review each month\'s income, expense, and closing balance. Tap a month to drill into the ledger lines behind the total.',
                     'Open Fixture Profitability to see which games made or lost money. Tap a fixture to inspect its finance lines and jump straight back to the game if something needs fixing.',
                     'Run Reconciliation Audit and wait for the scan overlay to complete so you know the findings have actually refreshed.',
-                    'Read each audit card carefully. The audit can flag unpaid fees, orphan payments, over-covered fixtures, missing pitch fees, and SIA home-flow gaps.',
+                    'Read each audit card carefully. The audit can flag unpaid fees, payments with no matching fee, collected-more-than-billed fixtures, missing pitch fees, and SIA home-flow gaps.',
                     'For older fixtures that were fully settled, use Settled on the audit card so those fixtures stop coming back after rescans.',
                     'Use the Bank page when you need raw ledger visibility across receivables, payables, and exports.'
                 ],
@@ -516,6 +516,34 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-audit-action-items',
+                at: '2026-03-15T00:40:00+08:00',
+                build: '2026.03.15-84',
+                area: 'Audit',
+                title: 'Audit cards now show the specific payment or fee lines to review',
+                summary: 'Reconciliation Audit cards now surface the exact payments and write-offs behind unlinked or over-billed findings so you can act without guessing.',
+                changes: [
+                    { label: 'Audit cards', from: 'Only issue summary chips', to: 'Issue chips plus concrete item-level detail for action' }
+                ],
+                details: [
+                    'Payment-with-no-matching-fee and collected-more-than-billed findings now list the likely culprit lines directly on the card.'
+                ]
+            },
+            {
+                id: '2026-03-15-audit-labels-plain-english',
+                at: '2026-03-15T00:25:00+08:00',
+                build: '2026.03.15-83',
+                area: 'Audit',
+                title: 'Reconciliation Audit labels rewritten in plain English',
+                summary: 'Orphan payment and over-covered labels were replaced with clearer wording so the audit reads more like a task list than finance jargon.',
+                changes: [
+                    { label: 'Audit issue labels', from: 'Orphan payment / Over-covered', to: 'Payment with no matching fee / Collected more than billed' }
+                ],
+                details: [
+                    'The underlying checks are unchanged; only the wording was simplified to make cleanup decisions easier.'
+                ]
+            },
             {
                 id: '2026-03-15-fixture-forfeit-autosave',
                 at: '2026-03-15T00:10:00+08:00',
@@ -12270,9 +12298,10 @@
                     await updateAuditScanStep(0, 'Connecting to database...');
                     await waitForDb();
                     await updateAuditScanStep(1, 'Loading fixtures and transactions...');
-                    const [txs, fixtures] = await Promise.all([
+                    const [txs, fixtures, players] = await Promise.all([
                         db.transactions.toArray(),
-                        db.fixtures.toArray()
+                        db.fixtures.toArray(),
+                        db.players.toArray()
                     ]);
                     await updateAuditScanStep(2, `Loaded ${fixtures.length} fixtures and ${txs.length} ledger row${txs.length === 1 ? '' : 's'}.`);
 
@@ -12280,6 +12309,24 @@
                     fixtures.forEach((fixture) => {
                         fixtureLookup[String(fixture.id)] = fixture;
                     });
+                    const playerLookup = {};
+                    players.forEach((player) => {
+                        playerLookup[String(player.id)] = `${player.firstName || ''} ${player.lastName || ''}`.trim() || player.nickname || 'Player';
+                    });
+                    const formatAuditActionItem = (tx, prefix = '') => {
+                        const playerLabel = tx?.playerId !== undefined && tx?.playerId !== null
+                            ? (playerLookup[String(tx.playerId)] || 'Player')
+                            : '';
+                        const txDate = tx?.date ? new Date(tx.date) : null;
+                        const dateLabel = txDate && !Number.isNaN(txDate.getTime())
+                            ? txDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                            : '';
+                        const amountLabel = formatCurrency(Math.abs(Number(tx?.amount || 0)));
+                        const descriptionLabel = (tx?.description || '').toString().trim();
+                        return [prefix, playerLabel, descriptionLabel, amountLabel, dateLabel]
+                            .filter(Boolean)
+                            .join(' · ');
+                    };
                     const byMonth = {};
                     const monthBreakdowns = {};
                     const sortedTxs = [...txs].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
@@ -12502,8 +12549,10 @@
                                     if (Math.abs(coveredAmount - chargeAmount) > 0.009) mismatchedCoverageCount += 1;
                                 });
                             });
-                            const orphanPaymentCount = playerPayments.filter(tx => !matchedPaymentIds.has(String(tx.id))).length;
-                            const orphanWriteOffCount = playerWriteOffs.filter(tx => !matchedWriteOffIds.has(String(tx.id))).length;
+                            const orphanPayments = playerPayments.filter(tx => !matchedPaymentIds.has(String(tx.id)));
+                            const orphanWriteOffs = playerWriteOffs.filter(tx => !matchedWriteOffIds.has(String(tx.id)));
+                            const orphanPaymentCount = orphanPayments.length;
+                            const orphanWriteOffCount = orphanWriteOffs.length;
 
                             const fixtureCashPL = txList.reduce((sum, tx) => sum + getTxCashImpact(tx), 0);
                             const nonPlayerCash = txList
@@ -12513,18 +12562,46 @@
                             const cashVariance = Number((fixtureCashPL - expectedCashPL).toFixed(2));
 
                             const issues = [];
+                            const issueDetails = [];
                             if (unresolvedChargeCount > 0) issues.push(`${unresolvedChargeCount} unpaid fee${unresolvedChargeCount === 1 ? '' : 's'}`);
-                            if (orphanPaymentCount > 0) issues.push(`${orphanPaymentCount} orphan payment${orphanPaymentCount === 1 ? '' : 's'}`);
+                            if (orphanPaymentCount > 0) issues.push(`${orphanPaymentCount} payment${orphanPaymentCount === 1 ? '' : 's'} with no matching fee`);
                             if (orphanWriteOffCount > 0) issues.push(`${orphanWriteOffCount} orphan write-off${orphanWriteOffCount === 1 ? '' : 's'}`);
                             if (conflictingCoverageCount > 0) issues.push(`${conflictingCoverageCount} fee${conflictingCoverageCount === 1 ? '' : 's'} marked paid and write-off`);
                             if (mismatchedCoverageCount > 0) issues.push(`${mismatchedCoverageCount} amount mismatch${mismatchedCoverageCount === 1 ? '' : 'es'}`);
-                            if (overCollectedFixture > 0.009) issues.push(`Over-covered ${formatCurrency(overCollectedFixture)}`);
+                            if (overCollectedFixture > 0.009) issues.push(`Collected more than billed ${formatCurrency(overCollectedFixture)}`);
                             if (Math.abs(cashVariance) > 0.009) issues.push(`Cash variance ${formatCurrency(cashVariance)}`);
                             if (requiresPitchFeeAttribution && !pitchFeeTx.length) issues.push('Missing pitch fee');
                             if (isSiaHomeFixture) {
                                 if (!pitchFeeReceivables.length) issues.push('SIA home: missing receivable pitch fee (club -> Exiles)');
                                 if (!pitchFeePayables.length) issues.push('SIA home: missing payable pitch fee (Exiles -> SIA/Glenn)');
                                 if (pitchFeePayables.length && !hasPayableTaggedToSiaOrGlenn) issues.push('SIA home: payable pitch fee not tagged to SIA/Glenn');
+                            }
+                            if (orphanPayments.length) {
+                                issueDetails.push({
+                                    type: 'orphanPayments',
+                                    title: 'Payments with no matching fee',
+                                    items: orphanPayments.slice(0, 3).map((tx) => formatAuditActionItem(tx))
+                                });
+                            }
+                            if (orphanWriteOffs.length) {
+                                issueDetails.push({
+                                    type: 'orphanWriteOffs',
+                                    title: 'Write-offs with no matching fee',
+                                    items: orphanWriteOffs.slice(0, 3).map((tx) => formatAuditActionItem(tx))
+                                });
+                            }
+                            if (overCollectedFixture > 0.009) {
+                                const excessCandidates = [...orphanPayments, ...orphanWriteOffs]
+                                    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+                                    .slice(0, 3)
+                                    .map((tx) => formatAuditActionItem(tx, 'Check'));
+                                issueDetails.push({
+                                    type: 'overCollected',
+                                    title: `Collected more than billed by ${formatCurrency(overCollectedFixture)}`,
+                                    items: excessCandidates.length
+                                        ? excessCandidates
+                                        : [`Billed ${formatCurrency(billedFixture)} · Covered ${formatCurrency(collectedFixture + writtenOffFixture)}`]
+                                });
                             }
                             const detectedIssues = [...issues];
                             const effectiveIssues = auditIgnoreReconciliation ? [] : detectedIssues;
@@ -12542,6 +12619,7 @@
                                 cashPL: fixtureCashPL,
                                 issues: effectiveIssues,
                                 detectedIssues,
+                                issueDetails,
                                 auditIgnored: auditIgnoreReconciliation,
                                 auditIgnoredAt: auditIgnoreReconciliationAt
                             };
@@ -13234,6 +13312,22 @@
                                                 </span>
                                             )}
                                         </div>
+                                        {!!row.issueDetails?.length && (
+                                            <div className="mt-3 space-y-2">
+                                                {row.issueDetails.slice(0, 2).map((detail, detailIdx) => (
+                                                    <div key={`audit-detail-${row.fixtureId}-${detail.type || detailIdx}`} className="rounded-lg border border-amber-200 bg-white/80 p-2">
+                                                        <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700">{detail.title}</div>
+                                                        <div className="mt-1 space-y-1">
+                                                            {(detail.items || []).slice(0, 3).map((item, itemIdx) => (
+                                                                <div key={`audit-detail-item-${row.fixtureId}-${detailIdx}-${itemIdx}`} className="text-[10px] text-slate-700">
+                                                                    {item}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                         <div className="mt-3">
                                             <button
                                                 type="button"
