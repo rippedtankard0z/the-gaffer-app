@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-104';
+        const MASTER_BUILD_VERSION = '2026.03.15-105';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,22 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-16-import-results-db-put-fix',
+                at: '2026-03-16T02:02:00+08:00',
+                build: '2026.03.15-105',
+                area: 'Import results',
+                title: 'Imported results save now uses supported database writes and surfaces failures',
+                summary: 'The legacy review save was still trying to call a single-row put method that this app shell does not expose, so saving could fail silently. It now uses a supported write path and shows an error toast if something still goes wrong.',
+                changes: [
+                    { label: 'Opponent Intel write', from: 'Used db.opponentResults.put(...) which is not available in this shell', to: 'Uses db.opponentResults.add(...) so imported opponent rows can save correctly' },
+                    { label: 'Failure handling', from: 'A save error could die inside the promise chain without a clear in-app explanation', to: 'Save failures now show a visible error toast and do not pretend the import finished' }
+                ],
+                details: [
+                    'This is the direct fix for the console error showing db.opponentResults.put is not a function.',
+                    'The Tailwind/Babel warnings are unrelated build warnings and are not the reason save was failing here.'
+                ]
+            },
             {
                 id: '2026-03-16-import-results-save-feedback',
                 at: '2026-03-16T01:48:00+08:00',
@@ -8482,7 +8498,7 @@
                     };
                     const fingerprint = makeOpponentResultFingerprint(intelRow);
                     if (existingOpponentResultFingerprints.has(fingerprint)) continue;
-                    await db.opponentResults.put({
+                    await db.opponentResults.add({
                         ...intelRow,
                         fingerprint,
                         source: 'legacy_results_import',
@@ -8510,6 +8526,9 @@
                 setResultsPreview([]);
                 setLegacyResultsText('');
                 await refresh();
+                } catch (err) {
+                    console.error('Legacy imported results save failed', err);
+                    pushFixtureToast(`Save failed: ${err.message || 'Unknown error'}`, 'error');
                 } finally {
                     finishImportProgress();
                 }
