@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-102';
+        const MASTER_BUILD_VERSION = '2026.03.15-103';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,21 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-16-matchday-ball-nav',
+                at: '2026-03-16T01:34:00+08:00',
+                build: '2026.03.15-103',
+                area: 'Navigation',
+                title: 'Match Day nav icon changed from flag-style goal to a ball-style icon',
+                summary: 'The previous Match Day icon still read like a flag in the menu bar, so it now uses a more obviously football-like ball icon instead.',
+                changes: [
+                    { label: 'Match Day icon', from: 'Whistle/goal attempt that still looked like a flag in practice', to: 'A ball-style icon that reads more clearly as football in the bottom nav' }
+                ],
+                details: [
+                    'This is purely a visual navigation change.',
+                    'The guide shortcut now uses the same ball-style Match Day icon for consistency.'
+                ]
+            },
             {
                 id: '2026-03-16-import-results-footer-safe-area',
                 at: '2026-03-16T01:22:00+08:00',
@@ -12467,7 +12482,7 @@
             const items = [
                 { id: 'dashboard', icon: 'LayoutGrid', label: 'Home' },
                 { id: 'fixtures', icon: 'Calendar', label: 'Games' },
-                { id: 'matchday', icon: 'Whistle', fallbackIcon: 'Goal', label: 'Match Day' },
+                { id: 'matchday', icon: 'Dribbble', fallbackIcon: 'CircleDot', label: 'Match Day' },
                 { id: 'more', icon: 'MoreHorizontal', label: 'More' }
             ];
 
@@ -12910,7 +12925,7 @@
             const quickLinks = [
                 { label: 'Home', tab: 'dashboard', icon: 'LayoutGrid' },
                 { label: 'Games', tab: 'fixtures', icon: 'Calendar' },
-                { label: 'Match Day', tab: 'matchday', icon: 'Whistle', fallbackIcon: 'Goal' },
+                { label: 'Match Day', tab: 'matchday', icon: 'Dribbble', fallbackIcon: 'CircleDot' },
                 { label: 'Reports', tab: 'reports', icon: 'Wallet' },
                 { label: 'Settings', tab: 'settings', icon: 'Settings' }
             ];
