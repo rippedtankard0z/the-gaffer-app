@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-106';
+        const MASTER_BUILD_VERSION = '2026.03.15-107';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,23 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-opponent-intel-scout-dashboard',
+                at: '2026-03-15T18:45:00+08:00',
+                build: '2026.03.15-107',
+                area: 'Opponent intel',
+                title: 'Opponent Intel now feels like a real scout dashboard',
+                summary: 'Opponent Intel now blends head-to-head, imported league form, venue trends, and prep guidance into one fuller pre-match dashboard instead of a few disconnected stat boxes.',
+                changes: [
+                    { label: 'Scout view', from: 'Showed a handful of separate H2H and imported-form cards', to: 'Now opens with a proper opponent snapshot including matchup outlook, last meeting context, and next-meeting focus' },
+                    { label: 'Prep signals', from: 'Only offered a small list of generic prep notes', to: 'Now surfaces clearer attacking, defensive, away-form, venue, and head-to-head signals you can use before the next game' },
+                    { label: 'Structure', from: 'Recent form, imported results, and scorer notes sat in separate simple panels', to: 'Now groups overall record, travel split, venue tendencies, recent meetings, and Exiles scorer history into a more useful scout pack' }
+                ],
+                details: [
+                    'The screen now makes much better use of the imported external results alongside the Exiles fixture history already stored in the app.',
+                    'It is intended to feel more like a prep briefing you can act on, not just an archive of rows.'
+                ]
+            },
             {
                 id: '2026-03-16-import-results-review-highlights',
                 at: '2026-03-16T02:16:00+08:00',
@@ -15512,6 +15529,8 @@
                         result: goalsFor > goalsAgainst ? 'W' : goalsFor < goalsAgainst ? 'L' : 'D',
                         goalsFor,
                         goalsAgainst,
+                        isSelectedOpponentHome: isHome,
+                        sideLabel: isHome ? 'Home' : 'Away',
                         opponentName: isHome ? row.awayTeam : row.homeTeam,
                         scoreLabel: `${row.homeScore}-${row.awayScore}`
                     };
@@ -15544,24 +15563,123 @@
                 return { label, count };
             }, [importedPerspectiveRows]);
 
-            const prepSignals = useMemo(() => {
-                const notes = [];
-                if (!importedSummary.played) return notes;
-                const lastFive = importedRecent.reduce((acc, row) => {
+            const latestMeeting = useMemo(() => playedFixtures[0] || null, [playedFixtures]);
+
+            const h2hProfile = useMemo(() => {
+                if (!summary.played) {
+                    return {
+                        avgFor: 0,
+                        avgAgainst: 0,
+                        avgMargin: 0,
+                        cleanSheets: 0,
+                        failedToScore: 0
+                    };
+                }
+                let goalMarginTotal = 0;
+                let cleanSheets = 0;
+                let failedToScore = 0;
+                playedFixtures.forEach((fixture) => {
+                    const goalsFor = Number(fixture.homeScore || 0);
+                    const goalsAgainst = Number(fixture.awayScore || 0);
+                    goalMarginTotal += goalsFor - goalsAgainst;
+                    if (goalsAgainst === 0) cleanSheets += 1;
+                    if (goalsFor === 0) failedToScore += 1;
+                });
+                return {
+                    avgFor: summary.goalsFor / summary.played,
+                    avgAgainst: summary.goalsAgainst / summary.played,
+                    avgMargin: goalMarginTotal / summary.played,
+                    cleanSheets,
+                    failedToScore
+                };
+            }, [playedFixtures, summary]);
+
+            const importedProfile = useMemo(() => {
+                const emptySplit = { played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0 };
+                if (!importedSummary.played) {
+                    return {
+                        avgFor: 0,
+                        avgAgainst: 0,
+                        cleanSheets: 0,
+                        failedToScore: 0,
+                        home: { ...emptySplit },
+                        away: { ...emptySplit }
+                    };
+                }
+                let cleanSheets = 0;
+                let failedToScore = 0;
+                const split = {
+                    home: { ...emptySplit },
+                    away: { ...emptySplit }
+                };
+                importedPerspectiveRows.forEach((row) => {
+                    if (row.goalsAgainst === 0) cleanSheets += 1;
+                    if (row.goalsFor === 0) failedToScore += 1;
+                    const bucket = row.isSelectedOpponentHome ? split.home : split.away;
+                    bucket.played += 1;
+                    if (row.result === 'W') bucket.wins += 1;
+                    else if (row.result === 'D') bucket.draws += 1;
+                    else bucket.losses += 1;
+                    bucket.goalsFor += row.goalsFor;
+                    bucket.goalsAgainst += row.goalsAgainst;
+                });
+                return {
+                    avgFor: importedSummary.goalsFor / importedSummary.played,
+                    avgAgainst: importedSummary.goalsAgainst / importedSummary.played,
+                    cleanSheets,
+                    failedToScore,
+                    home: split.home,
+                    away: split.away
+                };
+            }, [importedPerspectiveRows, importedSummary]);
+
+            const importedVenueRows = useMemo(() => {
+                const grouped = {};
+                importedPerspectiveRows.forEach((row) => {
+                    const venueName = (row.venue || 'Venue not captured').trim() || 'Venue not captured';
+                    if (!grouped[venueName]) {
+                        grouped[venueName] = {
+                            venue: venueName,
+                            played: 0,
+                            wins: 0,
+                            draws: 0,
+                            losses: 0,
+                            goalsFor: 0,
+                            goalsAgainst: 0
+                        };
+                    }
+                    const bucket = grouped[venueName];
+                    bucket.played += 1;
+                    if (row.result === 'W') bucket.wins += 1;
+                    else if (row.result === 'D') bucket.draws += 1;
+                    else bucket.losses += 1;
+                    bucket.goalsFor += row.goalsFor;
+                    bucket.goalsAgainst += row.goalsAgainst;
+                });
+                return Object.values(grouped)
+                    .sort((a, b) => b.played - a.played || b.wins - a.wins || a.venue.localeCompare(b.venue))
+                    .slice(0, 4);
+            }, [importedPerspectiveRows]);
+
+            const sameVenueIntel = useMemo(() => {
+                const nextVenueKey = normalizeEntityText(nextMeeting?.venue || '');
+                if (!nextVenueKey) return null;
+                const matchingRows = importedPerspectiveRows.filter((row) => normalizeEntityText(row.venue || '') === nextVenueKey);
+                if (!matchingRows.length) return null;
+                const summaryRow = matchingRows.reduce((acc, row) => {
+                    acc.played += 1;
                     if (row.result === 'W') acc.wins += 1;
                     else if (row.result === 'D') acc.draws += 1;
                     else acc.losses += 1;
+                    acc.goalsFor += row.goalsFor;
+                    acc.goalsAgainst += row.goalsAgainst;
                     return acc;
-                }, { wins: 0, draws: 0, losses: 0 });
-                notes.push(`Last 5 overall: ${lastFive.wins}W · ${lastFive.draws}D · ${lastFive.losses}L.`);
-                if (importedStreak.count) {
-                    notes.push(`${selectedOpponent} are on a ${importedStreak.count}-match ${importedStreak.label.toLowerCase().replace('overall ', '')}.`);
-                }
-                const goalsForPerGame = importedSummary.played ? (importedSummary.goalsFor / importedSummary.played).toFixed(1) : '0.0';
-                const goalsAgainstPerGame = importedSummary.played ? (importedSummary.goalsAgainst / importedSummary.played).toFixed(1) : '0.0';
-                notes.push(`Imported results show ${goalsForPerGame} goals scored and ${goalsAgainstPerGame} conceded per game.`);
-                return notes.slice(0, 3);
-            }, [importedSummary, importedRecent, importedStreak, selectedOpponent]);
+                }, { played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0 });
+                return {
+                    venue: nextMeeting.venue,
+                    ...summaryRow
+                };
+            }, [importedPerspectiveRows, nextMeeting]);
 
             const winProbability = useMemo(() => {
                 const h2hFormPoints = recentForm.reduce((sum, row) => sum + (row.result === 'W' ? 3 : row.result === 'D' ? 1 : 0), 0);
@@ -15576,6 +15694,81 @@
             }, [summary, recentForm, importedRecent, importedSummary]);
 
             const winProbabilityTone = winProbability >= 62 ? 'text-emerald-700' : winProbability <= 38 ? 'text-rose-700' : 'text-slate-700';
+
+            const matchupOutlook = useMemo(() => {
+                if (winProbability >= 68) return { label: 'Exiles edge', tone: 'success' };
+                if (winProbability >= 56) return { label: 'Slight Exiles edge', tone: 'info' };
+                if (winProbability <= 32) return { label: 'Tough matchup', tone: 'danger' };
+                if (winProbability <= 44) return { label: 'Slight opponent edge', tone: 'warning' };
+                return { label: 'Looks balanced', tone: 'neutral' };
+            }, [winProbability]);
+
+            const matchupStory = useMemo(() => {
+                const notes = [];
+                if (latestMeeting) {
+                    const outcome = getFixtureOutcome(latestMeeting);
+                    const resultLabel = outcome.isForfeit
+                        ? (outcome.result === 'W' ? 'forfeit win' : outcome.result === 'L' ? 'forfeit loss' : 'forfeit draw')
+                        : `${latestMeeting.homeScore ?? '-'}-${latestMeeting.awayScore ?? '-'}`;
+                    notes.push(`Last meeting: ${formatLocalIsoDateLabel(latestMeeting.date, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} · ${resultLabel}.`);
+                }
+                if (nextMeeting) {
+                    notes.push(`Next scheduled: ${formatLocalIsoDateLabel(nextMeeting.date, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} at ${nextMeeting.venue || 'Venue TBC'}.`);
+                } else {
+                    notes.push('No next meeting is scheduled yet, so this is pure prep intel for future fixtures.');
+                }
+                if (summary.played) {
+                    const edge = summary.wins === summary.losses
+                        ? 'The head-to-head is level right now.'
+                        : summary.wins > summary.losses
+                            ? `Exiles currently lead this matchup ${summary.wins}-${summary.losses} on wins.`
+                            : `${selectedOpponent} currently lead this matchup ${summary.losses}-${summary.wins} on wins.`;
+                    notes.push(edge);
+                } else if (importedSummary.played) {
+                    notes.push(`We have no completed Exiles meetings logged yet, but there are ${importedSummary.played} imported result${importedSummary.played === 1 ? '' : 's'} to scout from.`);
+                }
+                return notes.slice(0, 3);
+            }, [latestMeeting, nextMeeting, summary, importedSummary, selectedOpponent]);
+
+            const prepSignals = useMemo(() => {
+                const notes = [];
+                if (importedSummary.played) {
+                    const lastFive = importedRecent.reduce((acc, row) => {
+                        if (row.result === 'W') acc.wins += 1;
+                        else if (row.result === 'D') acc.draws += 1;
+                        else acc.losses += 1;
+                        return acc;
+                    }, { wins: 0, draws: 0, losses: 0 });
+                    notes.push(`Overall last 5: ${lastFive.wins}W · ${lastFive.draws}D · ${lastFive.losses}L.`);
+                    if (importedStreak.count) {
+                        notes.push(`${selectedOpponent} are on a ${importedStreak.count}-match ${importedStreak.label.toLowerCase().replace('overall ', '')}.`);
+                    }
+                    if (importedProfile.avgFor >= 2) {
+                        notes.push(`They are scoring ${importedProfile.avgFor.toFixed(1)} goals per game in imported results, so expect real attacking threat.`);
+                    } else if (importedProfile.avgFor <= 1) {
+                        notes.push(`They are only scoring ${importedProfile.avgFor.toFixed(1)} goals per game in imported results, so they are not creating high output consistently.`);
+                    }
+                    if (importedProfile.away.played >= 2) {
+                        const awayPoints = (importedProfile.away.wins * 3) + importedProfile.away.draws;
+                        const awayPointsPerGame = awayPoints / importedProfile.away.played;
+                        notes.push(
+                            awayPointsPerGame >= 2
+                                ? `Their away form travels well: ${importedProfile.away.wins}W · ${importedProfile.away.draws}D · ${importedProfile.away.losses}L away from home.`
+                                : `Their away form is patchier: ${importedProfile.away.wins}W · ${importedProfile.away.draws}D · ${importedProfile.away.losses}L away from home.`
+                        );
+                    }
+                    if (sameVenueIntel?.played) {
+                        notes.push(`${sameVenueIntel.venue} trend: ${sameVenueIntel.wins}W · ${sameVenueIntel.draws}D · ${sameVenueIntel.losses}L in ${sameVenueIntel.played} imported visit${sameVenueIntel.played === 1 ? '' : 's'}.`);
+                    }
+                }
+                if (summary.played) {
+                    notes.push(`Head-to-head, Exiles average ${h2hProfile.avgFor.toFixed(1)} scored and ${h2hProfile.avgAgainst.toFixed(1)} conceded per game.`);
+                    if (h2hProfile.cleanSheets) {
+                        notes.push(`Exiles have kept ${h2hProfile.cleanSheets} clean sheet${h2hProfile.cleanSheets === 1 ? '' : 's'} in this matchup.`);
+                    }
+                }
+                return notes.slice(0, 5);
+            }, [importedSummary, importedRecent, importedStreak, selectedOpponent, importedProfile, sameVenueIntel, summary, h2hProfile]);
 
             const inferImportedTeamMatch = useCallback((rawName = '') => {
                 const clean = (rawName || '').trim();
@@ -15871,145 +16064,291 @@
                         <div className={getSurfaceClass('muted', 'p-4 text-sm text-slate-400')}>No opponent data yet.</div>
                     ) : (
                         <>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className={getSurfaceClass('default', 'p-4')}>
-                                    <div className={UI_TEXT.eyebrow}>H2H Record</div>
-                                    <div className="text-base font-bold text-slate-900 mt-1">{summary.wins}W · {summary.draws}D · {summary.losses}L</div>
-                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{summary.played} played vs Exiles</div>
-                                </div>
-                                <div className={getSurfaceClass('default', 'p-4')}>
-                                    <div className={UI_TEXT.eyebrow}>Overall Imported Form</div>
-                                    <div className="text-base font-bold text-slate-900 mt-1">{importedSummary.wins}W · {importedSummary.draws}D · {importedSummary.losses}L</div>
-                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{importedSummary.played} result{importedSummary.played === 1 ? '' : 's'} in intel</div>
-                                </div>
-                                <div className={getSurfaceClass('default', 'p-4')}>
-                                    <div className={UI_TEXT.eyebrow}>Goals</div>
-                                    <div className="text-base font-bold text-slate-900 mt-1">{summary.goalsFor} for · {summary.goalsAgainst} against</div>
-                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>Exiles head-to-head only</div>
-                                </div>
-                                <div className={getSurfaceClass('default', 'p-4')}>
-                                    <div className={UI_TEXT.eyebrow}>Win Snapshot</div>
-                                    <div className={`text-2xl font-display font-bold mt-1 ${winProbabilityTone}`}>{winProbability}%</div>
-                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>Blends H2H with imported recent form</div>
-                                </div>
-                            </div>
-
-                            <div className={getSurfaceClass('report', 'p-5 space-y-3')}>
-                                <div className="flex items-center justify-between gap-3 flex-wrap">
-                                    <div>
-                                        <div className={cx(UI_TEXT.eyebrow, 'text-amber-700')}>Prep Notes</div>
-                                        <div className={UI_TEXT.helper}>Quick signals you can use before the next meeting.</div>
-                                    </div>
-                                    {importedStreak.count ? <span className={getChipClass(importedStreak.label.includes('losing') ? 'warning' : importedStreak.label.includes('win') ? 'success' : 'neutral')}>{importedStreak.count} match {importedStreak.label.toLowerCase().replace('overall ', '')}</span> : null}
-                                </div>
-                                {prepSignals.length ? (
+                            <div className={getSurfaceClass('intelHero', 'p-5 space-y-4')}>
+                                <div className="flex items-start justify-between gap-3 flex-wrap">
                                     <div className="space-y-2">
-                                        {prepSignals.map((note, index) => (
-                                            <div key={`prep-signal-${index}`} className="rounded-xl border border-amber-100 bg-white/80 px-3 py-3 text-sm text-slate-700">
+                                        <div className={cx(UI_TEXT.eyebrow, 'text-white/75')}>Scout dashboard</div>
+                                        <div className="text-3xl font-display font-bold text-white leading-tight">{selectedOpponent}</div>
+                                        <div className="flex flex-wrap gap-2">
+                                            <span className={getChipClass(matchupOutlook.tone)}>{matchupOutlook.label}</span>
+                                            {currentStreak.count ? <span className={getChipClass(currentStreak.label.includes('Losing') ? 'danger' : currentStreak.label.includes('Win') ? 'success' : 'neutral')}>{currentStreak.count} match {currentStreak.label.toLowerCase()}</span> : null}
+                                            {importedStreak.count ? <span className={getChipClass(importedStreak.label.includes('losing') ? 'warning' : importedStreak.label.includes('win') ? 'success' : 'neutral')}>{importedStreak.count} match overall run</span> : null}
+                                        </div>
+                                    </div>
+                                    <div className="w-full sm:w-auto grid grid-cols-2 gap-2">
+                                        <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 min-w-[9rem]">
+                                            <div className="text-[11px] uppercase tracking-[0.18em] text-white/70 font-bold">Win snapshot</div>
+                                            <div className={cx('mt-1 text-3xl font-display font-bold text-white', winProbabilityTone === 'text-emerald-700' ? 'drop-shadow-[0_0_0_rgba(0,0,0,0)]' : '')}>{winProbability}%</div>
+                                            <div className="text-[12px] text-white/70 mt-1">H2H plus imported recent form</div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setFixtureFocusContext({
+                                                    opponent: selectedOpponent,
+                                                    backTab: 'opponentintel'
+                                                });
+                                                onNavigate('fixtures');
+                                            }}
+                                            className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-left hover:bg-white/15 transition"
+                                        >
+                                            <div className="text-[11px] uppercase tracking-[0.18em] text-white/70 font-bold">Fixture history</div>
+                                            <div className="mt-1 text-base font-bold text-white">Open Games</div>
+                                            <div className="text-[12px] text-white/70 mt-1">Jump to every Exiles meeting</div>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="grid gap-2 lg:grid-cols-[1.4fr_0.9fr]">
+                                    <div className="space-y-2">
+                                        {matchupStory.map((note, index) => (
+                                            <div key={`intel-story-${index}`} className="rounded-xl border border-white/10 bg-white/10 px-3 py-3 text-sm text-white/90">
                                                 {note}
                                             </div>
                                         ))}
                                     </div>
-                                ) : (
-                                    <div className="text-sm text-slate-400">Import some external results and we will turn them into prep notes here.</div>
-                                )}
-                            </div>
-
-                            <div className={getSurfaceClass('default', 'p-5 space-y-3')}>
-                                <div className={UI_TEXT.eyebrow}>Recent H2H Form (last 5 vs {selectedOpponent})</div>
-                                {recentForm.length ? (
-                                    <div className="flex flex-wrap gap-2">
-                                        {recentForm.map((row) => (
-                                            <div
-                                                key={`intel-form-${row.id}`}
-                                                className={`h-10 min-w-[2.6rem] px-2 rounded-xl flex items-center justify-center text-sm font-bold ${
-                                                    row.result === 'W'
-                                                        ? 'bg-emerald-100 text-emerald-700'
-                                                        : row.result === 'L'
-                                                            ? 'bg-rose-100 text-rose-700'
-                                                            : 'bg-slate-100 text-slate-600'
-                                                }`}
-                                                title={`${row.score} · ${row.date ? new Date(row.date).toLocaleDateString('en-GB') : ''}`}
+                                    <div className="rounded-2xl border border-white/15 bg-slate-950/20 px-4 py-4">
+                                        <div className="text-[11px] uppercase tracking-[0.18em] text-white/70 font-bold">Next meeting</div>
+                                        {nextMeeting ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setFixtureFocusContext({
+                                                        fixtureId: nextMeeting.id,
+                                                        opponent: nextMeeting.opponent || '',
+                                                        backTab: 'opponentintel'
+                                                    });
+                                                    onNavigate('fixtures');
+                                                }}
+                                                className="mt-2 w-full text-left rounded-xl border border-white/15 bg-white/10 p-3 hover:bg-white/15 transition"
                                             >
-                                                <span>{row.result}</span>
-                                            </div>
-                                        ))}
+                                                <div className="text-base font-bold text-white">vs {nextMeeting.opponent || 'Opponent'}</div>
+                                                <div className="text-[12px] text-white/75 mt-1">
+                                                    {formatLocalIsoDateLabel(nextMeeting.date, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} · {renderTimeLabel(nextMeeting.time)} · {nextMeeting.venue || 'Venue TBC'}
+                                                </div>
+                                            </button>
+                                        ) : (
+                                            <div className="mt-2 rounded-xl border border-dashed border-white/15 px-3 py-4 text-sm text-white/70">No upcoming fixture booked yet.</div>
+                                        )}
                                     </div>
-                                ) : (
-                                    <div className="text-sm text-slate-400">No completed Exiles meetings yet.</div>
-                                )}
+                                </div>
                             </div>
 
-                            <div className={getSurfaceClass('intel', 'p-5 space-y-3')}>
-                                <div className="flex items-center justify-between gap-3 flex-wrap">
-                                    <div>
-                                        <div className={cx(UI_TEXT.eyebrow, 'text-violet-700')}>Imported Overall Results</div>
-                                        <div className={UI_TEXT.helper}>This is where the pasted league results become a real fact sheet for {selectedOpponent}.</div>
-                                    </div>
-                                    {importedSummary.played ? <span className={getChipClass('info')}>{importedSummary.goalsFor} GF · {importedSummary.goalsAgainst} GA</span> : null}
+                            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>H2H Record</div>
+                                    <div className="text-lg font-bold text-slate-900 mt-1">{summary.wins}W · {summary.draws}D · {summary.losses}L</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{summary.played} played vs Exiles</div>
                                 </div>
-                                {importedRecent.length ? (
-                                    <div className="space-y-2">
-                                        {importedRecent.map((row, index) => (
-                                            <div key={`intel-imported-${row.id || row.fingerprint || index}`} className="rounded-xl border border-violet-100 bg-white/90 p-3 flex items-start justify-between gap-3">
-                                                <div>
-                                                    <div className="text-sm font-bold text-slate-900">{row.homeTeam} {row.homeScore}-{row.awayScore} {row.awayTeam}</div>
-                                                    <div className="text-[13px] text-slate-500 mt-1">
-                                                        {row.resultDate ? new Date(row.resultDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC'}
-                                                        {row.venue ? ` · ${row.venue}` : ''}
-                                                        {row.opponentName ? ` · vs ${row.opponentName}` : ''}
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>Imported Overall</div>
+                                    <div className="text-lg font-bold text-slate-900 mt-1">{importedSummary.wins}W · {importedSummary.draws}D · {importedSummary.losses}L</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{importedSummary.played} result{importedSummary.played === 1 ? '' : 's'} in intel</div>
+                                </div>
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>Exiles H2H Goals</div>
+                                    <div className="text-lg font-bold text-slate-900 mt-1">{h2hProfile.avgFor.toFixed(1)} GF · {h2hProfile.avgAgainst.toFixed(1)} GA</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{h2hProfile.cleanSheets} clean sheet{h2hProfile.cleanSheets === 1 ? '' : 's'} · {h2hProfile.failedToScore} scoreless</div>
+                                </div>
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>{selectedOpponent} Overall Goals</div>
+                                    <div className="text-lg font-bold text-slate-900 mt-1">{importedProfile.avgFor.toFixed(1)} GF · {importedProfile.avgAgainst.toFixed(1)} GA</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{importedProfile.cleanSheets} clean sheet{importedProfile.cleanSheets === 1 ? '' : 's'} · {importedProfile.failedToScore} blank</div>
+                                </div>
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>Away Record</div>
+                                    <div className="text-lg font-bold text-slate-900 mt-1">{importedProfile.away.wins}W · {importedProfile.away.draws}D · {importedProfile.away.losses}L</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{importedProfile.away.played || 0} away result{importedProfile.away.played === 1 ? '' : 's'}</div>
+                                </div>
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>Home Record</div>
+                                    <div className="text-lg font-bold text-slate-900 mt-1">{importedProfile.home.wins}W · {importedProfile.home.draws}D · {importedProfile.home.losses}L</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{importedProfile.home.played || 0} home result{importedProfile.home.played === 1 ? '' : 's'}</div>
+                                </div>
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>Latest Meeting</div>
+                                    <div className="text-lg font-bold text-slate-900 mt-1">
+                                        {latestMeeting ? `${latestMeeting.homeScore ?? '-'}-${latestMeeting.awayScore ?? '-'}` : 'No game'}
+                                    </div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>
+                                        {latestMeeting ? formatLocalIsoDateLabel(latestMeeting.date, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'No completed Exiles meeting yet'}
+                                    </div>
+                                </div>
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>Top Venue In Intel</div>
+                                    <div className="text-lg font-bold text-slate-900 mt-1">{importedVenueRows[0]?.venue || 'No venue yet'}</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{importedVenueRows[0]?.played ? `${importedVenueRows[0].played} result${importedVenueRows[0].played === 1 ? '' : 's'} logged there` : 'Import results to build this'}</div>
+                                </div>
+                            </div>
+
+                            <div className="grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
+                                <div className={getSurfaceClass('report', 'p-5 space-y-3')}>
+                                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                                        <div>
+                                            <div className={cx(UI_TEXT.eyebrow, 'text-amber-700')}>Prep Notes</div>
+                                            <div className={UI_TEXT.helper}>Quick signals you can actually use before the next meeting.</div>
+                                        </div>
+                                        {importedStreak.count ? <span className={getChipClass(importedStreak.label.includes('losing') ? 'warning' : importedStreak.label.includes('win') ? 'success' : 'neutral')}>{importedStreak.count} match run</span> : null}
+                                    </div>
+                                    {prepSignals.length ? (
+                                        <div className="space-y-2">
+                                            {prepSignals.map((note, index) => (
+                                                <div key={`prep-signal-${index}`} className="rounded-xl border border-amber-100 bg-white/80 px-3 py-3 text-sm text-slate-700">
+                                                    {note}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-sm text-slate-400">Import some external results and we will turn them into prep notes here.</div>
+                                    )}
+                                </div>
+
+                                <div className={getSurfaceClass('intel', 'p-5 space-y-3')}>
+                                    <div>
+                                        <div className={cx(UI_TEXT.eyebrow, 'text-violet-700')}>Travel Split</div>
+                                        <div className={UI_TEXT.helper}>How {selectedOpponent} perform home vs away in imported results.</div>
+                                    </div>
+                                    {importedSummary.played ? (
+                                        <div className="space-y-2">
+                                            {[
+                                                { label: 'Away', row: importedProfile.away, tone: 'from-sky-50 to-white border-sky-100' },
+                                                { label: 'Home', row: importedProfile.home, tone: 'from-violet-50 to-white border-violet-100' }
+                                            ].map((item) => (
+                                                <div key={`intel-split-${item.label}`} className={`rounded-xl border bg-gradient-to-br ${item.tone} p-3`}>
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <div className="text-sm font-bold text-slate-900">{item.label}</div>
+                                                        <span className={getChipClass(item.row.wins > item.row.losses ? 'success' : item.row.losses > item.row.wins ? 'danger' : 'neutral')}>
+                                                            {item.row.played || 0} game{item.row.played === 1 ? '' : 's'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-[13px] text-slate-700 mt-2">{item.row.wins}W · {item.row.draws}D · {item.row.losses}L</div>
+                                                    <div className="text-[12px] text-slate-500 mt-1">
+                                                        {item.row.played ? `${(item.row.goalsFor / item.row.played).toFixed(1)} GF · ${(item.row.goalsAgainst / item.row.played).toFixed(1)} GA per game` : 'No matches in this split yet'}
                                                     </div>
                                                 </div>
-                                                <span className={getChipClass(row.result === 'W' ? 'success' : row.result === 'L' ? 'danger' : 'neutral')}>
-                                                    {row.result}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="text-sm text-slate-400">No imported league results yet for this opponent.</div>
-                                )}
-                            </div>
-
-                            <div className={getSurfaceClass('default', 'p-5 space-y-3')}>
-                                <div className={UI_TEXT.eyebrow}>Danger Players (our scorers vs this opponent)</div>
-                                {dangerPlayers.length ? (
-                                    <div className="space-y-2">
-                                        {dangerPlayers.map((row) => (
-                                            <div key={`intel-danger-${row.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3 flex items-center justify-between">
-                                                <div className="text-sm font-bold text-slate-900">{row.label}</div>
-                                                <div className="text-[13px] font-bold text-emerald-700">{row.goals} goal{row.goals === 1 ? '' : 's'}</div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="text-sm text-slate-400">No scorer data yet for this matchup.</div>
-                                )}
-                            </div>
-
-                            <div className={getSurfaceClass('default', 'p-5 space-y-2')}>
-                                <div className={UI_TEXT.eyebrow}>Next Meeting</div>
-                                {nextMeeting ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setFixtureFocusContext({
-                                                fixtureId: nextMeeting.id,
-                                                opponent: nextMeeting.opponent || '',
-                                                backTab: 'opponentintel'
-                                            });
-                                            onNavigate('fixtures');
-                                        }}
-                                        className="w-full text-left rounded-xl border border-slate-200 bg-slate-50 p-3 hover:border-brand-200"
-                                    >
-                                        <div className="text-sm font-bold text-slate-900">vs {nextMeeting.opponent || 'Opponent'}</div>
-                                        <div className="text-[13px] text-slate-500">
-                                            {nextMeeting.date ? new Date(nextMeeting.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC'} · {renderTimeLabel(nextMeeting.time)} · {nextMeeting.venue || 'Venue TBC'}
+                                            ))}
                                         </div>
-                                    </button>
-                                ) : (
-                                    <div className="text-sm text-slate-400">No upcoming game found for this opponent.</div>
-                                )}
+                                    ) : (
+                                        <div className="text-sm text-slate-400">No imported split yet.</div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="grid gap-3 xl:grid-cols-2">
+                                <div className={getSurfaceClass('default', 'p-5 space-y-3')}>
+                                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                                        <div>
+                                            <div className={UI_TEXT.eyebrow}>Recent H2H Meetings</div>
+                                            <div className={UI_TEXT.helper}>Your latest Exiles results against {selectedOpponent}.</div>
+                                        </div>
+                                        {summary.played ? <span className={getChipClass('info')}>{summary.goalsFor} GF · {summary.goalsAgainst} GA</span> : null}
+                                    </div>
+                                    {playedFixtures.length ? (
+                                        <div className="space-y-2">
+                                            {playedFixtures.slice(0, 5).map((fixture) => {
+                                                const outcome = getFixtureOutcome(fixture);
+                                                return (
+                                                    <div key={`intel-h2h-row-${fixture.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3 flex items-start justify-between gap-3">
+                                                        <div>
+                                                            <div className="text-sm font-bold text-slate-900">
+                                                                Exiles {fixture.homeScore ?? '-'}-{fixture.awayScore ?? '-'} {fixture.opponent || selectedOpponent}
+                                                            </div>
+                                                            <div className="text-[13px] text-slate-500 mt-1">
+                                                                {formatLocalIsoDateLabel(fixture.date, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} · {fixture.venue || 'Venue TBC'}
+                                                                {outcome.isForfeit ? ' · Forfeit' : ''}
+                                                            </div>
+                                                        </div>
+                                                        <span className={getChipClass(outcome.result === 'W' ? 'success' : outcome.result === 'L' ? 'danger' : 'neutral')}>
+                                                            {outcome.result || 'D'}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <div className="text-sm text-slate-400">No completed Exiles meetings yet.</div>
+                                    )}
+                                </div>
+
+                                <div className={getSurfaceClass('intel', 'p-5 space-y-3')}>
+                                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                                        <div>
+                                            <div className={cx(UI_TEXT.eyebrow, 'text-violet-700')}>Imported Overall Results</div>
+                                            <div className={UI_TEXT.helper}>This is where pasted league results become a fact sheet for {selectedOpponent}.</div>
+                                        </div>
+                                        {importedSummary.played ? <span className={getChipClass('info')}>{importedSummary.goalsFor} GF · {importedSummary.goalsAgainst} GA</span> : null}
+                                    </div>
+                                    {importedRecent.length ? (
+                                        <div className="space-y-2">
+                                            {importedRecent.map((row, index) => (
+                                                <div key={`intel-imported-${row.id || row.fingerprint || index}`} className="rounded-xl border border-violet-100 bg-white/90 p-3 flex items-start justify-between gap-3">
+                                                    <div>
+                                                        <div className="text-sm font-bold text-slate-900">{row.homeTeam} {row.homeScore}-{row.awayScore} {row.awayTeam}</div>
+                                                        <div className="text-[13px] text-slate-500 mt-1">
+                                                            {formatLocalIsoDateLabel(row.resultDate || row.date, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                                            {row.venue ? ` · ${row.venue}` : ''}
+                                                            {row.opponentName ? ` · vs ${row.opponentName}` : ''}
+                                                            {row.sideLabel ? ` · ${row.sideLabel}` : ''}
+                                                        </div>
+                                                    </div>
+                                                    <span className={getChipClass(row.result === 'W' ? 'success' : row.result === 'L' ? 'danger' : 'neutral')}>
+                                                        {row.result}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-sm text-slate-400">No imported league results yet for this opponent.</div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="grid gap-3 xl:grid-cols-2">
+                                <div className={getSurfaceClass('default', 'p-5 space-y-3')}>
+                                    <div className={UI_TEXT.eyebrow}>Venue Tendencies</div>
+                                    <div className={UI_TEXT.helper}>Where {selectedOpponent} most often appear in imported results, plus how they tend to do there.</div>
+                                    {importedVenueRows.length ? (
+                                        <div className="space-y-2">
+                                            {importedVenueRows.map((row) => (
+                                                <div key={`intel-venue-${row.venue}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <div className="text-sm font-bold text-slate-900">{row.venue}</div>
+                                                        <span className={getChipClass(row.wins > row.losses ? 'success' : row.losses > row.wins ? 'danger' : 'neutral')}>
+                                                            {row.played} match{row.played === 1 ? '' : 'es'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-[13px] text-slate-600 mt-1">{row.wins}W · {row.draws}D · {row.losses}L</div>
+                                                    <div className="text-[12px] text-slate-500 mt-1">
+                                                        {row.played ? `${(row.goalsFor / row.played).toFixed(1)} GF · ${(row.goalsAgainst / row.played).toFixed(1)} GA per game` : 'No goals data'}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {sameVenueIntel ? (
+                                                <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-900">
+                                                    Next-meeting venue note: at <span className="font-bold">{sameVenueIntel.venue}</span> they are {sameVenueIntel.wins}W · {sameVenueIntel.draws}D · {sameVenueIntel.losses}L across {sameVenueIntel.played} imported match{sameVenueIntel.played === 1 ? '' : 'es'}.
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    ) : (
+                                        <div className="text-sm text-slate-400">No venue trend yet. Import more results to build this.</div>
+                                    )}
+                                </div>
+
+                                <div className={getSurfaceClass('default', 'p-5 space-y-3')}>
+                                    <div className={UI_TEXT.eyebrow}>Exiles Scorers In This Matchup</div>
+                                    <div className={UI_TEXT.helper}>The Exiles players who have hurt this opponent before.</div>
+                                    {dangerPlayers.length ? (
+                                        <div className="space-y-2">
+                                            {dangerPlayers.map((row) => (
+                                                <div key={`intel-danger-${row.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3 flex items-center justify-between">
+                                                    <div className="text-sm font-bold text-slate-900">{row.label}</div>
+                                                    <div className="text-[13px] font-bold text-emerald-700">{row.goals} goal{row.goals === 1 ? '' : 's'}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-sm text-slate-400">No scorer data yet for this matchup.</div>
+                                    )}
+                                </div>
                             </div>
                         </>
                     )}
