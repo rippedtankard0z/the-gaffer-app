@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-89';
+        const MASTER_BUILD_VERSION = '2026.03.15-91';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -516,6 +516,36 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-back-to-more-actions',
+                at: '2026-03-15T17:40:00+08:00',
+                build: '2026.03.15-91',
+                area: 'Navigation',
+                title: 'More sub-pages now include a compact Back to More action in the header',
+                summary: 'Settings, Bank, Squad, Kit, Opponents/Venues, and the rest of the More drill-down pages now use a small top-right Back to More button for a more consistent return path.',
+                changes: [
+                    { label: 'Return navigation', from: 'Some More sub-pages had no direct top-level return action, while others used larger inconsistent buttons', to: 'A shared compact Back to More button in the page header actions area' }
+                ],
+                details: [
+                    'The button is intentionally smaller and more alert-like so it does not compete with the page title or primary actions.',
+                    'Pages that already had other header actions keep them, with Back to More added alongside.'
+                ]
+            },
+            {
+                id: '2026-03-15-matchday-entry-flow',
+                at: '2026-03-15T17:20:00+08:00',
+                build: '2026.03.15-90',
+                area: 'Match Day',
+                title: 'Match Day tab now opens existing match work first instead of jumping into create flow',
+                summary: 'Opening Match Day now prefers a live/current/upcoming fixture and no longer auto-launches the Create Match Day Plan modal when there is nothing suitable yet.',
+                changes: [
+                    { label: 'Match Day entry', from: 'Could auto-open the create-plan modal when entering the tab', to: 'Opens the existing match if one exists, otherwise shows the Match Day empty state with an explicit create button' }
+                ],
+                details: [
+                    'This makes the Match Day tab behave more like a workspace and less like a forced wizard.',
+                    'It also avoids false jumps into create mode while fixture data is still settling.'
+                ]
+            },
             {
                 id: '2026-03-15-sponsors-crash-fix',
                 at: '2026-03-15T17:05:00+08:00',
@@ -2212,6 +2242,12 @@
             extra
         );
 
+        const renderBackToMoreAction = (onNavigate = () => {}) => (
+            <button onClick={() => onNavigate('more')} className={getButtonClass('danger', 'xs', 'rounded-full px-3')}>
+                Back to More
+            </button>
+        );
+
         const FORM_CONTROL_CLASS = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-[14px] text-slate-700 shadow-sm shadow-slate-900/5 outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100';
 
         const inferPageHeaderTone = (title = '') => {
@@ -2759,7 +2795,8 @@
             positionDefinitions,
             kitDetails = [],
             saveKitDetail,
-            kitSizeOptions = []
+            kitSizeOptions = [],
+            onNavigate = () => {}
         }) => {
             const [players, setPlayers] = useState([]);
             const [balances, setBalances] = useState({});
@@ -3357,10 +3394,13 @@
                         title="Squad"
                         subtitle="Manage roster, debts, and attendance."
                         actions={
-                            <button onClick={() => setIsAddOpen(true)} className={getButtonClass('primary', 'md')}>
-                                <Icon name="Plus" size={16} />
-                                New Player
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {renderBackToMoreAction(onNavigate)}
+                                <button onClick={() => setIsAddOpen(true)} className={getButtonClass('primary', 'md')}>
+                                    <Icon name="Plus" size={16} />
+                                    New Player
+                                </button>
+                            </div>
                         }
                     />
                     <div className="px-1 space-y-3">
@@ -5524,15 +5564,6 @@
                     matchdayAutoOpenDoneRef.current = true;
                     return;
                 }
-                if (!fixtures.length) {
-                    if (!matchdayQuickCreatePromptedRef.current) {
-                        matchdayQuickCreatePromptedRef.current = true;
-                        matchdayAutoOpenDoneRef.current = true;
-                        pushFixtureToast('No upcoming game yet. Create one to open Match Day planner.', 'info');
-                        openAddFixtureModal({ openAfterCreate: true });
-                    }
-                    return;
-                }
                 const target = pickMatchdayFixture(fixtures);
                 matchdayAutoOpenDoneRef.current = true;
                 if (target) {
@@ -5541,10 +5572,9 @@
                 }
                 if (!matchdayQuickCreatePromptedRef.current) {
                     matchdayQuickCreatePromptedRef.current = true;
-                    pushFixtureToast('Create an upcoming game to start Match Day.', 'info');
-                    openAddFixtureModal({ openAfterCreate: true });
+                    pushFixtureToast('No current Match Day game found yet. Use Create Upcoming Game when you are ready.', 'info');
                 }
-            }, [launchMode, fixtures, selectedFixture?.id, pickMatchdayFixture, openAddFixtureModal, pushFixtureToast]);
+            }, [launchMode, fixtures, selectedFixture?.id, pickMatchdayFixture, pushFixtureToast]);
 
             const formatNetValue = (val = 0) => {
                 if (val > 0) return `+${formatCurrency(Math.abs(val))}`;
@@ -10132,7 +10162,7 @@
         };
 
         // --- FINANCES MODULE ---
-        const Finances = ({ categories, setCategories }) => {
+        const Finances = ({ categories, setCategories, onNavigate = () => {} }) => {
             const [transactions, setTransactions] = useState([]);
             const [breakdown, setBreakdown] = useState({});
             const [participations, setParticipations] = useState([]);
@@ -10537,10 +10567,13 @@
                         title="Bank"
                         subtitle="Cashflow, ledger, receivables, and exports."
                         actions={
-                            <button onClick={() => setIsAddTxOpen(true)} className={getButtonClass('primary', 'md')}>
-                                <Icon name="Plus" size={18} />
-                                Add Entry
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {renderBackToMoreAction(onNavigate)}
+                                <button onClick={() => setIsAddTxOpen(true)} className={getButtonClass('primary', 'md')}>
+                                    <Icon name="Plus" size={18} />
+                                    Add Entry
+                                </button>
+                            </div>
                         }
                     />
 
@@ -12078,11 +12111,7 @@
                     <PageHeader
                         title="App Log"
                         subtitle="Everything we shipped recently, explained clearly for club use."
-                        actions={(
-                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
-                                Back to More
-                            </button>
-                        )}
+                        actions={renderBackToMoreAction(onNavigate)}
                     />
 
                     <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft space-y-4">
@@ -12271,11 +12300,7 @@
                     <PageHeader
                         title="User Guide"
                         subtitle="A practical, step-by-step playbook for running Exiles in the app."
-                        actions={(
-                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
-                                Back to More
-                            </button>
-                        )}
+                        actions={renderBackToMoreAction(onNavigate)}
                     />
 
                     <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft space-y-4">
@@ -12484,11 +12509,7 @@
                     <PageHeader
                         title="App & Database"
                         subtitle="Build details and database access controls."
-                        actions={(
-                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
-                                Back to More
-                            </button>
-                        )}
+                        actions={renderBackToMoreAction(onNavigate)}
                     />
                     <div className="bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft space-y-3">
                         <div className="flex items-start justify-between gap-3">
@@ -12592,11 +12613,7 @@
                     <PageHeader
                         title="Man of the Match Board"
                         subtitle="Every recorded MOTM award."
-                        actions={(
-                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
-                                Back to More
-                            </button>
-                        )}
+                        actions={renderBackToMoreAction(onNavigate)}
                     />
                     <div className="bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft space-y-3">
                         <div className="flex items-center justify-between">
@@ -13595,11 +13612,7 @@
                         title="Reports"
                         tone="report"
                         subtitle="Monthly P&L, cashflow, fixture profitability, and fee collection."
-                        actions={(
-                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
-                                Back to More
-                            </button>
-                        )}
+                        actions={renderBackToMoreAction(onNavigate)}
                     />
                     <div className="grid grid-cols-2 gap-2">
                         <div className={getSurfaceClass(cashSummary.net >= 0 ? 'success' : 'critical', 'p-3.5')}>
@@ -14622,11 +14635,7 @@
                     <PageHeader
                         title="Opponent Intel"
                         subtitle="Head-to-head trends, danger players, and a win snapshot."
-                        actions={(
-                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
-                                Back to More
-                            </button>
-                        )}
+                        actions={renderBackToMoreAction(onNavigate)}
                     />
                     <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
                         <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Opponent</label>
@@ -14872,11 +14881,7 @@
                     <PageHeader
                         title="Sponsors & Revenue"
                         subtitle="Deals, schedules, outstanding invoices, and ROI."
-                        actions={(
-                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
-                                Back to More
-                            </button>
-                        )}
+                        actions={renderBackToMoreAction(onNavigate)}
                     />
                     {!db.sponsors && (
                         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
@@ -15183,11 +15188,7 @@
                     <PageHeader
                         title="Audit & Controls"
                         subtitle="Change log, reconciliation health, and backup integrity."
-                        actions={(
-                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
-                                Back to More
-                            </button>
-                        )}
+                        actions={renderBackToMoreAction(onNavigate)}
                     />
                     {isLoading ? (
                         <div className="bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-400">Running audit scan...</div>
@@ -16312,6 +16313,7 @@
                                     : 'Manage clubs, league records, and head-to-head history.')
                                 : 'Manage clubs, venues, and performance records.'
                         }
+                        actions={renderBackToMoreAction(onNavigate)}
                     />
 
                     {!lockView && (
@@ -17457,9 +17459,12 @@
                         title="Kit"
                         subtitle="Track assignments, free numbers, and order queue."
                         actions={
-                            <button onClick={() => importInputRef.current?.click()} className={getButtonClass(isImportingKit ? 'subtle' : 'primary', 'md')} disabled={isImportingKit}>
-                                {isImportingKit ? 'Importing…' : 'Upload Kit CSV'}
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {renderBackToMoreAction(onNavigate)}
+                                <button onClick={() => importInputRef.current?.click()} className={getButtonClass(isImportingKit ? 'subtle' : 'primary', 'md')} disabled={isImportingKit}>
+                                    {isImportingKit ? 'Importing…' : 'Upload Kit CSV'}
+                                </button>
+                            </div>
                         }
                     />
                     <div className={getSurfaceClass('roster', 'p-4 space-y-2')}>
@@ -17758,7 +17763,7 @@
             { key: 'settings', label: 'Settings & tags' }
         ];
 
-        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, kitSizeOptions = [], setKitSizeOptions, kitNumberLimit, setKitNumberLimit, hideHeader = false }) => {
+        const Settings = ({ categories, setCategories, itemCategories, setItemCategories, seasonCategories, setSeasonCategories, opponents, setOpponents, venues, setVenues, referees, setReferees, refDefaults, setRefDefaults, positionDefinitions, setPositionDefinitions, kitSizeOptions = [], setKitSizeOptions, kitNumberLimit, setKitNumberLimit, hideHeader = false, onNavigate = () => {} }) => {
             const [newCat, setNewCat] = useState('');
             const [newItemCat, setNewItemCat] = useState('');
             const importInputRef = useRef(null);
@@ -19999,7 +20004,7 @@
 
             return (
                 <div className="space-y-6 pb-20 animate-fade-in">
-                    <PageHeader title="Settings" subtitle="Backups, imports, repair tools, and app controls." />
+                    <PageHeader title="Settings" subtitle="Backups, imports, repair tools, and app controls." actions={renderBackToMoreAction(onNavigate)} />
 
                     <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">App Refresh</div>
@@ -21356,7 +21361,7 @@
                             )}
                             {activeTab === 'finances' && (
                                 <div data-tab-container="finances">
-                                    <Finances categories={categories} setCategories={setCategories} />
+                                    <Finances categories={categories} setCategories={setCategories} onNavigate={navigate} />
                                 </div>
                             )}
                             {activeTab === 'fixtures' && (
@@ -21377,6 +21382,7 @@
                                         kitDetails={kitDetails}
                                         saveKitDetail={saveKitDetail}
                                         kitSizeOptions={kitSizeOptions}
+                                        onNavigate={navigate}
                                     />
                                 </div>
                             )}
@@ -21452,7 +21458,7 @@
                             )}
                             {activeTab === 'settings' && (
                                 <div data-tab-container="settings">
-                                    <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} />
+                                    <Settings categories={categories} setCategories={setCategories} itemCategories={itemCategories} setItemCategories={setItemCategories} seasonCategories={seasonCategories} setSeasonCategories={setSeasonCategories} opponents={opponents} setOpponents={setOpponents} venues={venues} setVenues={setVenues} referees={referees} setReferees={setReferees} refDefaults={refDefaults} setRefDefaults={setRefDefaults} positionDefinitions={positionDefinitions} setPositionDefinitions={setPositionDefinitions} kitSizeOptions={kitSizeOptions} setKitSizeOptions={setKitSizeOptions} kitNumberLimit={kitNumberLimit} setKitNumberLimit={setKitNumberLimit} onNavigate={navigate} />
                                 </div>
                             )}
                             <div className="pt-6 text-center text-[10px] text-slate-400">
