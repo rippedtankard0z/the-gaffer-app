@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-97';
+        const MASTER_BUILD_VERSION = '2026.03.15-98';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -143,6 +143,66 @@
             return fixture?.matchdayPlan || fixture?.matchdayPlanner || {};
         };
 
+        const MONTH_NAME_TO_INDEX = Object.freeze({
+            jan: 0,
+            feb: 1,
+            mar: 2,
+            apr: 3,
+            may: 4,
+            jun: 5,
+            jul: 6,
+            aug: 7,
+            sep: 8,
+            oct: 9,
+            nov: 10,
+            dec: 11
+        });
+
+        const padDatePart = (value) => String(value).padStart(2, '0');
+
+        const dateToLocalIso = (date) => {
+            if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+            return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
+        };
+
+        const parseLooseLocalDateToIso = (value = '') => {
+            const text = (value || '').toString().trim();
+            if (!text) return '';
+            const monthFirst = text.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/);
+            if (monthFirst) {
+                const monthIndex = MONTH_NAME_TO_INDEX[monthFirst[1].slice(0, 3).toLowerCase()];
+                const day = Number(monthFirst[2]);
+                const year = Number(monthFirst[3]);
+                if (monthIndex >= 0 && Number.isFinite(day) && Number.isFinite(year)) {
+                    return `${year}-${padDatePart(monthIndex + 1)}-${padDatePart(day)}`;
+                }
+            }
+            const dayFirst = text.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+            if (dayFirst) {
+                const monthIndex = MONTH_NAME_TO_INDEX[dayFirst[2].slice(0, 3).toLowerCase()];
+                const day = Number(dayFirst[1]);
+                const year = Number(dayFirst[3]);
+                if (monthIndex >= 0 && Number.isFinite(day) && Number.isFinite(year)) {
+                    return `${year}-${padDatePart(monthIndex + 1)}-${padDatePart(day)}`;
+                }
+            }
+            const parsed = new Date(text);
+            return dateToLocalIso(parsed);
+        };
+
+        const formatLocalIsoDateLabel = (value = '', locale = 'en-GB', options = { day: '2-digit', month: '2-digit', year: 'numeric' }) => {
+            const iso = (value || '').toString().trim();
+            if (!iso) return 'Date TBC';
+            const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (!match) {
+                const parsed = new Date(iso);
+                if (Number.isNaN(parsed.getTime())) return iso;
+                return parsed.toLocaleDateString(locale, options);
+            }
+            const safeLocalDate = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0);
+            return safeLocalDate.toLocaleDateString(locale, options);
+        };
+
         const makeOpponentResultFingerprint = (row = {}) => {
             return [
                 (row.resultDate || '').toString().trim(),
@@ -168,11 +228,11 @@
                 const matchupLine = lines[index + 3];
                 const scoreMatch = (scoreLine || '').match(/^(\d+)\s*-\s*(\d+)$/);
                 const matchupMatch = (matchupLine || '').match(/^(.+?)\s+VS\s+(.+)$/i);
-                const parsedDate = Date.parse(dateLine || '');
-                if (!scoreMatch || !matchupMatch || Number.isNaN(parsedDate)) continue;
+                const resultDate = parseLooseLocalDateToIso(dateLine || '');
+                if (!scoreMatch || !matchupMatch || !resultDate) continue;
                 const homeTeam = resolveCanonicalTeamName(matchupMatch[1], knownTeamNames, resolvedAliasLookup);
                 const awayTeam = resolveCanonicalTeamName(matchupMatch[2], knownTeamNames, resolvedAliasLookup);
-                const resultDate = new Date(parsedDate).toISOString().slice(0, 10);
+                if (!resultDate) continue;
                 parsed.push({
                     id: `import-result-${parsed.length + 1}`,
                     resultDate,
@@ -657,6 +717,23 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-16-import-review-raw-date-ignore',
+                at: '2026-03-16T00:12:00+08:00',
+                build: '2026.03.15-98',
+                area: 'Import results',
+                title: 'Imported results review now keeps local dates, shows raw pasted text, and supports ignore/remove',
+                summary: 'Month-name dates now stay on the correct day, each review card shows the original pasted block, and you can ignore or remove rows before saving, including duplicates.',
+                changes: [
+                    { label: 'Date handling', from: 'Dates like March 7, 2026 could shift back a day during ISO conversion', to: 'Imported month-name dates are now parsed as local calendar dates so the review keeps 07/03/2026 as 07/03/2026' },
+                    { label: 'Review visibility', from: 'The review only showed mapped values', to: 'Each row now includes the original pasted date, score, venue, and matchup text for verification' },
+                    { label: 'Import control', from: 'Rows could only be imported or skipped indirectly', to: 'Each row can now be ignored or removed before save, and duplicates are clearly marked' }
+                ],
+                details: [
+                    'The import count now excludes ignored rows as well as duplicates.',
+                    'This makes it much easier to sanity-check whether the parser is mapping the right clubs before anything is saved.'
+                ]
+            },
             {
                 id: '2026-03-15-game-score-action-restore',
                 at: '2026-03-15T23:58:00+08:00',
@@ -8101,8 +8178,8 @@
                     const canonicalTeamB = resolveCanonicalTeamName(teamB, knownLegacyTeamNames, legacyAliasLookup);
                     const exilesA = isPrimaryClubTeamName(canonicalTeamA);
                     const exilesB = isPrimaryClubTeamName(canonicalTeamB);
-                    const dt = new Date(dateLine);
-                    const isoDate = isNaN(dt.getTime()) ? new Date().toISOString().split('T')[0] : dt.toISOString().split('T')[0];
+                    const isoDate = parseLooseLocalDateToIso(dateLine) || dateToLocalIso(new Date());
+                    const rawBlock = [dateLine, scoreLine, venueLine, matchLine].join('\n');
 
                     if (exilesA || exilesB) {
                         const ourScore = exilesA ? leftScore : rightScore;
@@ -8116,7 +8193,13 @@
                             opponentRaw: exilesA ? teamB : teamA,
                             venue: venueLine,
                             homeScore: ourScore,
-                            awayScore: theirScore
+                            awayScore: theirScore,
+                            rawDateLine: dateLine,
+                            rawScoreLine: scoreLine,
+                            rawVenueLine: venueLine,
+                            rawMatchLine: matchLine,
+                            rawBlock,
+                            ignored: false
                         };
                     }
 
@@ -8134,7 +8217,13 @@
                         id: `legacy-result-${index + 1}`,
                         importMode: 'intel',
                         ...intelRow,
-                        fingerprint: makeOpponentResultFingerprint(intelRow)
+                        fingerprint: makeOpponentResultFingerprint(intelRow),
+                        rawDateLine: dateLine,
+                        rawScoreLine: scoreLine,
+                        rawVenueLine: venueLine,
+                        rawMatchLine: matchLine,
+                        rawBlock,
+                        ignored: false
                     };
                 }).filter(Boolean);
             };
@@ -8217,7 +8306,7 @@
                 let addedFixtures = 0;
                 let addedIntel = 0;
                 for(const item of resultsPreview) {
-                    if (item.duplicate) continue;
+                    if (item.duplicate || item.ignored) continue;
                     let venueName = item.venue;
                     let venueId = item.venueId || null;
                     if(item.venue === '__new__') {
@@ -10282,7 +10371,7 @@
                                 {resultsPreview.map((r, idx) => (
                                     <div key={idx} className="p-3 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
                                         <div className="flex justify-between items-center text-sm font-bold text-slate-800">
-                                            <span>{new Date(r.resultDate || r.date).toLocaleDateString()} · {r.homeScore} - {r.awayScore}</span>
+                                            <span>{formatLocalIsoDateLabel(r.resultDate || r.date)} · {r.homeScore} - {r.awayScore}</span>
                                             <span className={`text-xs font-bold ${r.duplicate ? 'text-amber-700' : 'text-slate-500'}`}>{r.importMode === 'fixture' ? `Game #${idx + 1}` : `League Result #${idx + 1}`}</span>
                                         </div>
                                         <div className="flex flex-wrap gap-2">
@@ -10290,6 +10379,27 @@
                                                 {r.importMode === 'fixture' ? 'Save into Games' : 'Save into Opponent Intel'}
                                             </span>
                                             {r.duplicate ? <span className={getChipClass('warning')}>{r.duplicateReason}</span> : <span className={getChipClass('success')}>New</span>}
+                                            {r.ignored ? <span className={getChipClass('neutral')}>Ignored</span> : null}
+                                        </div>
+                                        <div className="rounded-xl border border-slate-200 bg-white/80 p-3 space-y-1">
+                                            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Original pasted text</div>
+                                            <pre className="whitespace-pre-wrap break-words text-[12px] leading-5 text-slate-700 font-mono">{r.rawBlock || [r.rawDateLine, r.rawScoreLine, r.rawVenueLine, r.rawMatchLine].filter(Boolean).join('\n')}</pre>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setResultsPreview(prev => prev.map((x, i) => i === idx ? ({ ...x, ignored: !x.ignored }) : x))}
+                                                className={getButtonClass(r.ignored ? 'secondary' : 'warning', 'sm')}
+                                            >
+                                                {r.ignored ? 'Undo ignore' : 'Ignore'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setResultsPreview(prev => prev.filter((_, i) => i !== idx))}
+                                                className={getButtonClass('danger', 'sm')}
+                                            >
+                                                Remove
+                                            </button>
                                         </div>
                                         {r.importMode === 'fixture' ? (
                                             <>
@@ -10298,26 +10408,26 @@
                                                         <label className="text-[11px] font-bold text-slate-600 uppercase">Opponent</label>
                                                         <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.opponentId ? `id:${r.opponentId}` : (r.opponent || '')} onChange={e => {
                                                             const val = e.target.value;
-                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, opponent: val.startsWith('id:') ? opponents.find(o=>o.id===Number(val.replace('id:','')))?.name : val, opponentId: val.startsWith('id:') ? Number(val.replace('id:','')) : null, duplicate: false }) : x));
+                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, opponent: val.startsWith('id:') ? opponents.find(o=>o.id===Number(val.replace('id:','')))?.name : val, opponentId: val.startsWith('id:') ? Number(val.replace('id:','')) : null, duplicate: false, ignored: false }) : x));
                                                         }}>
                                                             {opponents.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(o => <option key={o.id} value={`id:${o.id}`}>{o.name}</option>)}
                                                             <option value="__new__">Create new...</option>
                                                         </select>
                                                         {r.opponent === '__new__' && (
-                                                            <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New opponent name" value={r.newOpponent} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newOpponent: e.target.value, duplicate: false }) : x))} />
+                                                            <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New opponent name" value={r.newOpponent} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newOpponent: e.target.value, duplicate: false, ignored: false }) : x))} />
                                                         )}
                                                     </div>
                                                     <div>
                                                         <label className="text-[11px] font-bold text-slate-600 uppercase">Venue</label>
                                                         <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.venueId ? `id:${r.venueId}` : (r.venue || '')} onChange={e => {
-                                                            const val = e.target.value;
-                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val, venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null }) : x));
+                    const val = e.target.value;
+                    setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val, venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null, ignored: false }) : x));
                                                         }}>
                                                             {venues.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v => <option key={v.id} value={`id:${v.id}`}>{v.name}</option>)}
                                                             <option value="__new__">Create new...</option>
                                                         </select>
                                                         {r.venue === '__new__' && (
-                                                            <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New venue name" value={r.newVenue} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newVenue: e.target.value }) : x))} />
+                                                            <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New venue name" value={r.newVenue} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newVenue: e.target.value, ignored: false }) : x))} />
                                                         )}
                                                     </div>
                                                 </div>
@@ -10330,7 +10440,7 @@
                                                         <label className="text-[11px] font-bold text-slate-600 uppercase">Home team</label>
                                                         <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.homeTeam || ''} onChange={e => {
                                                             const val = e.target.value;
-                                                            setResultsPreview(prev => prev.map((x, i) => i === idx ? ({ ...x, homeTeam: val, duplicate: false }) : x));
+                                                            setResultsPreview(prev => prev.map((x, i) => i === idx ? ({ ...x, homeTeam: val, duplicate: false, ignored: false }) : x));
                                                         }}>
                                                             {Array.from(new Set([r.homeTeam, ...(r.teamChoices || [])])).filter(Boolean).map(option => (
                                                                 <option key={`legacy-home-${idx}-${option}`} value={option}>{option}</option>
@@ -10342,7 +10452,7 @@
                                                         <label className="text-[11px] font-bold text-slate-600 uppercase">Away team</label>
                                                         <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.awayTeam || ''} onChange={e => {
                                                             const val = e.target.value;
-                                                            setResultsPreview(prev => prev.map((x, i) => i === idx ? ({ ...x, awayTeam: val, duplicate: false }) : x));
+                                                            setResultsPreview(prev => prev.map((x, i) => i === idx ? ({ ...x, awayTeam: val, duplicate: false, ignored: false }) : x));
                                                         }}>
                                                             {Array.from(new Set([r.awayTeam, ...(r.teamChoices || [])])).filter(Boolean).map(option => (
                                                                 <option key={`legacy-away-${idx}-${option}`} value={option}>{option}</option>
@@ -10354,13 +10464,13 @@
                                                         <label className="text-[11px] font-bold text-slate-600 uppercase">Venue</label>
                                                         <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.venueId ? `id:${r.venueId}` : (r.venue || '')} onChange={e => {
                                                             const val = e.target.value;
-                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val, venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null }) : x));
+                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val, venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null, ignored: false }) : x));
                                                         }}>
                                                             {venues.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v => <option key={v.id} value={`id:${v.id}`}>{v.name}</option>)}
                                                             <option value="__new__">Create new...</option>
                                                         </select>
                                                         {r.venue === '__new__' && (
-                                                            <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New venue name" value={r.newVenue} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newVenue: e.target.value }) : x))} />
+                                                            <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New venue name" value={r.newVenue} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newVenue: e.target.value, ignored: false }) : x))} />
                                                         )}
                                                     </div>
                                                 </div>
@@ -10371,7 +10481,7 @@
                                 ))}
                                 <div className="flex gap-2 sticky bottom-0 bg-white/80 backdrop-blur-sm pt-2">
                                     <button onClick={() => { setResultsPreview([]); }} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Back</button>
-                                    <button onClick={commitResultsPreview} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg">Save</button>
+                                    <button onClick={commitResultsPreview} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg">Save {resultsPreview.filter(row => !row.duplicate && !row.ignored).length || 0}</button>
                                 </div>
                             </div>
                         )}
