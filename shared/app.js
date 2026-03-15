@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-107';
+        const MASTER_BUILD_VERSION = '2026.03.15-109';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,38 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-opponent-intel-venues-crash-fix',
+                at: '2026-03-15T21:05:00+08:00',
+                build: '2026.03.15-109',
+                area: 'Opponent intel',
+                title: 'Opponent Intel now loads venue data correctly during result review',
+                summary: 'Opponent Intel was crashing because its import-review venue matching expected a venues list that the screen never loaded. It now loads venues alongside opponents and imported results.',
+                changes: [
+                    { label: 'Data loading', from: 'Opponent Intel loaded fixtures, players, opponents, and imported results only', to: 'It now loads venues too, so import review can safely match pitches without crashing' }
+                ],
+                details: [
+                    'This is the direct fix for the ReferenceError saying venues could not be found when opening Opponent Intel.',
+                    'The refresh listener now also reloads Opponent Intel when venues change.'
+                ]
+            },
+            {
+                id: '2026-03-15-matchday-prep-scout-step',
+                at: '2026-03-15T20:35:00+08:00',
+                build: '2026.03.15-108',
+                area: 'Match day',
+                title: 'Match Day now opens with an opponent scout step before player selection',
+                summary: 'Match Day setup now starts with a proper pre-game scout screen that reuses opponent-intel signals before you move into roster mapping and lineup work.',
+                changes: [
+                    { label: 'Flow', from: 'Match Day setup opened straight into player list and mapping', to: 'The first setup step is now Scout, followed by Roster, Lineup, Live, and Squad' },
+                    { label: 'Prep visibility', from: 'Opponent intel lived in a separate section away from match setup', to: 'Key head-to-head, imported-form, venue, and prep notes now appear directly inside Match Day before player selection' },
+                    { label: 'Setup cues', from: 'Roster-status chips showed even before any prep context', to: 'The prep step now feels distinct, and roster-resolution chips only appear once you are actually in roster or lineup' }
+                ],
+                details: [
+                    'This is designed to feel like a real pre-match briefing rather than another admin page.',
+                    'It uses the same opponent-results and head-to-head signals already captured elsewhere in the app.'
+                ]
+            },
             {
                 id: '2026-03-15-opponent-intel-scout-dashboard',
                 at: '2026-03-15T18:45:00+08:00',
@@ -4370,6 +4402,7 @@
             FT: 'FT'
         };
         const MATCHDAY_FLOW_STEPS = [
+            { id: 'prep', label: 'Scout' },
             { id: 'roster', label: 'Roster' },
             { id: 'lineup', label: 'Lineup' },
             { id: 'live', label: 'Live' },
@@ -4836,6 +4869,7 @@
             const [selectedFixtureBackTab, setSelectedFixtureBackTab] = useState('');
             const [liveExitPrompt, setLiveExitPrompt] = useState({ open: false });
             const [players, setPlayers] = useState([]);
+            const [opponentResults, setOpponentResults] = useState([]);
             const [squad, setSquad] = useState({});
             const [fixtureTx, setFixtureTx] = useState([]);
             const [allTx, setAllTx] = useState([]);
@@ -5055,7 +5089,7 @@
                 setFixtureDetailTab('overview');
                 setIsFixtureAdvancedOpen(false);
                 setPaymentAmountEditor({ open: false, playerId: null, playerName: '', amount: '' });
-                setMatchdayFlowTab('roster');
+                setMatchdayFlowTab('prep');
                 setMatchdayLineupView('pitch');
                 setMatchdayLiveView('pitch');
                 setMatchdayShowAllRosterRows(false);
@@ -5148,7 +5182,7 @@
             const [plannerSubRecommendationsModal, setPlannerSubRecommendationsModal] = useState({ open: false, trigger: '', minute: 0, recommendations: [] });
             const [plannerSwapFlash, setPlannerSwapFlash] = useState({ slotA: '', slotB: '', token: 0 });
             const [plannerLiveNowMs, setPlannerLiveNowMs] = useState(() => Date.now());
-            const [matchdayFlowTab, setMatchdayFlowTab] = useState('roster');
+            const [matchdayFlowTab, setMatchdayFlowTab] = useState('prep');
             const [matchdayLineupView, setMatchdayLineupView] = useState('pitch');
             const [matchdayLiveView, setMatchdayLiveView] = useState('pitch');
             const [matchdayShowAllRosterRows, setMatchdayShowAllRosterRows] = useState(false);
@@ -5719,6 +5753,168 @@
                     lastFive: played.slice(0, 5)
                 };
             }, [fixtures, selectedFixture?.id, selectedFixture?.opponent]);
+            const plannerOpponentKey = useMemo(() => normalizeEntityText(selectedFixture?.opponent || ''), [selectedFixture?.opponent]);
+            const plannerOpponentKnownNames = useMemo(() => {
+                const names = new Set(['BRITISH EXILES']);
+                fixtures.forEach((fixture) => {
+                    const name = (fixture.opponent || '').trim();
+                    if (name) names.add(name);
+                });
+                opponents.forEach((opponent) => {
+                    const name = (opponent?.name || '').trim();
+                    if (name) names.add(name);
+                });
+                opponentResults.forEach((row) => {
+                    const home = (row.homeTeamCanonical || row.homeTeam || '').trim();
+                    const away = (row.awayTeamCanonical || row.awayTeam || '').trim();
+                    if (home) names.add(home);
+                    if (away) names.add(away);
+                });
+                return Array.from(names);
+            }, [fixtures, opponents, opponentResults]);
+            const plannerOpponentAliasLookup = useMemo(() => {
+                const lookup = buildTeamAliasLookup(plannerOpponentKnownNames);
+                opponents.forEach((row) => {
+                    const canonicalName = (row?.name || '').trim();
+                    if (!canonicalName) return;
+                    const aliases = Array.isArray(row?.aliases)
+                        ? row.aliases
+                        : (row?.aliases || '').toString().split(',').map(item => item.trim()).filter(Boolean);
+                    aliases.forEach((alias) => {
+                        const key = normalizeEntityText(alias);
+                        if (key) lookup[key] = canonicalName;
+                    });
+                });
+                return lookup;
+            }, [plannerOpponentKnownNames, opponents]);
+            const plannerResolveOpponentName = useCallback((rawName = '') => {
+                const clean = (rawName || '').trim();
+                const normalized = normalizeEntityText(clean);
+                return plannerOpponentAliasLookup[normalized] || clean;
+            }, [plannerOpponentAliasLookup]);
+            const plannerImportedRows = useMemo(() => {
+                if (!plannerOpponentKey) return [];
+                return [...opponentResults]
+                    .filter((row) => {
+                        const home = normalizeEntityText(plannerResolveOpponentName(row.homeTeamCanonical || row.homeTeam || ''));
+                        const away = normalizeEntityText(plannerResolveOpponentName(row.awayTeamCanonical || row.awayTeam || ''));
+                        return home === plannerOpponentKey || away === plannerOpponentKey;
+                    })
+                    .sort((a, b) => {
+                        const aTime = Date.parse(a.resultDate || a.date || '') || 0;
+                        const bTime = Date.parse(b.resultDate || b.date || '') || 0;
+                        return bTime - aTime;
+                    })
+                    .map((row) => {
+                        const resolvedHome = plannerResolveOpponentName(row.homeTeamCanonical || row.homeTeam || '');
+                        const resolvedAway = plannerResolveOpponentName(row.awayTeamCanonical || row.awayTeam || '');
+                        const isHome = normalizeEntityText(resolvedHome) === plannerOpponentKey;
+                        const goalsFor = Number(isHome ? row.homeScore : row.awayScore) || 0;
+                        const goalsAgainst = Number(isHome ? row.awayScore : row.homeScore) || 0;
+                        return {
+                            ...row,
+                            resolvedHome,
+                            resolvedAway,
+                            isHome,
+                            goalsFor,
+                            goalsAgainst,
+                            result: goalsFor > goalsAgainst ? 'W' : goalsFor < goalsAgainst ? 'L' : 'D'
+                        };
+                    });
+            }, [opponentResults, plannerOpponentKey, plannerResolveOpponentName]);
+            const plannerImportedSummary = useMemo(() => {
+                return plannerImportedRows.reduce((acc, row) => {
+                    acc.played += 1;
+                    if (row.result === 'W') acc.wins += 1;
+                    else if (row.result === 'D') acc.draws += 1;
+                    else acc.losses += 1;
+                    acc.goalsFor += row.goalsFor;
+                    acc.goalsAgainst += row.goalsAgainst;
+                    return acc;
+                }, { played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0 });
+            }, [plannerImportedRows]);
+            const plannerImportedRecent = useMemo(() => plannerImportedRows.slice(0, 5), [plannerImportedRows]);
+            const plannerImportedProfile = useMemo(() => {
+                const empty = { played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0 };
+                if (!plannerImportedSummary.played) {
+                    return { avgFor: 0, avgAgainst: 0, home: { ...empty }, away: { ...empty } };
+                }
+                const split = { home: { ...empty }, away: { ...empty } };
+                plannerImportedRows.forEach((row) => {
+                    const bucket = row.isHome ? split.home : split.away;
+                    bucket.played += 1;
+                    if (row.result === 'W') bucket.wins += 1;
+                    else if (row.result === 'D') bucket.draws += 1;
+                    else bucket.losses += 1;
+                    bucket.goalsFor += row.goalsFor;
+                    bucket.goalsAgainst += row.goalsAgainst;
+                });
+                return {
+                    avgFor: plannerImportedSummary.goalsFor / plannerImportedSummary.played,
+                    avgAgainst: plannerImportedSummary.goalsAgainst / plannerImportedSummary.played,
+                    home: split.home,
+                    away: split.away
+                };
+            }, [plannerImportedRows, plannerImportedSummary]);
+            const plannerLatestMeeting = useMemo(() => plannerVsHistory.lastFive[0] || null, [plannerVsHistory]);
+            const plannerSameVenueIntel = useMemo(() => {
+                const venueKey = normalizeEntityText(selectedFixture?.venue || '');
+                if (!venueKey) return null;
+                const rows = plannerImportedRows.filter((row) => normalizeEntityText(row.venue || '') === venueKey);
+                if (!rows.length) return null;
+                return rows.reduce((acc, row) => {
+                    acc.played += 1;
+                    if (row.result === 'W') acc.wins += 1;
+                    else if (row.result === 'D') acc.draws += 1;
+                    else acc.losses += 1;
+                    return acc;
+                }, { venue: selectedFixture?.venue || 'Venue TBC', played: 0, wins: 0, draws: 0, losses: 0 });
+            }, [plannerImportedRows, selectedFixture?.venue]);
+            const plannerPrepWinProbability = useMemo(() => {
+                const winEdge = plannerVsHistory.played ? (plannerVsHistory.wins - plannerVsHistory.losses) / plannerVsHistory.played : 0;
+                const importedRecentPoints = plannerImportedRecent.reduce((sum, row) => sum + (row.result === 'W' ? 3 : row.result === 'D' ? 1 : 0), 0);
+                const importedFormRatio = plannerImportedRecent.length ? importedRecentPoints / (plannerImportedRecent.length * 3) : 0.5;
+                const importedGoalEdge = plannerImportedSummary.played ? (plannerImportedSummary.goalsFor - plannerImportedSummary.goalsAgainst) / plannerImportedSummary.played : 0;
+                const raw = 50 + (winEdge * 24) + ((importedFormRatio - 0.5) * 18) + (importedGoalEdge * 2);
+                return Math.max(8, Math.min(92, Math.round(raw)));
+            }, [plannerVsHistory, plannerImportedRecent, plannerImportedSummary]);
+            const plannerPrepOutlook = useMemo(() => {
+                if (plannerPrepWinProbability >= 68) return { label: 'Exiles edge', tone: 'success' };
+                if (plannerPrepWinProbability >= 56) return { label: 'Slight Exiles edge', tone: 'info' };
+                if (plannerPrepWinProbability <= 32) return { label: 'Tough matchup', tone: 'danger' };
+                if (plannerPrepWinProbability <= 44) return { label: 'Slight opponent edge', tone: 'warning' };
+                return { label: 'Looks balanced', tone: 'neutral' };
+            }, [plannerPrepWinProbability]);
+            const plannerPrepSignals = useMemo(() => {
+                const notes = [];
+                if (plannerVsHistory.played) {
+                    notes.push(`Head-to-head: ${plannerVsHistory.wins}W · ${plannerVsHistory.draws}D · ${plannerVsHistory.losses}L for Exiles.`);
+                } else {
+                    notes.push('No completed Exiles head-to-head is logged yet, so lean more on imported opponent form.');
+                }
+                if (plannerImportedSummary.played) {
+                    const away = plannerImportedProfile.away;
+                    if (away.played >= 2) {
+                        notes.push(
+                            away.wins > away.losses
+                                ? `They travel well: ${away.wins}W · ${away.draws}D · ${away.losses}L away from home in imported results.`
+                                : `Their away form is patchier: ${away.wins}W · ${away.draws}D · ${away.losses}L away from home.`
+                        );
+                    }
+                    if (plannerImportedProfile.avgFor >= 2) {
+                        notes.push(`They are scoring ${plannerImportedProfile.avgFor.toFixed(1)} goals per imported game, so expect real attacking threat.`);
+                    } else if (plannerImportedProfile.avgFor <= 1) {
+                        notes.push(`They are only scoring ${plannerImportedProfile.avgFor.toFixed(1)} goals per imported game, so output has been limited lately.`);
+                    }
+                }
+                if (plannerSameVenueIntel?.played) {
+                    notes.push(`${plannerSameVenueIntel.venue}: ${plannerSameVenueIntel.wins}W · ${plannerSameVenueIntel.draws}D · ${plannerSameVenueIntel.losses}L across ${plannerSameVenueIntel.played} imported visit${plannerSameVenueIntel.played === 1 ? '' : 's'}.`);
+                }
+                if (plannerLatestMeeting) {
+                    notes.push(`Last meeting: ${formatLocalIsoDateLabel(plannerLatestMeeting.date, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} · Exiles ${plannerLatestMeeting.homeScore ?? '-'}-${plannerLatestMeeting.awayScore ?? '-'} ${selectedFixture?.opponent || 'Opponent'}.`);
+                }
+                return notes.slice(0, 5);
+            }, [plannerImportedProfile, plannerImportedSummary, plannerLatestMeeting, plannerSameVenueIntel, plannerVsHistory, selectedFixture?.opponent]);
             const plannerPlayerOptions = useMemo(() => {
                 return [...players].sort((a, b) => {
                     const aName = `${a.firstName || ''} ${a.lastName || ''}`.trim().toLowerCase();
@@ -5859,12 +6055,16 @@
 
             const refresh = async () => {
                 await waitForDb();
-                const list = await db.fixtures.orderBy('date').reverse().toArray();
+                const [list, pList, txs, intelRows] = await Promise.all([
+                    db.fixtures.orderBy('date').reverse().toArray(),
+                    db.players.toArray(),
+                    db.transactions.toArray(),
+                    db.opponentResults ? db.opponentResults.toArray() : []
+                ]);
                 setFixtures(list);
-                const pList = await db.players.toArray();
                 setPlayers(pList);
-                const txs = await db.transactions.toArray();
                 setAllTx(txs);
+                setOpponentResults(intelRows);
                 if(seasonCategories?.length && !selectedSeason) setSelectedSeason(seasonCategories[0]);
 
                 const focusBackTab = localStorage.getItem(FOCUS_FIXTURE_BACK_TAB_KEY) || '';
@@ -5901,7 +6101,7 @@
                 refresh();
                 const handler = (e) => {
                     if (!e.detail || !e.detail.name) return;
-                    if (['fixtures', 'players', 'transactions', 'participations', 'opponents', 'venues', 'referees'].includes(e.detail.name)) {
+                    if (['fixtures', 'players', 'transactions', 'participations', 'opponents', 'opponentResults', 'venues', 'referees'].includes(e.detail.name)) {
                         refresh();
                     }
                 };
@@ -9006,7 +9206,7 @@
                                         </div>
                                     )}
 
-                                    {matchdayFlowTab !== 'live' && (
+                                    {['roster', 'lineup'].includes(matchdayFlowTab) && (
                                         <div className="flex flex-wrap gap-2 text-[12px]">
                                             <span className={getChipClass(plannerCanAdvanceFromRoster ? 'success' : 'warning')}>
                                                 Ready {plannerResolutionSummary.resolved}/{plannerResolutionSummary.total || 0}
@@ -9021,6 +9221,142 @@
                                             <span className={getChipClass('neutral')}>Bench {plannerBenchAllIds.length}</span>
                                             <span className={getChipClass('neutral')}>On pitch {plannerOnPitchIds.length}</span>
                                         </div>
+                                    )}
+
+                                    {matchdayFlowTab === 'prep' && (
+                                    <>
+                                    <div className="space-y-3">
+                                        <div className="rounded-[28px] border border-emerald-200 bg-gradient-to-br from-emerald-950 via-slate-950 to-slate-900 px-5 py-5 text-white shadow-soft">
+                                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                                                <div className="min-w-0">
+                                                    <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-100/75 font-bold">Scout report</div>
+                                                    <div className="mt-2 text-2xl font-display font-bold leading-tight">vs {selectedFixture?.opponent || 'Opponent'}</div>
+                                                    <div className="mt-2 text-[13px] text-white/70">
+                                                        {formatLocalIsoDateLabel(selectedFixture?.date, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} · {renderTimeLabel(selectedFixture?.time)} · {selectedFixture?.venue || 'Venue TBC'}
+                                                    </div>
+                                                </div>
+                                                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-right">
+                                                    <div className="text-[11px] uppercase tracking-[0.18em] text-white/60 font-bold">Outlook</div>
+                                                    <div className={cx('mt-2 text-lg font-display font-bold', plannerPrepOutlook.tone === 'success' ? 'text-emerald-300' : plannerPrepOutlook.tone === 'danger' ? 'text-rose-300' : plannerPrepOutlook.tone === 'warning' ? 'text-amber-200' : 'text-white')}>
+                                                        {plannerPrepOutlook.label}
+                                                    </div>
+                                                    <div className="mt-1 text-[13px] text-white/70">{plannerPrepWinProbability}% prep edge</div>
+                                                </div>
+                                            </div>
+                                            <div className="mt-4 flex flex-wrap gap-2">
+                                                <span className={getChipClass(plannerVsHistory.played ? 'info' : 'neutral')}>{plannerVsHistory.played ? `${plannerVsHistory.wins}W · ${plannerVsHistory.draws}D · ${plannerVsHistory.losses}L H2H` : 'No H2H yet'}</span>
+                                                <span className={getChipClass(plannerImportedSummary.played ? 'success' : 'neutral')}>{plannerImportedSummary.played ? `${plannerImportedSummary.wins}W · ${plannerImportedSummary.draws}D · ${plannerImportedSummary.losses}L imported` : 'No imported form yet'}</span>
+                                                <span className={getChipClass(plannerSameVenueIntel?.played ? 'warning' : 'neutral')}>{plannerSameVenueIntel?.played ? `${plannerSameVenueIntel.played} venue result${plannerSameVenueIntel.played === 1 ? '' : 's'}` : 'No venue trend yet'}</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className={getSurfaceClass('default', 'p-4')}>
+                                                <div className={UI_TEXT.eyebrow}>Latest Meeting</div>
+                                                <div className="mt-2 text-lg font-bold text-slate-900">
+                                                    {plannerLatestMeeting ? `Exiles ${plannerLatestMeeting.homeScore ?? '-'}-${plannerLatestMeeting.awayScore ?? '-'} ${selectedFixture?.opponent || 'Opponent'}` : 'No completed game yet'}
+                                                </div>
+                                                <div className={cx(UI_TEXT.meta, 'mt-1')}>
+                                                    {plannerLatestMeeting ? formatLocalIsoDateLabel(plannerLatestMeeting.date, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'This will appear after the first finished meeting'}
+                                                </div>
+                                            </div>
+                                            <div className={getSurfaceClass('intel', 'p-4')}>
+                                                <div className={cx(UI_TEXT.eyebrow, 'text-violet-700')}>Imported Form</div>
+                                                <div className="mt-2 text-lg font-bold text-slate-900">
+                                                    {plannerImportedSummary.played ? `${plannerImportedProfile.avgFor.toFixed(1)} GF · ${plannerImportedProfile.avgAgainst.toFixed(1)} GA` : 'Need imports'}
+                                                </div>
+                                                <div className={cx(UI_TEXT.meta, 'mt-1')}>
+                                                    {plannerImportedSummary.played ? `${plannerImportedSummary.played} result${plannerImportedSummary.played === 1 ? '' : 's'} in intel` : 'Paste league results to build this'}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className={getSurfaceClass('report', 'p-5 space-y-3')}>
+                                            <div>
+                                                <div className={cx(UI_TEXT.eyebrow, 'text-amber-700')}>Prep Notes</div>
+                                                <div className={UI_TEXT.helper}>This is the briefing before you choose players and set the pitch.</div>
+                                            </div>
+                                            {plannerPrepSignals.length ? (
+                                                <div className="space-y-2">
+                                                    {plannerPrepSignals.map((note, index) => (
+                                                        <div key={`matchday-prep-note-${index}`} className="rounded-xl border border-amber-100 bg-white/85 px-3 py-3 text-sm text-slate-700">
+                                                            {note}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-500">
+                                                    No deeper scout signals yet. Add more opponent results over time and this briefing will get smarter.
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="grid gap-3 xl:grid-cols-2">
+                                            <div className={getSurfaceClass('default', 'p-4 space-y-2')}>
+                                                <div className={UI_TEXT.eyebrow}>Recent Imported Results</div>
+                                                {plannerImportedRecent.length ? (
+                                                    plannerImportedRecent.slice(0, 3).map((row, index) => (
+                                                        <div key={`matchday-prep-imported-${row.id || row.fingerprint || index}`} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 flex items-start justify-between gap-3">
+                                                            <div>
+                                                                <div className="text-sm font-bold text-slate-900">{row.resolvedHome || row.homeTeam} {row.homeScore}-{row.awayScore} {row.resolvedAway || row.awayTeam}</div>
+                                                                <div className="text-[13px] text-slate-500 mt-1">
+                                                                    {formatLocalIsoDateLabel(row.resultDate || row.date, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                                                    {row.venue ? ` · ${row.venue}` : ''}
+                                                                </div>
+                                                            </div>
+                                                            <span className={getChipClass(row.result === 'W' ? 'success' : row.result === 'L' ? 'danger' : 'neutral')}>{row.result}</span>
+                                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <div className="text-sm text-slate-400">No imported opponent results yet.</div>
+                                                )}
+                                            </div>
+                                            <div className={getSurfaceClass('default', 'p-4 space-y-2')}>
+                                                <div className={UI_TEXT.eyebrow}>Travel Split</div>
+                                                {plannerImportedSummary.played ? (
+                                                    <>
+                                                        <div className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-3">
+                                                            <div className="text-sm font-bold text-slate-900">Away</div>
+                                                            <div className="mt-1 text-[13px] text-slate-700">{plannerImportedProfile.away.wins}W · {plannerImportedProfile.away.draws}D · {plannerImportedProfile.away.losses}L</div>
+                                                        </div>
+                                                        <div className="rounded-xl border border-violet-100 bg-violet-50 px-3 py-3">
+                                                            <div className="text-sm font-bold text-slate-900">Home</div>
+                                                            <div className="mt-1 text-[13px] text-slate-700">{plannerImportedProfile.home.wins}W · {plannerImportedProfile.home.draws}D · {plannerImportedProfile.home.losses}L</div>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <div className="text-sm text-slate-400">No imported split yet.</div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    if (selectedFixture?.id) {
+                                                        setFixtureFocusContext({
+                                                            fixtureId: selectedFixture.id,
+                                                            opponent: selectedFixture.opponent || '',
+                                                            backTab: 'matchday'
+                                                        });
+                                                    }
+                                                    onNavigate && onNavigate('opponentintel');
+                                                }}
+                                                className={getButtonClass('secondary', 'md')}
+                                            >
+                                                Open full Opponent Intel
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setMatchdayFlowTab('roster')}
+                                                className={getButtonClass('primary', 'md')}
+                                            >
+                                                Continue: Players
+                                            </button>
+                                        </div>
+                                    </div>
+                                    </>
                                     )}
 
                                     {matchdayFlowTab === 'roster' && (
@@ -15317,6 +15653,7 @@
             const [fixtures, setFixtures] = useState([]);
             const [players, setPlayers] = useState([]);
             const [savedOpponents, setSavedOpponents] = useState([]);
+            const [venues, setVenues] = useState([]);
             const [opponentResults, setOpponentResults] = useState([]);
             const [selectedOpponent, setSelectedOpponent] = useState('');
             const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -15330,15 +15667,17 @@
                 setIsLoading(true);
                 try {
                     await waitForDb();
-                    const [fixtureRows, playerRows, opponentRows, resultRows] = await Promise.all([
+                    const [fixtureRows, playerRows, opponentRows, venueRows, resultRows] = await Promise.all([
                         db.fixtures.toArray(),
                         db.players.toArray(),
                         db.opponents.toArray(),
+                        db.venues.toArray(),
                         db.opponentResults ? db.opponentResults.toArray() : []
                     ]);
                     setFixtures(fixtureRows);
                     setPlayers(playerRows);
                     setSavedOpponents(opponentRows);
+                    setVenues(venueRows);
                     setOpponentResults(resultRows);
                 } finally {
                     setIsLoading(false);
@@ -15349,7 +15688,7 @@
                 loadIntel();
                 const handler = (event) => {
                     if (!event?.detail?.name) return;
-                    if (['fixtures', 'players', 'opponents', 'opponentResults'].includes(event.detail.name)) {
+                    if (['fixtures', 'players', 'opponents', 'venues', 'opponentResults'].includes(event.detail.name)) {
                         loadIntel();
                     }
                 };
