@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-86';
+        const MASTER_BUILD_VERSION = '2026.03.15-87';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -516,6 +516,24 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-page-mode-colors',
+                at: '2026-03-15T05:10:00+08:00',
+                build: '2026.03.15-87',
+                area: 'UI',
+                title: 'Main areas now use stronger page-mode colour identities',
+                summary: 'Home, Games, Match Day, Bank, Reports, and More now feel more distinct through shared mode colours, with Match Day shifted into a greener football-led live mode and navigation reflecting each area more clearly.',
+                changes: [
+                    { label: 'Games', from: 'Shared blue/green accents that could blur into other sections', to: 'A cooler indigo fixture-management mode' },
+                    { label: 'Match Day', from: 'Warm amber/rose accents', to: 'A greener live football mode with a more sport-like tab identity' },
+                    { label: 'Reports', from: 'Blue-led analytical accents', to: 'Amber/slate review tones that feel more audit-oriented' },
+                    { label: 'Navigation', from: 'One dark active tab style everywhere', to: 'Active tab colours now reflect the section you are in' }
+                ],
+                details: [
+                    'The shared header and surface tokens were updated so the look stays consistent across the app instead of relying on one-off color overrides.',
+                    'This pass was intentionally done through the theme system so it is easy to tune back if any section feels too strong.'
+                ]
+            },
             {
                 id: '2026-03-15-full-ui-rollout-phase-two',
                 at: '2026-03-15T03:30:00+08:00',
@@ -2080,10 +2098,10 @@
             muted: 'rounded-[1.5rem] border border-slate-200 bg-slate-50/85 shadow-soft',
             dashboard: 'rounded-[1.5rem] border border-slate-200/80 bg-white/95 shadow-soft backdrop-blur-sm',
             roster: 'rounded-[1.5rem] border border-violet-100/90 bg-gradient-to-br from-violet-50/70 via-white to-emerald-50/55 shadow-soft',
-            fixtures: 'rounded-[1.5rem] border border-emerald-100/90 bg-white shadow-soft',
-            matchday: 'rounded-[1.5rem] border border-amber-100/90 bg-white shadow-soft',
-            finance: 'rounded-[1.5rem] border border-sky-100/90 bg-white shadow-soft',
-            report: 'rounded-[1.5rem] border border-sky-100/90 bg-white shadow-soft',
+            fixtures: 'rounded-[1.5rem] border border-indigo-100/90 bg-gradient-to-br from-indigo-50/45 via-white to-sky-50/35 shadow-soft',
+            matchday: 'rounded-[1.5rem] border border-emerald-100/90 bg-gradient-to-br from-emerald-50/60 via-white to-lime-50/35 shadow-soft',
+            finance: 'rounded-[1.5rem] border border-teal-100/90 bg-gradient-to-br from-teal-50/50 via-white to-cyan-50/35 shadow-soft',
+            report: 'rounded-[1.5rem] border border-amber-100/90 bg-gradient-to-br from-amber-50/50 via-white to-slate-50/45 shadow-soft',
             intel: 'rounded-[1.5rem] border border-violet-100/90 bg-gradient-to-br from-violet-50/65 via-white to-sky-50/55 shadow-soft',
             admin: 'rounded-[1.5rem] border border-slate-200/80 bg-gradient-to-br from-slate-50/85 via-white to-slate-100/55 shadow-soft',
             info: 'rounded-[1.5rem] border border-sky-200 bg-sky-50/85 shadow-soft',
@@ -2112,12 +2130,23 @@
         const PAGE_HEADER_TONES = {
             default: 'bg-white/94 border-slate-200/80',
             roster: 'bg-gradient-to-r from-violet-50 via-white to-emerald-50 border-violet-100',
-            fixtures: 'bg-gradient-to-r from-emerald-50 via-white to-teal-50 border-emerald-100',
-            matchday: 'bg-gradient-to-r from-amber-50 via-white to-rose-50 border-amber-100',
-            finance: 'bg-gradient-to-r from-sky-50 via-white to-indigo-50 border-sky-100',
-            report: 'bg-gradient-to-r from-blue-50 via-white to-cyan-50 border-sky-100',
+            fixtures: 'bg-gradient-to-r from-indigo-50 via-white to-sky-50 border-indigo-100',
+            matchday: 'bg-gradient-to-r from-emerald-50 via-white to-lime-50 border-emerald-100',
+            finance: 'bg-gradient-to-r from-teal-50 via-white to-cyan-50 border-teal-100',
+            report: 'bg-gradient-to-r from-amber-50 via-white to-slate-50 border-amber-100',
             admin: 'bg-gradient-to-r from-slate-50 via-white to-slate-100 border-slate-200/90',
             intel: 'bg-gradient-to-r from-violet-50 via-white to-fuchsia-50 border-violet-100'
+        };
+
+        const NAV_MODE_VARIANTS = {
+            dashboard: 'bg-gradient-to-br from-sky-700 via-blue-700 to-indigo-700 text-white shadow-lg shadow-sky-900/20',
+            fixtures: 'bg-gradient-to-br from-indigo-700 via-indigo-600 to-sky-600 text-white shadow-lg shadow-indigo-900/20',
+            matchday: 'bg-gradient-to-br from-emerald-700 via-emerald-600 to-lime-600 text-white shadow-lg shadow-emerald-900/20',
+            more: 'bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 text-white shadow-lg shadow-slate-900/20',
+            finance: 'bg-gradient-to-br from-teal-700 via-cyan-700 to-sky-700 text-white shadow-lg shadow-teal-900/20',
+            report: 'bg-gradient-to-br from-amber-500 via-amber-600 to-orange-600 text-white shadow-lg shadow-amber-900/20',
+            admin: 'bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 text-white shadow-lg shadow-slate-900/20',
+            intel: 'bg-gradient-to-br from-violet-700 via-fuchsia-700 to-pink-700 text-white shadow-lg shadow-violet-900/20'
         };
 
         const getButtonClass = (variant = 'secondary', size = 'md', extra = '') => cx(
@@ -2164,6 +2193,17 @@
             if (['more', 'settings', 'app log', 'user guide', 'app & database', 'audit & controls'].includes(normalized)) return 'admin';
             if (['opponent intel', 'opponents', 'venues'].includes(normalized)) return 'intel';
             return 'default';
+        };
+
+        const inferTabMode = (tab = '') => {
+            const normalized = (tab || '').toString().trim().toLowerCase();
+            if (normalized === 'dashboard') return 'dashboard';
+            if (normalized === 'fixtures') return 'fixtures';
+            if (normalized === 'matchday') return 'matchday';
+            if (normalized === 'finances') return 'finance';
+            if (normalized === 'reports') return 'report';
+            if (normalized === 'opponentintel' || normalized === 'opponents' || normalized === 'venues') return 'intel';
+            return 'admin';
         };
 
         const useModalDialogs = () => {
@@ -11756,7 +11796,7 @@
             const items = [
                 { id: 'dashboard', icon: 'LayoutGrid', label: 'Home' },
                 { id: 'fixtures', icon: 'Calendar', label: 'Games' },
-                { id: 'matchday', icon: 'History', label: 'Match Day' },
+                { id: 'matchday', icon: 'Goal', fallbackIcon: 'History', label: 'Match Day' },
                 { id: 'more', icon: 'MoreHorizontal', label: 'More' }
             ];
 
@@ -11765,11 +11805,14 @@
                     <nav className="glass-panel mx-auto mb-2 w-full max-w-md flex items-center justify-between gap-1.5 p-2 rounded-[1.75rem] border border-slate-200/80 shadow-glass">
                         {items.map(item => {
                             const isActive = item.id === 'more' ? isMoreSection : activeTab === item.id;
+                            const activeMode = item.id === 'more' ? inferTabMode(activeTab) : inferTabMode(item.id);
+                            const activeClass = NAV_MODE_VARIANTS[activeMode] || NAV_MODE_VARIANTS.admin;
+                            const iconName = window?.lucide?.icons?.[item.icon] ? item.icon : (item.fallbackIcon || item.icon);
                             return (
                                 <button key={item.id} onClick={() => setTab(item.id)}
-                                    className={`relative flex flex-col items-center justify-center flex-1 h-[4.1rem] rounded-[1.15rem] transition-all duration-300 ${isActive ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/15' : 'text-slate-500 hover:text-slate-700 hover:bg-white/70'}`}
+                                    className={`relative flex flex-col items-center justify-center flex-1 h-[4.1rem] rounded-[1.15rem] transition-all duration-300 ${isActive ? activeClass : 'text-slate-500 hover:text-slate-700 hover:bg-white/70'}`}
                                 >
-                                    <Icon name={item.icon} size={20} strokeWidth={isActive ? 2.5 : 2} className="mb-1" />
+                                    <Icon name={iconName} size={20} strokeWidth={isActive ? 2.5 : 2} className="mb-1" />
                                     <span className="text-[12px] font-bold tracking-wide">{item.label}</span>
                                 </button>
                             );
