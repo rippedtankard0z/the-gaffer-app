@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-91';
+        const MASTER_BUILD_VERSION = '2026.03.15-94';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -13,6 +13,7 @@
         const VERSION_STORAGE_KEY = 'gaffer:lastBuildVersion';
         const LAST_BACKUP_AT_KEY = 'gaffer:lastBackupAt';
         const FOCUS_FIXTURE_BACK_TAB_KEY = 'gaffer:focusFixtureBackTab';
+        const FOCUS_FIXTURE_NOW_EVENT = 'gaffer:focusFixtureNow';
         console.info('[Gaffer] Loaded build version:', APP_VERSION);
 
         // --- 1. Database & Domain Models (Firestore) ---
@@ -49,6 +50,137 @@
                 .toLowerCase()
                 .replace(/\s+/g, ' ')
                 .trim();
+        };
+
+        const normalizeEntityText = (value = '') => {
+            return (value || '')
+                .toString()
+                .toLowerCase()
+                .replace(/[^a-z0-9\s]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+        };
+
+        const TEAM_ALIAS_OVERRIDES = Object.freeze({
+            'bfa': 'BRAZILIAN FOOTBALL ASSOCIATION',
+            'brazilian football association': 'BRAZILIAN FOOTBALL ASSOCIATION',
+            'gsos': 'GERMAN SWISS OLD STARS',
+            'german swiss old stars': 'GERMAN SWISS OLD STARS',
+            'hibs': 'HIBS LEGENDS',
+            'hibs legends': 'HIBS LEGENDS',
+            'cbd': 'CBD RANGERS',
+            'cbd rangers': 'CBD RANGERS',
+            'gaelics': 'GAELIC LIONS',
+            'gaelic lions': 'GAELIC LIONS',
+            'gaulois sc': 'GAULOIS SPORTS CLUB',
+            'gaulois sports club': 'GAULOIS SPORTS CLUB',
+            'olympique gaulois': 'GAULOIS SPORTS CLUB',
+            'british club bulldogs': 'BRITISH CLUB',
+            'british club': 'BRITISH CLUB',
+            'chong hwa': 'CHONG HUA',
+            'chong hua': 'CHONG HUA',
+            'pirates': 'PIRATES FC',
+            'pirates fc': 'PIRATES FC',
+            'scc': 'SCC',
+            'british exiles': 'BRITISH EXILES'
+        });
+
+        const TEAM_ALIAS_BLOCKLIST = new Set(['fc', 'sc', 'afc', 'club', 'football', 'association', 'sports', 'sport', 'team']);
+
+        const toTitleishTeamName = (name = '') => {
+            return (name || '')
+                .toString()
+                .trim()
+                .split(/\s+/)
+                .filter(Boolean)
+                .map((word) => {
+                    if (word.length <= 4 && /^[A-Z0-9]+$/.test(word.toUpperCase())) return word.toUpperCase();
+                    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+                })
+                .join(' ');
+        };
+
+        const buildTeamAliasLookup = (knownTeamNames = []) => {
+            const lookup = { ...TEAM_ALIAS_OVERRIDES };
+            const register = (alias, canonical) => {
+                const aliasKey = normalizeEntityText(alias);
+                const canonicalLabel = (canonical || '').toString().trim();
+                if (!aliasKey || !canonicalLabel) return;
+                lookup[aliasKey] = canonicalLabel;
+            };
+            knownTeamNames.forEach((name) => {
+                const clean = (name || '').toString().trim();
+                if (!clean) return;
+                const normalized = normalizeEntityText(clean);
+                const tokens = normalized.split(' ').filter(Boolean);
+                register(clean, clean);
+                if (tokens.length) {
+                    const acronym = tokens
+                        .filter(token => !TEAM_ALIAS_BLOCKLIST.has(token))
+                        .map(token => token.charAt(0))
+                        .join('');
+                    if (acronym.length >= 2) register(acronym.toUpperCase(), clean);
+                    if (tokens[0] && tokens[0].length <= 4) register(tokens[0].toUpperCase(), clean);
+                }
+            });
+            return lookup;
+        };
+
+        const resolveCanonicalTeamName = (rawName = '', knownTeamNames = [], aliasLookup = null) => {
+            const clean = (rawName || '').toString().replace(/\s+/g, ' ').trim();
+            if (!clean) return '';
+            const lookup = aliasLookup || buildTeamAliasLookup(knownTeamNames);
+            const normalized = normalizeEntityText(clean);
+            return lookup[normalized] || toTitleishTeamName(clean);
+        };
+
+        const makeOpponentResultFingerprint = (row = {}) => {
+            return [
+                (row.resultDate || '').toString().trim(),
+                normalizeEntityText(row.homeTeam || row.homeTeamCanonical || ''),
+                normalizeEntityText(row.awayTeam || row.awayTeamCanonical || ''),
+                Number(row.homeScore ?? 0),
+                Number(row.awayScore ?? 0)
+            ].join('|');
+        };
+
+        const parseImportedOpponentResults = (rawText = '', knownTeamNames = [], aliasLookup = null) => {
+            const lines = (rawText || '')
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(Boolean);
+            if (!lines.length) return [];
+            const resolvedAliasLookup = aliasLookup || buildTeamAliasLookup(knownTeamNames);
+            const parsed = [];
+            for (let index = 0; index < lines.length; index += 1) {
+                const dateLine = lines[index];
+                const scoreLine = lines[index + 1];
+                const venueLine = lines[index + 2];
+                const matchupLine = lines[index + 3];
+                const scoreMatch = (scoreLine || '').match(/^(\d+)\s*-\s*(\d+)$/);
+                const matchupMatch = (matchupLine || '').match(/^(.+?)\s+VS\s+(.+)$/i);
+                const parsedDate = Date.parse(dateLine || '');
+                if (!scoreMatch || !matchupMatch || Number.isNaN(parsedDate)) continue;
+                const homeTeam = resolveCanonicalTeamName(matchupMatch[1], knownTeamNames, resolvedAliasLookup);
+                const awayTeam = resolveCanonicalTeamName(matchupMatch[2], knownTeamNames, resolvedAliasLookup);
+                const resultDate = new Date(parsedDate).toISOString().slice(0, 10);
+                parsed.push({
+                    id: `import-result-${parsed.length + 1}`,
+                    resultDate,
+                    venue: (venueLine || '').toString().trim(),
+                    homeTeam,
+                    awayTeam,
+                    homeScore: Number(scoreMatch[1]),
+                    awayScore: Number(scoreMatch[2]),
+                    homeTeamRaw: matchupMatch[1].trim(),
+                    awayTeamRaw: matchupMatch[2].trim()
+                });
+                index += 3;
+            }
+            return parsed.map((row) => ({
+                ...row,
+                fingerprint: makeOpponentResultFingerprint(row)
+            }));
         };
 
         const normalizeFeeCategory = (value = '') => {
@@ -516,6 +648,41 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-live-match-global-header',
+                at: '2026-03-15T21:25:00+08:00',
+                build: '2026.03.15-93',
+                area: 'Match Day',
+                title: 'A global live match header now follows you across the app',
+                summary: 'When a match is live, the app now shows a compact top bar with the opponent, score, phase, and running clock. Tap it from anywhere to jump straight back into the active match.',
+                changes: [
+                    { label: 'Live reassurance', from: 'No permanent sign that a live match was still running after leaving Match Day', to: 'A persistent top-of-app live header appears while a match is active' },
+                    { label: 'Resume path', from: 'Returning to the live match depended on navigating back into Match Day manually', to: 'One tap on the live header opens the active fixture directly' }
+                ],
+                details: [
+                    'The header only appears when matchdayPlanner.live.active is true on a fixture.',
+                    'It uses the stored live clock and score, so it stays in sync with the same match state Match Day already uses.',
+                    'The bar respects the safe area, stays compact, and hides completely when no live match is running.'
+                ]
+            },
+            {
+                id: '2026-03-15-opponent-result-import-alias-review',
+                at: '2026-03-15T20:05:00+08:00',
+                build: '2026.03.15-92',
+                area: 'Opponent intel',
+                title: 'Imported opposition results now support team-name review, alias matching, and remembered club names',
+                summary: 'You can now paste external league results into Opponent Intel, review fuzzy or changed team names against the registered club directory, and remember aliases so future imports recognise them automatically.',
+                changes: [
+                    { label: 'Imported results store', from: 'No dedicated store for non-Exiles league results', to: 'Imported opposition results are saved as their own collection and included in backup/import flows' },
+                    { label: 'Team-name review', from: 'Imported names were taken as-is', to: 'Each pasted home and away team can be matched to a registered club before import' },
+                    { label: 'Alias memory', from: 'Known renames and abbreviations had to be rechecked each time', to: 'Remembered aliases are stored against opponent records for future imports' }
+                ],
+                details: [
+                    'The importer now does a sense check using saved opponent names, known abbreviations, and fuzzy matching before you import.',
+                    'Examples like GSOS to German Swiss Old Stars and Olympique Gaulois to Gaulois Sports Club are recognised more intelligently.',
+                    'Opponent records can also store aliases directly, so the importer becomes smarter over time instead of starting from scratch each paste.'
+                ]
+            },
             {
                 id: '2026-03-15-back-to-more-actions',
                 at: '2026-03-15T17:40:00+08:00',
@@ -3914,6 +4081,15 @@
             WB_2H: 'Water break (2H)',
             FT: 'Full-time'
         };
+        const MATCHDAY_LIVE_PHASE_SHORT_LABELS = {
+            PRE: 'PRE',
+            LIVE_1H: '1H',
+            WB_1H: 'WB',
+            HT: 'HT',
+            LIVE_2H: '2H',
+            WB_2H: 'WB',
+            FT: 'FT'
+        };
         const MATCHDAY_FLOW_STEPS = [
             { id: 'roster', label: 'Roster' },
             { id: 'lineup', label: 'Lineup' },
@@ -5452,6 +5628,18 @@
                 window.addEventListener('gaffer-firestore-update', handler);
                 return () => window.removeEventListener('gaffer-firestore-update', handler);
             }, []);
+
+            useEffect(() => {
+                const handler = (event) => {
+                    const fixtureId = String(event?.detail?.fixtureId || '').trim();
+                    if (!fixtureId) return;
+                    const backTab = (event?.detail?.backTab || '').trim();
+                    const target = fixtures.find(fixture => String(fixture.id) === fixtureId);
+                    if (target) openMatchMode(target, { backTab });
+                };
+                window.addEventListener(FOCUS_FIXTURE_NOW_EVENT, handler);
+                return () => window.removeEventListener(FOCUS_FIXTURE_NOW_EVENT, handler);
+            }, [fixtures]);
 
             const openMatchMode = async (fixture, options = {}) => {
                 setSelectedFixtureBackTab((options?.backTab || '').trim());
@@ -14476,20 +14664,29 @@
             const [fixtures, setFixtures] = useState([]);
             const [players, setPlayers] = useState([]);
             const [savedOpponents, setSavedOpponents] = useState([]);
+            const [opponentResults, setOpponentResults] = useState([]);
             const [selectedOpponent, setSelectedOpponent] = useState('');
+            const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+            const [resultsPasteText, setResultsPasteText] = useState('');
+            const [resultsPreview, setResultsPreview] = useState([]);
+            const [resultsImportFeedback, setResultsImportFeedback] = useState({ tone: 'info', message: '' });
+            const [isImportingResults, setIsImportingResults] = useState(false);
+            const opponentResultsAvailable = !!db.opponentResults;
 
             const loadIntel = useCallback(async () => {
                 setIsLoading(true);
                 try {
                     await waitForDb();
-                    const [fixtureRows, playerRows, opponentRows] = await Promise.all([
+                    const [fixtureRows, playerRows, opponentRows, resultRows] = await Promise.all([
                         db.fixtures.toArray(),
                         db.players.toArray(),
-                        db.opponents.toArray()
+                        db.opponents.toArray(),
+                        db.opponentResults ? db.opponentResults.toArray() : []
                     ]);
                     setFixtures(fixtureRows);
                     setPlayers(playerRows);
                     setSavedOpponents(opponentRows);
+                    setOpponentResults(resultRows);
                 } finally {
                     setIsLoading(false);
                 }
@@ -14499,7 +14696,7 @@
                 loadIntel();
                 const handler = (event) => {
                     if (!event?.detail?.name) return;
-                    if (['fixtures', 'players', 'opponents'].includes(event.detail.name)) {
+                    if (['fixtures', 'players', 'opponents', 'opponentResults'].includes(event.detail.name)) {
                         loadIntel();
                     }
                 };
@@ -14515,18 +14712,50 @@
                 return map;
             }, [players]);
 
-            const opponentOptions = useMemo(() => {
-                const set = new Set();
+            const knownTeamNames = useMemo(() => {
+                const names = new Set(['BRITISH EXILES']);
                 fixtures.forEach((fixture) => {
                     const name = (fixture.opponent || '').trim();
-                    if (name) set.add(name);
+                    if (name) names.add(name);
                 });
                 savedOpponents.forEach((row) => {
                     const name = (row.name || '').trim();
-                    if (name) set.add(name);
+                    if (name) names.add(name);
                 });
-                return Array.from(set).sort((a, b) => a.localeCompare(b));
-            }, [fixtures, savedOpponents]);
+                opponentResults.forEach((row) => {
+                    const home = (row.homeTeam || row.homeTeamCanonical || '').trim();
+                    const away = (row.awayTeam || row.awayTeamCanonical || '').trim();
+                    if (home) names.add(home);
+                    if (away) names.add(away);
+                });
+                return Array.from(names).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+            }, [fixtures, savedOpponents, opponentResults]);
+
+            const opponentAliasLookup = useMemo(() => {
+                const lookup = buildTeamAliasLookup(knownTeamNames);
+                savedOpponents.forEach((row) => {
+                    const canonicalName = (row?.name || '').trim();
+                    if (!canonicalName) return;
+                    const aliases = Array.isArray(row?.aliases)
+                        ? row.aliases
+                        : (row?.aliases || '').toString().split(',').map(item => item.trim()).filter(Boolean);
+                    aliases.forEach((alias) => {
+                        const key = normalizeEntityText(alias);
+                        if (key) lookup[key] = canonicalName;
+                    });
+                });
+                return lookup;
+            }, [knownTeamNames, savedOpponents]);
+
+            const opponentOptions = useMemo(() => {
+                return knownTeamNames
+                    .filter(name => normalizeEntityText(name) !== normalizeEntityText('BRITISH EXILES'))
+                    .sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+            }, [knownTeamNames]);
+
+            const registeredTeamChoices = useMemo(() => {
+                return ['BRITISH EXILES', ...opponentOptions];
+            }, [opponentOptions]);
 
             useEffect(() => {
                 if (!opponentOptions.length) {
@@ -14538,17 +14767,22 @@
                 }
             }, [opponentOptions, selectedOpponent]);
 
-            const h2hFixtures = useMemo(() => {
-                const target = (selectedOpponent || '').trim().toLowerCase();
-                if (!target) return [];
-                return [...fixtures]
-                    .filter(fixture => (fixture.opponent || '').trim().toLowerCase() === target)
-                    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-            }, [fixtures, selectedOpponent]);
+            useEffect(() => {
+                if (!isImportModalOpen) return;
+                setResultsPreview([]);
+                setResultsImportFeedback({ tone: 'info', message: '' });
+            }, [resultsPasteText, isImportModalOpen]);
 
-            const playedFixtures = useMemo(() => {
-                return h2hFixtures.filter(fixture => getFixtureOutcome(fixture).played);
-            }, [h2hFixtures]);
+            const selectedOpponentKey = useMemo(() => normalizeEntityText(selectedOpponent), [selectedOpponent]);
+
+            const h2hFixtures = useMemo(() => {
+                if (!selectedOpponentKey) return [];
+                return [...fixtures]
+                    .filter(fixture => normalizeEntityText(fixture.opponent || '') === selectedOpponentKey)
+                    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+            }, [fixtures, selectedOpponentKey]);
+
+            const playedFixtures = useMemo(() => h2hFixtures.filter(fixture => getFixtureOutcome(fixture).played), [h2hFixtures]);
 
             const summary = useMemo(() => {
                 const base = { played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0 };
@@ -14596,14 +14830,13 @@
             }, [playedFixtures, playerLookup]);
 
             const nextMeeting = useMemo(() => {
-                const target = (selectedOpponent || '').trim().toLowerCase();
-                if (!target) return null;
+                if (!selectedOpponentKey) return null;
                 const upcoming = fixtures
-                    .filter(fixture => (fixture.opponent || '').trim().toLowerCase() === target)
+                    .filter(fixture => normalizeEntityText(fixture.opponent || '') === selectedOpponentKey)
                     .filter(fixture => !getFixtureOutcome(fixture).played)
                     .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
                 return upcoming[0] || null;
-            }, [fixtures, selectedOpponent]);
+            }, [fixtures, selectedOpponentKey]);
 
             const currentStreak = useMemo(() => {
                 if (!playedFixtures.length) return { label: 'No streak yet', count: 0 };
@@ -14618,29 +14851,318 @@
                 return { label, count };
             }, [playedFixtures]);
 
+            const importedMatches = useMemo(() => {
+                if (!selectedOpponentKey) return [];
+                return [...opponentResults]
+                    .filter((row) => {
+                        return normalizeEntityText(row.homeTeam || row.homeTeamCanonical || '') === selectedOpponentKey
+                            || normalizeEntityText(row.awayTeam || row.awayTeamCanonical || '') === selectedOpponentKey;
+                    })
+                    .sort((a, b) => {
+                        const aTime = Date.parse(a.resultDate || a.date || '') || 0;
+                        const bTime = Date.parse(b.resultDate || b.date || '') || 0;
+                        if (aTime !== bTime) return bTime - aTime;
+                        return String(b.importedAt || '').localeCompare(String(a.importedAt || ''));
+                    });
+            }, [opponentResults, selectedOpponentKey]);
+
+            const importedPerspectiveRows = useMemo(() => {
+                return importedMatches.map((row) => {
+                    const isHome = normalizeEntityText(row.homeTeam || '') === selectedOpponentKey;
+                    const goalsFor = Number(isHome ? row.homeScore : row.awayScore);
+                    const goalsAgainst = Number(isHome ? row.awayScore : row.homeScore);
+                    return {
+                        ...row,
+                        result: goalsFor > goalsAgainst ? 'W' : goalsFor < goalsAgainst ? 'L' : 'D',
+                        goalsFor,
+                        goalsAgainst,
+                        opponentName: isHome ? row.awayTeam : row.homeTeam,
+                        scoreLabel: `${row.homeScore}-${row.awayScore}`
+                    };
+                });
+            }, [importedMatches, selectedOpponentKey]);
+
+            const importedSummary = useMemo(() => {
+                return importedPerspectiveRows.reduce((acc, row) => {
+                    acc.played += 1;
+                    if (row.result === 'W') acc.wins += 1;
+                    else if (row.result === 'D') acc.draws += 1;
+                    else acc.losses += 1;
+                    acc.goalsFor += row.goalsFor;
+                    acc.goalsAgainst += row.goalsAgainst;
+                    return acc;
+                }, { played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0 });
+            }, [importedPerspectiveRows]);
+
+            const importedRecent = useMemo(() => importedPerspectiveRows.slice(0, 5), [importedPerspectiveRows]);
+
+            const importedStreak = useMemo(() => {
+                if (!importedPerspectiveRows.length) return { label: 'No imported streak yet', count: 0 };
+                const first = importedPerspectiveRows[0].result;
+                let count = 0;
+                for (const row of importedPerspectiveRows) {
+                    if (row.result !== first) break;
+                    count += 1;
+                }
+                const label = first === 'W' ? 'Overall win streak' : first === 'L' ? 'Overall losing streak' : 'Overall draw streak';
+                return { label, count };
+            }, [importedPerspectiveRows]);
+
+            const prepSignals = useMemo(() => {
+                const notes = [];
+                if (!importedSummary.played) return notes;
+                const lastFive = importedRecent.reduce((acc, row) => {
+                    if (row.result === 'W') acc.wins += 1;
+                    else if (row.result === 'D') acc.draws += 1;
+                    else acc.losses += 1;
+                    return acc;
+                }, { wins: 0, draws: 0, losses: 0 });
+                notes.push(`Last 5 overall: ${lastFive.wins}W · ${lastFive.draws}D · ${lastFive.losses}L.`);
+                if (importedStreak.count) {
+                    notes.push(`${selectedOpponent} are on a ${importedStreak.count}-match ${importedStreak.label.toLowerCase().replace('overall ', '')}.`);
+                }
+                const goalsForPerGame = importedSummary.played ? (importedSummary.goalsFor / importedSummary.played).toFixed(1) : '0.0';
+                const goalsAgainstPerGame = importedSummary.played ? (importedSummary.goalsAgainst / importedSummary.played).toFixed(1) : '0.0';
+                notes.push(`Imported results show ${goalsForPerGame} goals scored and ${goalsAgainstPerGame} conceded per game.`);
+                return notes.slice(0, 3);
+            }, [importedSummary, importedRecent, importedStreak, selectedOpponent]);
+
             const winProbability = useMemo(() => {
-                if (!summary.played) return 50;
-                const formPoints = recentForm.reduce((sum, row) => sum + (row.result === 'W' ? 3 : row.result === 'D' ? 1 : 0), 0);
-                const formRatio = recentForm.length ? formPoints / (recentForm.length * 3) : 0.5;
-                const winEdge = (summary.wins - summary.losses) / summary.played;
-                const goalEdge = (summary.goalsFor - summary.goalsAgainst) / Math.max(summary.played, 1);
-                const raw = 50 + (winEdge * 24) + (goalEdge * 4) + ((formRatio - 0.5) * 20);
+                const h2hFormPoints = recentForm.reduce((sum, row) => sum + (row.result === 'W' ? 3 : row.result === 'D' ? 1 : 0), 0);
+                const h2hFormRatio = recentForm.length ? h2hFormPoints / (recentForm.length * 3) : 0.5;
+                const importedFormPoints = importedRecent.reduce((sum, row) => sum + (row.result === 'W' ? 3 : row.result === 'D' ? 1 : 0), 0);
+                const importedFormRatio = importedRecent.length ? importedFormPoints / (importedRecent.length * 3) : 0.5;
+                const winEdge = summary.played ? (summary.wins - summary.losses) / summary.played : 0;
+                const goalEdge = summary.played ? (summary.goalsFor - summary.goalsAgainst) / Math.max(summary.played, 1) : 0;
+                const importedGoalEdge = importedSummary.played ? (importedSummary.goalsFor - importedSummary.goalsAgainst) / Math.max(importedSummary.played, 1) : 0;
+                const raw = 50 + (winEdge * 24) + (goalEdge * 4) + ((h2hFormRatio - 0.5) * 20) + ((importedFormRatio - 0.5) * 12) + (importedGoalEdge * 2);
                 return Math.max(8, Math.min(92, Math.round(raw)));
-            }, [summary, recentForm]);
+            }, [summary, recentForm, importedRecent, importedSummary]);
 
             const winProbabilityTone = winProbability >= 62 ? 'text-emerald-700' : winProbability <= 38 ? 'text-rose-700' : 'text-slate-700';
+
+            const inferImportedTeamMatch = useCallback((rawName = '') => {
+                const clean = (rawName || '').trim();
+                const normalized = normalizeEntityText(clean);
+                const aliasHit = opponentAliasLookup[normalized];
+                if (aliasHit) {
+                    return {
+                        mappedName: aliasHit,
+                        needsReview: false,
+                        matchNote: normalizeEntityText(aliasHit) === normalized ? 'Exact registered team' : 'Remembered alias',
+                        rememberAlias: normalizeEntityText(aliasHit) !== normalized && normalizeEntityText(aliasHit) !== normalizeEntityText('BRITISH EXILES')
+                    };
+                }
+                const candidates = registeredTeamChoices
+                    .map((name) => ({ name, score: stringSimilarity(clean, name) }))
+                    .sort((a, b) => b.score - a.score);
+                const best = candidates[0];
+                if (best && best.score >= 0.88) {
+                    return {
+                        mappedName: best.name,
+                        needsReview: false,
+                        matchNote: 'Strong name match',
+                        rememberAlias: normalizeEntityText(best.name) !== normalized && normalizeEntityText(best.name) !== normalizeEntityText('BRITISH EXILES')
+                    };
+                }
+                if (best && best.score >= 0.6) {
+                    return {
+                        mappedName: best.name,
+                        needsReview: true,
+                        matchNote: 'Check the suggested team name',
+                        rememberAlias: normalizeEntityText(best.name) !== normalized && normalizeEntityText(best.name) !== normalizeEntityText('BRITISH EXILES')
+                    };
+                }
+                return {
+                    mappedName: toTitleishTeamName(clean),
+                    needsReview: true,
+                    matchNote: 'No confident database match yet',
+                    rememberAlias: false
+                };
+            }, [opponentAliasLookup, registeredTeamChoices]);
+
+            const recomputeResultsPreview = useCallback((rows = []) => {
+                const existingFingerprints = new Set(opponentResults.map((row) => makeOpponentResultFingerprint({
+                    resultDate: row.resultDate || row.date,
+                    homeTeam: row.homeTeam || row.homeTeamCanonical,
+                    awayTeam: row.awayTeam || row.awayTeamCanonical,
+                    homeScore: row.homeScore,
+                    awayScore: row.awayScore
+                })));
+                const seenThisPaste = new Set();
+                return rows.map((row, index) => {
+                    const fingerprint = makeOpponentResultFingerprint({
+                        resultDate: row.resultDate,
+                        homeTeam: row.homeTeam,
+                        awayTeam: row.awayTeam,
+                        homeScore: row.homeScore,
+                        awayScore: row.awayScore
+                    });
+                    const duplicateInPaste = seenThisPaste.has(fingerprint);
+                    if (!duplicateInPaste) seenThisPaste.add(fingerprint);
+                    const duplicateExisting = existingFingerprints.has(fingerprint);
+                    return {
+                        ...row,
+                        id: row.id || `opponent-result-preview-${index + 1}`,
+                        fingerprint,
+                        duplicate: duplicateExisting || duplicateInPaste,
+                        duplicateReason: duplicateExisting ? 'Already imported' : duplicateInPaste ? 'Repeated in this paste' : ''
+                    };
+                });
+            }, [opponentResults]);
+
+            const buildResultsImportPreview = useCallback(() => {
+                const parsed = parseImportedOpponentResults(resultsPasteText, knownTeamNames, opponentAliasLookup);
+                if (!parsed.length) {
+                    setResultsPreview([]);
+                    setResultsImportFeedback({ tone: 'warning', message: 'No results found in that paste. Keep the date, score, venue, and HOME VS AWAY layout.' });
+                    return;
+                }
+                const preview = recomputeResultsPreview(parsed.map((row, index) => {
+                    const homeMatch = inferImportedTeamMatch(row.homeTeamRaw || row.homeTeam);
+                    const awayMatch = inferImportedTeamMatch(row.awayTeamRaw || row.awayTeam);
+                    return {
+                        ...row,
+                        id: `opponent-result-preview-${index + 1}`,
+                        homeTeam: homeMatch.mappedName,
+                        awayTeam: awayMatch.mappedName,
+                        homeNeedsReview: homeMatch.needsReview,
+                        awayNeedsReview: awayMatch.needsReview,
+                        homeMatchNote: homeMatch.matchNote,
+                        awayMatchNote: awayMatch.matchNote,
+                        rememberHomeAlias: homeMatch.rememberAlias,
+                        rememberAwayAlias: awayMatch.rememberAlias
+                    };
+                }));
+                const newCount = preview.filter(row => !row.duplicate).length;
+                const duplicateCount = preview.length - newCount;
+                const reviewCount = preview.filter(row => row.homeNeedsReview || row.awayNeedsReview).length;
+                setResultsPreview(preview);
+                setResultsImportFeedback({
+                    tone: newCount ? (reviewCount ? 'warning' : 'success') : 'warning',
+                    message: `Parsed ${preview.length} result${preview.length === 1 ? '' : 's'} · ${newCount} new · ${duplicateCount} duplicate${duplicateCount === 1 ? '' : 's'}${reviewCount ? ` · ${reviewCount} need name review` : ''}`
+                });
+            }, [resultsPasteText, knownTeamNames, opponentAliasLookup, inferImportedTeamMatch, recomputeResultsPreview]);
+
+            const updatePreviewTeamMatch = useCallback((rowId, side, mappedName) => {
+                setResultsPreview((prev) => recomputeResultsPreview(prev.map((row) => {
+                    if (row.id !== rowId) return row;
+                    const rawName = side === 'home' ? (row.homeTeamRaw || row.homeTeam) : (row.awayTeamRaw || row.awayTeam);
+                    const normalizedMapped = normalizeEntityText(mappedName);
+                    const normalizedRaw = normalizeEntityText(rawName);
+                    const selectedMapped = mappedName || toTitleishTeamName(rawName);
+                    const isRegistered = registeredTeamChoices.some(name => normalizeEntityText(name) === normalizedMapped);
+                    return {
+                        ...row,
+                        [side === 'home' ? 'homeTeam' : 'awayTeam']: selectedMapped,
+                        [side === 'home' ? 'homeNeedsReview' : 'awayNeedsReview']: !isRegistered,
+                        [side === 'home' ? 'homeMatchNote' : 'awayMatchNote']: isRegistered ? 'Matched to registered team' : 'Keeping pasted team name',
+                        [side === 'home' ? 'rememberHomeAlias' : 'rememberAwayAlias']: isRegistered
+                            && normalizedMapped !== normalizedRaw
+                            && normalizedMapped !== normalizeEntityText('BRITISH EXILES')
+                    };
+                })));
+            }, [recomputeResultsPreview, registeredTeamChoices]);
+
+            const togglePreviewAliasMemory = useCallback((rowId, side) => {
+                setResultsPreview((prev) => prev.map((row) => {
+                    if (row.id !== rowId) return row;
+                    const key = side === 'home' ? 'rememberHomeAlias' : 'rememberAwayAlias';
+                    return { ...row, [key]: !row[key] };
+                }));
+            }, []);
+
+            const importOpponentResults = useCallback(async () => {
+                if (!db.opponentResults || !resultsPreview.length) return;
+                const rowsToImport = resultsPreview.filter(row => !row.duplicate);
+                if (!rowsToImport.length) {
+                    setResultsImportFeedback({ tone: 'warning', message: 'Nothing new to import. Every parsed result already exists or repeats inside the paste.' });
+                    return;
+                }
+                setIsImportingResults(true);
+                try {
+                    const importedAt = new Date().toISOString();
+                    const aliasUpdates = new Map();
+                    rowsToImport.forEach((row) => {
+                        [
+                            { enabled: row.rememberHomeAlias, raw: row.homeTeamRaw, mapped: row.homeTeam },
+                            { enabled: row.rememberAwayAlias, raw: row.awayTeamRaw, mapped: row.awayTeam }
+                        ].forEach((entry) => {
+                            if (!entry.enabled) return;
+                            const raw = (entry.raw || '').trim();
+                            const mapped = (entry.mapped || '').trim();
+                            if (!raw || !mapped) return;
+                            const opponent = savedOpponents.find(item => normalizeEntityText(item.name || '') === normalizeEntityText(mapped));
+                            if (!opponent) return;
+                            const existingAliases = Array.isArray(opponent.aliases)
+                                ? opponent.aliases
+                                : (opponent.aliases || '').toString().split(',').map(value => value.trim()).filter(Boolean);
+                            const nextAliases = Array.from(new Set([...existingAliases, raw])).filter(Boolean);
+                            aliasUpdates.set(opponent.id, { opponent, aliases: nextAliases });
+                        });
+                    });
+                    if (aliasUpdates.size) {
+                        await Promise.all(Array.from(aliasUpdates.values()).map(({ opponent, aliases }) => (
+                            db.opponents.update(opponent.id, { aliases })
+                        )));
+                    }
+                    await db.opponentResults.bulkPut(rowsToImport.map((row) => ({
+                        resultDate: row.resultDate,
+                        venue: row.venue || '',
+                        homeTeam: row.homeTeam,
+                        awayTeam: row.awayTeam,
+                        homeScore: Number(row.homeScore || 0),
+                        awayScore: Number(row.awayScore || 0),
+                        homeTeamRaw: row.homeTeamRaw || row.homeTeam,
+                        awayTeamRaw: row.awayTeamRaw || row.awayTeam,
+                        fingerprint: row.fingerprint,
+                        source: 'paste_import',
+                        importedAt
+                    })));
+                    if (aliasUpdates.size) {
+                        window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'opponents' } }));
+                    }
+                    window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'opponentResults' } }));
+                    setResultsImportFeedback({
+                        tone: 'success',
+                        message: `Imported ${rowsToImport.length} result${rowsToImport.length === 1 ? '' : 's'}. Skipped ${resultsPreview.length - rowsToImport.length} duplicate${resultsPreview.length - rowsToImport.length === 1 ? '' : 's'}.${aliasUpdates.size ? ` Remembered ${aliasUpdates.size} team alias${aliasUpdates.size === 1 ? '' : 'es'}.` : ''}`
+                    });
+                    setResultsPasteText('');
+                    setResultsPreview([]);
+                    setIsImportModalOpen(false);
+                    await loadIntel();
+                } catch (err) {
+                    setResultsImportFeedback({ tone: 'danger', message: `Import failed: ${err.message}` });
+                } finally {
+                    setIsImportingResults(false);
+                }
+            }, [resultsPreview, loadIntel, savedOpponents]);
 
             return (
                 <div className="space-y-5 pb-20 animate-fade-in">
                     <PageHeader
                         title="Opponent Intel"
-                        subtitle="Head-to-head trends, danger players, and a win snapshot."
+                        subtitle="Head-to-head trends, imported league form, and prep notes."
                         actions={renderBackToMoreAction(onNavigate)}
                     />
-                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
-                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Opponent</label>
+
+                    <div className={getSurfaceClass('intel', 'p-5 space-y-4')}>
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-violet-600')}>Opponent</div>
+                                <div className={UI_TEXT.helper}>Choose a club to combine Exiles head-to-head with imported league results.</div>
+                            </div>
+                            <button
+                                type="button"
+                                disabled={!opponentResultsAvailable}
+                                onClick={() => setIsImportModalOpen(true)}
+                                className={getButtonClass(opponentResultsAvailable ? 'primary' : 'subtle', 'sm')}
+                            >
+                                Import Results
+                            </button>
+                        </div>
                         <select
-                            className="w-full min-h-[48px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-base"
+                            className={FORM_CONTROL_CLASS}
                             value={selectedOpponent}
                             onChange={(e) => setSelectedOpponent(e.target.value)}
                         >
@@ -14648,42 +15170,80 @@
                                 <option key={`intel-opponent-${name}`} value={name}>{name}</option>
                             ))}
                         </select>
+                        <div className="flex flex-wrap gap-2">
+                            <span className={getChipClass('info')}>{opponentOptions.length} teams tracked</span>
+                            <span className={getChipClass('neutral')}>{opponentResults.length} imported results</span>
+                            {selectedOpponent && importedSummary.played ? (
+                                <span className={getChipClass('success')}>{importedSummary.played} overall result{importedSummary.played === 1 ? '' : 's'} for {selectedOpponent}</span>
+                            ) : null}
+                        </div>
                     </div>
+
+                    {!opponentResultsAvailable && (
+                        <div className={getSurfaceClass('warning', 'p-4')}>
+                            <div className={cx(UI_TEXT.sectionTitle, 'text-amber-900')}>Imported results storage is not available on this app shell yet.</div>
+                            <div className={cx(UI_TEXT.helper, 'text-amber-800 mt-1')}>Use the refresh button in More so the latest build can add the new results collection.</div>
+                        </div>
+                    )}
+
                     {isLoading ? (
-                        <div className="bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-400">Loading opponent intel...</div>
+                        <div className={getSurfaceClass('muted', 'p-4 text-sm text-slate-400')}>Loading opponent intel...</div>
                     ) : !selectedOpponent ? (
-                        <div className="bg-white border border-slate-200 rounded-2xl p-4 text-sm text-slate-400">No opponent data yet.</div>
+                        <div className={getSurfaceClass('muted', 'p-4 text-sm text-slate-400')}>No opponent data yet.</div>
                     ) : (
                         <>
-                            <div className="grid grid-cols-2 gap-2">
-                                <div className="bg-white border border-slate-200 rounded-xl p-3">
-                                    <div className="text-[10px] uppercase font-bold text-slate-500">H2H record</div>
-                                    <div className="text-sm font-bold text-slate-900 mt-1">{summary.wins}W · {summary.draws}D · {summary.losses}L</div>
-                                    <div className="text-[11px] text-slate-500 mt-1">{summary.played} played</div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>H2H Record</div>
+                                    <div className="text-base font-bold text-slate-900 mt-1">{summary.wins}W · {summary.draws}D · {summary.losses}L</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{summary.played} played vs Exiles</div>
                                 </div>
-                                <div className="bg-white border border-slate-200 rounded-xl p-3">
-                                    <div className="text-[10px] uppercase font-bold text-slate-500">Win probability</div>
-                                    <div className={`text-2xl font-display font-bold ${winProbabilityTone}`}>{winProbability}%</div>
-                                    <div className="text-[11px] text-slate-500 mt-1">Snapshot from H2H + recent form</div>
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>Overall Imported Form</div>
+                                    <div className="text-base font-bold text-slate-900 mt-1">{importedSummary.wins}W · {importedSummary.draws}D · {importedSummary.losses}L</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>{importedSummary.played} result{importedSummary.played === 1 ? '' : 's'} in intel</div>
                                 </div>
-                                <div className="bg-white border border-slate-200 rounded-xl p-3">
-                                    <div className="text-[10px] uppercase font-bold text-slate-500">Goals</div>
-                                    <div className="text-sm font-bold text-slate-900 mt-1">{summary.goalsFor} for · {summary.goalsAgainst} against</div>
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>Goals</div>
+                                    <div className="text-base font-bold text-slate-900 mt-1">{summary.goalsFor} for · {summary.goalsAgainst} against</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>Exiles head-to-head only</div>
                                 </div>
-                                <div className="bg-white border border-slate-200 rounded-xl p-3">
-                                    <div className="text-[10px] uppercase font-bold text-slate-500">{currentStreak.label}</div>
-                                    <div className="text-sm font-bold text-slate-900 mt-1">{currentStreak.count} match{currentStreak.count === 1 ? '' : 'es'}</div>
+                                <div className={getSurfaceClass('default', 'p-4')}>
+                                    <div className={UI_TEXT.eyebrow}>Win Snapshot</div>
+                                    <div className={`text-2xl font-display font-bold mt-1 ${winProbabilityTone}`}>{winProbability}%</div>
+                                    <div className={cx(UI_TEXT.meta, 'mt-1')}>Blends H2H with imported recent form</div>
                                 </div>
                             </div>
 
-                            <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
-                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Recent Form (last 5 vs {selectedOpponent})</div>
+                            <div className={getSurfaceClass('report', 'p-5 space-y-3')}>
+                                <div className="flex items-center justify-between gap-3 flex-wrap">
+                                    <div>
+                                        <div className={cx(UI_TEXT.eyebrow, 'text-amber-700')}>Prep Notes</div>
+                                        <div className={UI_TEXT.helper}>Quick signals you can use before the next meeting.</div>
+                                    </div>
+                                    {importedStreak.count ? <span className={getChipClass(importedStreak.label.includes('losing') ? 'warning' : importedStreak.label.includes('win') ? 'success' : 'neutral')}>{importedStreak.count} match {importedStreak.label.toLowerCase().replace('overall ', '')}</span> : null}
+                                </div>
+                                {prepSignals.length ? (
+                                    <div className="space-y-2">
+                                        {prepSignals.map((note, index) => (
+                                            <div key={`prep-signal-${index}`} className="rounded-xl border border-amber-100 bg-white/80 px-3 py-3 text-sm text-slate-700">
+                                                {note}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-sm text-slate-400">Import some external results and we will turn them into prep notes here.</div>
+                                )}
+                            </div>
+
+                            <div className={getSurfaceClass('default', 'p-5 space-y-3')}>
+                                <div className={UI_TEXT.eyebrow}>Recent H2H Form (last 5 vs {selectedOpponent})</div>
                                 {recentForm.length ? (
                                     <div className="flex flex-wrap gap-2">
                                         {recentForm.map((row) => (
                                             <div
                                                 key={`intel-form-${row.id}`}
-                                                className={`h-10 min-w-[2.4rem] px-2 rounded-lg flex flex-col items-center justify-center text-xs font-bold ${
+                                                className={`h-10 min-w-[2.6rem] px-2 rounded-xl flex items-center justify-center text-sm font-bold ${
                                                     row.result === 'W'
                                                         ? 'bg-emerald-100 text-emerald-700'
                                                         : row.result === 'L'
@@ -14697,18 +15257,49 @@
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="text-sm text-slate-400">No completed meetings yet.</div>
+                                    <div className="text-sm text-slate-400">No completed Exiles meetings yet.</div>
                                 )}
                             </div>
 
-                            <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
-                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Danger Players (our scorers vs this opponent)</div>
+                            <div className={getSurfaceClass('intel', 'p-5 space-y-3')}>
+                                <div className="flex items-center justify-between gap-3 flex-wrap">
+                                    <div>
+                                        <div className={cx(UI_TEXT.eyebrow, 'text-violet-700')}>Imported Overall Results</div>
+                                        <div className={UI_TEXT.helper}>This is where the pasted league results become a real fact sheet for {selectedOpponent}.</div>
+                                    </div>
+                                    {importedSummary.played ? <span className={getChipClass('info')}>{importedSummary.goalsFor} GF · {importedSummary.goalsAgainst} GA</span> : null}
+                                </div>
+                                {importedRecent.length ? (
+                                    <div className="space-y-2">
+                                        {importedRecent.map((row, index) => (
+                                            <div key={`intel-imported-${row.id || row.fingerprint || index}`} className="rounded-xl border border-violet-100 bg-white/90 p-3 flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div className="text-sm font-bold text-slate-900">{row.homeTeam} {row.homeScore}-{row.awayScore} {row.awayTeam}</div>
+                                                    <div className="text-[13px] text-slate-500 mt-1">
+                                                        {row.resultDate ? new Date(row.resultDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC'}
+                                                        {row.venue ? ` · ${row.venue}` : ''}
+                                                        {row.opponentName ? ` · vs ${row.opponentName}` : ''}
+                                                    </div>
+                                                </div>
+                                                <span className={getChipClass(row.result === 'W' ? 'success' : row.result === 'L' ? 'danger' : 'neutral')}>
+                                                    {row.result}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-sm text-slate-400">No imported league results yet for this opponent.</div>
+                                )}
+                            </div>
+
+                            <div className={getSurfaceClass('default', 'p-5 space-y-3')}>
+                                <div className={UI_TEXT.eyebrow}>Danger Players (our scorers vs this opponent)</div>
                                 {dangerPlayers.length ? (
                                     <div className="space-y-2">
                                         {dangerPlayers.map((row) => (
-                                            <div key={`intel-danger-${row.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex items-center justify-between">
+                                            <div key={`intel-danger-${row.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3 flex items-center justify-between">
                                                 <div className="text-sm font-bold text-slate-900">{row.label}</div>
-                                                <div className="text-[11px] font-bold text-emerald-700">{row.goals} goal{row.goals === 1 ? '' : 's'}</div>
+                                                <div className="text-[13px] font-bold text-emerald-700">{row.goals} goal{row.goals === 1 ? '' : 's'}</div>
                                             </div>
                                         ))}
                                     </div>
@@ -14717,8 +15308,8 @@
                                 )}
                             </div>
 
-                            <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
-                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Next Meeting</div>
+                            <div className={getSurfaceClass('default', 'p-5 space-y-2')}>
+                                <div className={UI_TEXT.eyebrow}>Next Meeting</div>
                                 {nextMeeting ? (
                                     <button
                                         type="button"
@@ -14733,7 +15324,7 @@
                                         className="w-full text-left rounded-xl border border-slate-200 bg-slate-50 p-3 hover:border-brand-200"
                                     >
                                         <div className="text-sm font-bold text-slate-900">vs {nextMeeting.opponent || 'Opponent'}</div>
-                                        <div className="text-[11px] text-slate-500">
+                                        <div className="text-[13px] text-slate-500">
                                             {nextMeeting.date ? new Date(nextMeeting.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Date TBC'} · {renderTimeLabel(nextMeeting.time)} · {nextMeeting.venue || 'Venue TBC'}
                                         </div>
                                     </button>
@@ -14743,6 +15334,144 @@
                             </div>
                         </>
                     )}
+
+                    <Modal isOpen={isImportModalOpen} onClose={() => { if (!isImportingResults) setIsImportModalOpen(false); }} title="Import Results" placement="center">
+                        <div className="space-y-4">
+                            <div className={getSurfaceClass('info', 'p-4')}>
+                                <div className={cx(UI_TEXT.sectionTitle, 'text-sky-900')}>Paste copied league results</div>
+                                <div className={cx(UI_TEXT.helper, 'mt-1 text-sky-800')}>
+                                    Keep the same 4-line pattern: date, score, venue, then <span className="font-bold">HOME VS AWAY</span>. We will detect duplicates and skip exact repeats.
+                                </div>
+                            </div>
+                            <textarea
+                                value={resultsPasteText}
+                                onChange={(e) => setResultsPasteText(e.target.value)}
+                                placeholder={'March 7, 2026\n3 - 3\nNorth Vista\nBRITISH CLUB BULLDOGS VS BFA'}
+                                className={cx(FORM_CONTROL_CLASS, 'min-h-[220px] font-mono text-[13px]')}
+                            />
+                            <div className="flex gap-2">
+                                <button type="button" onClick={buildResultsImportPreview} className={getButtonClass('primary', 'md', 'flex-1')}>
+                                    Preview Import
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setResultsPasteText('');
+                                        setResultsPreview([]);
+                                        setResultsImportFeedback({ tone: 'info', message: '' });
+                                    }}
+                                    className={getButtonClass('secondary', 'md')}
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                            {resultsImportFeedback.message ? (
+                                <div className={getSurfaceClass(
+                                    resultsImportFeedback.tone === 'success'
+                                        ? 'success'
+                                        : resultsImportFeedback.tone === 'warning'
+                                            ? 'warning'
+                                            : resultsImportFeedback.tone === 'danger'
+                                                ? 'critical'
+                                                : 'info',
+                                    'p-3'
+                                )}>
+                                    <div className="text-sm font-semibold text-slate-800">{resultsImportFeedback.message}</div>
+                                </div>
+                            ) : null}
+                            {resultsPreview.length ? (
+                                <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
+                                    {resultsPreview.map((row) => (
+                                        <div key={row.id} className={cx(getSurfaceClass(row.duplicate ? 'warning' : 'default', 'p-3'), 'rounded-xl')}>
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div className="text-sm font-bold text-slate-900">{row.homeTeam} {row.homeScore}-{row.awayScore} {row.awayTeam}</div>
+                                                    <div className="text-[13px] text-slate-500 mt-1">
+                                                        {new Date(row.resultDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                                        {row.venue ? ` · ${row.venue}` : ''}
+                                                    </div>
+                                                </div>
+                                                <span className={getChipClass(row.duplicate ? 'warning' : 'success')}>
+                                                    {row.duplicate ? row.duplicateReason : 'New'}
+                                                </span>
+                                            </div>
+                                            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                                                {[
+                                                    {
+                                                        side: 'home',
+                                                        rawName: row.homeTeamRaw,
+                                                        mappedName: row.homeTeam,
+                                                        needsReview: row.homeNeedsReview,
+                                                        matchNote: row.homeMatchNote,
+                                                        rememberAlias: row.rememberHomeAlias
+                                                    },
+                                                    {
+                                                        side: 'away',
+                                                        rawName: row.awayTeamRaw,
+                                                        mappedName: row.awayTeam,
+                                                        needsReview: row.awayNeedsReview,
+                                                        matchNote: row.awayMatchNote,
+                                                        rememberAlias: row.rememberAwayAlias
+                                                    }
+                                                ].map((teamRow) => {
+                                                    const normalizedMapped = normalizeEntityText(teamRow.mappedName);
+                                                    const isRegistered = registeredTeamChoices.some(name => normalizeEntityText(name) === normalizedMapped);
+                                                    const selectOptions = [
+                                                        teamRow.rawName,
+                                                        ...registeredTeamChoices.filter(name => normalizeEntityText(name) !== normalizeEntityText(teamRow.rawName))
+                                                    ];
+                                                    return (
+                                                        <div key={`${row.id}-${teamRow.side}`} className="rounded-xl border border-slate-200 bg-white/90 p-3 space-y-2">
+                                                            <div className="flex items-center justify-between gap-2">
+                                                                <div className="text-[12px] font-bold uppercase tracking-wide text-slate-500">{teamRow.side === 'home' ? 'Home team' : 'Away team'}</div>
+                                                                {teamRow.needsReview ? <span className={getChipClass('warning')}>Review</span> : <span className={getChipClass('success')}>Checked</span>}
+                                                            </div>
+                                                            <div className="text-[13px] text-slate-500">Imported as <span className="font-semibold text-slate-700">{teamRow.rawName}</span></div>
+                                                            <select
+                                                                className={cx(FORM_CONTROL_CLASS, 'py-2.5')}
+                                                                value={teamRow.mappedName}
+                                                                onChange={(event) => updatePreviewTeamMatch(row.id, teamRow.side, event.target.value)}
+                                                            >
+                                                                {selectOptions.map((option) => (
+                                                                    <option key={`${row.id}-${teamRow.side}-${option}`} value={option}>
+                                                                        {normalizeEntityText(option) === normalizeEntityText(teamRow.rawName) && !isRegistered ? `Keep as pasted: ${option}` : option}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                            <div className="text-[12px] text-slate-500">{teamRow.matchNote}</div>
+                                                            {isRegistered && normalizeEntityText(teamRow.rawName) !== normalizedMapped ? (
+                                                                <label className="flex items-center gap-2 text-[12px] font-medium text-slate-600">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={teamRow.rememberAlias}
+                                                                        onChange={() => togglePreviewAliasMemory(row.id, teamRow.side)}
+                                                                    />
+                                                                    Remember <span className="font-semibold text-slate-700">{teamRow.rawName}</span> as <span className="font-semibold text-slate-700">{teamRow.mappedName}</span>
+                                                                </label>
+                                                            ) : null}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : null}
+                            <div className="flex gap-2 pt-1">
+                                <button type="button" onClick={() => setIsImportModalOpen(false)} disabled={isImportingResults} className={getButtonClass('secondary', 'md', 'flex-1')}>
+                                    Close
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={importOpponentResults}
+                                    disabled={isImportingResults || !resultsPreview.some(row => !row.duplicate)}
+                                    className={getButtonClass((isImportingResults || !resultsPreview.some(row => !row.duplicate)) ? 'subtle' : 'success', 'md', 'flex-1')}
+                                >
+                                    {isImportingResults ? 'Importing…' : `Import ${resultsPreview.filter(row => !row.duplicate).length || 0} New`}
+                                </button>
+                            </div>
+                        </div>
+                    </Modal>
                 </div>
             );
         };
@@ -15025,6 +15754,7 @@
                         transactions,
                         participations,
                         opponents,
+                        opponentResults,
                         venues,
                         referees,
                         kitDetails,
@@ -15037,6 +15767,7 @@
                         db.transactions.toArray(),
                         db.participations.toArray(),
                         db.opponents.toArray(),
+                        db.opponentResults ? db.opponentResults.toArray() : [],
                         db.venues.toArray(),
                         db.referees.toArray(),
                         db.kitDetails.toArray(),
@@ -15081,14 +15812,14 @@
                     );
                     const score = Math.max(0, Math.min(100, 100 - penalty));
 
-                    const requiredTables = ['players', 'fixtures', 'transactions', 'participations', 'opponents', 'venues', 'referees', 'kitDetails', 'kitQueue', 'settings', 'sponsors'];
+                    const requiredTables = ['players', 'fixtures', 'transactions', 'participations', 'opponents', 'opponentResults', 'venues', 'referees', 'kitDetails', 'kitQueue', 'settings', 'sponsors'];
                     const missingTables = requiredTables.filter(name => !db[name]);
 
                     let estimatedSize = 0;
                     let canSerialize = true;
                     try {
                         const payload = {
-                            players, fixtures, transactions, participations, opponents, venues, referees, kitDetails, kitQueue, settings, sponsors
+                            players, fixtures, transactions, participations, opponents, opponentResults, venues, referees, kitDetails, kitQueue, settings, sponsors
                         };
                         estimatedSize = new Blob([JSON.stringify(payload)]).size;
                     } catch (err) {
@@ -15173,7 +15904,7 @@
                 loadAudit();
                 const handler = (event) => {
                     if (!event?.detail?.name) return;
-                    if (['players', 'fixtures', 'transactions', 'participations', 'opponents', 'venues', 'referees', 'kitDetails', 'kitQueue', 'settings', 'sponsors'].includes(event.detail.name)) {
+                    if (['players', 'fixtures', 'transactions', 'participations', 'opponents', 'opponentResults', 'venues', 'referees', 'kitDetails', 'kitQueue', 'settings', 'sponsors'].includes(event.detail.name)) {
                         loadAudit();
                     }
                 };
@@ -15275,7 +16006,7 @@
                 requestTextPrompt: requestIntelTextPrompt,
                 closeTextPrompt: closeIntelTextPrompt
             } = useModalDialogs();
-            const [newOpponent, setNewOpponent] = useState({ name: '', contact: '', phone: '', payee: '' });
+            const [newOpponent, setNewOpponent] = useState({ name: '', contact: '', phone: '', payee: '', aliases: '' });
             const [isAddOpponentOpen, setIsAddOpponentOpen] = useState(false);
             const [isAddVenueOpen, setIsAddVenueOpen] = useState(false);
             const [newVenue, setNewVenue] = useState({ name: '', price: '', homeTeamId: null, address: '', notes: '', payee: '', contact: '' });
@@ -15292,7 +16023,7 @@
             const [venueLeagueTotals, setVenueLeagueTotals] = useState({ played: 0, wins: 0, draws: 0, losses: 0, points: 0, goalsFor: 0, goalsAgainst: 0 });
             const [venueSeasonTotals, setVenueSeasonTotals] = useState([]);
             const [viewTab, setViewTab] = useState(normalizedInitialView);
-            const emptyOpponentForm = { name: '', contact: '', phone: '', payee: '' };
+            const emptyOpponentForm = { name: '', contact: '', phone: '', payee: '', aliases: '' };
             const emptyVenueForm = { name: '', price: '', homeTeamId: null, address: '', notes: '', payee: '', contact: '' };
             const [selectedOpponent, setSelectedOpponent] = useState(null);
             const [opponentForm, setOpponentForm] = useState(emptyOpponentForm);
@@ -15558,7 +16289,10 @@
                     name: opponent.name || '',
                     contact: opponent.contact || '',
                     phone: opponent.phone || '',
-                    payee: opponent.payee || ''
+                    payee: opponent.payee || '',
+                    aliases: Array.isArray(opponent.aliases)
+                        ? opponent.aliases.join(', ')
+                        : (opponent.aliases || '')
                 });
             };
 
@@ -15578,7 +16312,7 @@
                 if (!approved) return;
                 try {
                     await waitForDb();
-                    const payload = { name: cleanName, contact: '', phone: '', payee: '' };
+                    const payload = { name: cleanName, contact: '', phone: '', payee: '', aliases: [] };
                     const id = await db.opponents.add(payload);
                     const created = { id, ...payload };
                     setOpponents([...opponents, created]);
@@ -15601,7 +16335,7 @@
 
             const closeAddOpponent = () => {
                 setIsAddOpponentOpen(false);
-                setNewOpponent({ name: '', contact: '', phone: '', payee: '' });
+                setNewOpponent({ name: '', contact: '', phone: '', payee: '', aliases: '' });
             };
 
             const openVenueSheet = (venue) => {
@@ -15717,7 +16451,11 @@
                     name,
                     contact: (newOpponent.contact || '').trim(),
                     phone: (newOpponent.phone || '').trim(),
-                    payee: (newOpponent.payee || '').trim()
+                    payee: (newOpponent.payee || '').trim(),
+                    aliases: (newOpponent.aliases || '')
+                        .split(/[\n,]/)
+                        .map(value => value.trim())
+                        .filter(Boolean)
                 };
                 try {
                     await waitForDb();
@@ -15763,7 +16501,13 @@
                     name: cleanName,
                     payee: (opponentForm?.payee || '').trim(),
                     contact: (opponentForm?.contact || '').trim(),
-                    phone: (opponentForm?.phone || '').trim()
+                    phone: (opponentForm?.phone || '').trim(),
+                    aliases: Array.from(new Set(
+                        (opponentForm?.aliases || '')
+                            .split(/[\n,]/)
+                            .map(value => value.trim())
+                            .filter(Boolean)
+                    ))
                 };
                 const duplicate = opponents.find(o => o.id !== selectedOpponent.id && (o.name || '').trim().toLowerCase() === cleanName.toLowerCase());
                 if (duplicate) {
@@ -15779,6 +16523,9 @@
                 try {
                     await waitForDb();
                     const prevName = (selectedOpponent.name || '').trim();
+                    if (prevName && prevName.toLowerCase() !== cleanName.toLowerCase()) {
+                        payload.aliases = Array.from(new Set([...payload.aliases, prevName])).filter(Boolean);
+                    }
                     await db.opponents.update(selectedOpponent.id, payload);
                     const nameChanged = prevName !== cleanName;
                     if (nameChanged) {
@@ -15795,7 +16542,7 @@
                     }
                     setOpponents(opponents.map(o => o.id === selectedOpponent.id ? { ...o, ...payload } : o));
                     setSelectedOpponent(prev => prev ? { ...prev, ...payload } : prev);
-                    setOpponentForm({ ...payload });
+                    setOpponentForm({ ...payload, aliases: payload.aliases.join(', ') });
                     setOpponentSaveStatus('saved');
                     opponentSaveTimerRef.current = setTimeout(() => {
                         setOpponentSaveStatus('idle');
@@ -16033,7 +16780,8 @@
                     clean(opponentForm?.name) !== clean(selectedOpponent.name) ||
                     clean(opponentForm?.payee) !== clean(selectedOpponent.payee) ||
                     clean(opponentForm?.contact) !== clean(selectedOpponent.contact) ||
-                    clean(opponentForm?.phone) !== clean(selectedOpponent.phone)
+                    clean(opponentForm?.phone) !== clean(selectedOpponent.phone) ||
+                    clean(opponentForm?.aliases) !== clean(Array.isArray(selectedOpponent.aliases) ? selectedOpponent.aliases.join(', ') : selectedOpponent.aliases)
                 );
             }, [opponentForm, selectedOpponent]);
 
@@ -16046,6 +16794,12 @@
                 ? 'text-emerald-600'
                 : 'text-rose-600';
             const opponentDisplayName = (opponentForm?.name || selectedOpponent?.name || '').trim() || 'Opponent';
+            const selectedOpponentAliases = useMemo(() => {
+                if (!selectedOpponent) return [];
+                return Array.isArray(selectedOpponent.aliases)
+                    ? selectedOpponent.aliases.filter(Boolean)
+                    : (selectedOpponent.aliases || '').toString().split(',').map(value => value.trim()).filter(Boolean);
+            }, [selectedOpponent]);
             const opponentOutstandingTone = opponentPaymentSummary.netOutstanding >= 0 ? 'text-emerald-700' : 'text-rose-700';
 
             const venueFixtureLookup = useMemo(() => {
@@ -16720,6 +17474,12 @@
                                 value={newOpponent.phone}
                                 onChange={e => setNewOpponent({ ...newOpponent, phone: e.target.value })}
                             />
+                            <textarea
+                                placeholder="Known aliases, abbreviations, or old names (optional)"
+                                className={cx(FORM_CONTROL_CLASS, 'min-h-[96px]')}
+                                value={newOpponent.aliases}
+                                onChange={e => setNewOpponent({ ...newOpponent, aliases: e.target.value })}
+                            />
                             <button type="submit" className={getButtonClass('primary', 'lg', 'w-full')}>
                                 Add Opponent
                             </button>
@@ -16939,6 +17699,16 @@
                                     <div className="text-[11px] font-bold uppercase tracking-wider text-white/60">Opponent Sheet</div>
                                     <div className="text-2xl font-display font-bold">{opponentDisplayName}</div>
                                     <div className="text-[12px] text-white/75">Games {opponentStats.total} · Record W{opponentStats.wins} D{opponentStats.draws} L{opponentStats.losses}</div>
+                                    {selectedOpponentAliases.length ? (
+                                        <div className="flex flex-wrap gap-1 pt-1">
+                                            {selectedOpponentAliases.slice(0, 5).map((alias) => (
+                                                <span key={`alias-${selectedOpponent.id}-${alias}`} className="text-[11px] px-2 py-1 rounded-full bg-white/10 border border-white/20">
+                                                    {alias}
+                                                </span>
+                                            ))}
+                                            {selectedOpponentAliases.length > 5 ? <span className="text-[11px] text-white/70">+{selectedOpponentAliases.length - 5} more</span> : null}
+                                        </div>
+                                    ) : null}
                                     {opponentStats.lastPlayed && (
                                         <div className="text-[11px] text-white/60 mt-1">
                                             Last played {new Date(opponentStats.lastPlayed.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · {getFixtureForfeitLabel(opponentStats.lastPlayed) || `Exiles ${opponentStats.lastPlayed.homeScore ?? '-'}-${opponentStats.lastPlayed.awayScore ?? '-'}`}
@@ -16981,6 +17751,13 @@
                                         <input className={FORM_CONTROL_CLASS} placeholder="Payee / bank" value={opponentForm.payee} onChange={e => setOpponentForm(prev => ({ ...prev, payee: e.target.value }))} />
                                         <input className={FORM_CONTROL_CLASS} placeholder="Contact name/email" value={opponentForm.contact} onChange={e => setOpponentForm(prev => ({ ...prev, contact: e.target.value }))} />
                                         <input className={FORM_CONTROL_CLASS} placeholder="Phone number" value={opponentForm.phone} onChange={e => setOpponentForm(prev => ({ ...prev, phone: e.target.value }))} />
+                                        <textarea
+                                            className={cx(FORM_CONTROL_CLASS, 'min-h-[96px]')}
+                                            placeholder="Known aliases, abbreviations, or old names"
+                                            value={opponentForm.aliases}
+                                            onChange={e => setOpponentForm(prev => ({ ...prev, aliases: e.target.value }))}
+                                        />
+                                        <div className="text-[12px] text-slate-500">One per line or comma-separated. Imported results can remember names here automatically.</div>
                                         <div className="flex items-center gap-2">
                                             <button onClick={handleOpponentDelete} className={getButtonClass('danger', 'md', 'flex-1')}>Delete</button>
                                             <button onClick={saveOpponentDetails} disabled={!opponentIsDirty || opponentSaveStatus === 'saving'} className={getButtonClass((opponentIsDirty && opponentSaveStatus !== 'saving') ? 'primary' : 'subtle', 'md', 'flex-1')}>
@@ -17696,6 +18473,7 @@
             { key: 'transactions', type: 'collection', label: 'Ledger activity', description: 'All player fees, pitch fees, payments and reimbursements.' },
             { key: 'participations', type: 'collection', label: 'Participation links', description: 'Attendance and linking between players and fixtures.' },
             { key: 'opponents', type: 'collection', label: 'Opponents directory', description: 'Saved teams for quick match setup.' },
+            { key: 'opponentResults', type: 'collection', label: 'Imported opposition results', description: 'League results imported for non-Exiles teams and prep intel.' },
             { key: 'venues', type: 'collection', label: 'Venues list', description: 'Grounds, pitches and saved venue details.' },
             { key: 'referees', type: 'collection', label: 'Referees & contacts', description: 'Officials with saved phone numbers.' },
             { key: 'kitDetails', type: 'collection', label: 'Kit holders', description: 'Current kit assignments and status.' },
@@ -17720,6 +18498,7 @@
                 transactions: countList(data.transactions),
                 participations: countList(data.participations),
                 opponents: countList(data.opponents),
+                opponentResults: countList(data.opponentResults),
                 venues: countList(data.venues),
                 referees: countList(data.referees),
                 kitDetails: countList(data.kitDetails),
@@ -17741,6 +18520,7 @@
             { key: 'transactions', label: 'Transactions' },
             { key: 'participations', label: 'Participations' },
             { key: 'opponents', label: 'Opponents' },
+            { key: 'opponentResults', label: 'Imported results' },
             { key: 'venues', label: 'Venues' },
             { key: 'referees', label: 'Referees' },
             { key: 'kitDetails', label: 'Kit holders' },
@@ -17755,6 +18535,7 @@
             { key: 'transactions', label: 'Transactions' },
             { key: 'participations', label: 'Participations' },
             { key: 'opponents', label: 'Opponents' },
+            { key: 'opponentResults', label: 'Imported results' },
             { key: 'venues', label: 'Venues' },
             { key: 'referees', label: 'Referees' },
             { key: 'kitDetails', label: 'Kit holders' },
@@ -19282,6 +20063,7 @@
                 let data = [];
                 switch(key) {
                     case 'opponents': data = await db.opponents.toArray(); break;
+                    case 'opponentResults': data = db.opponentResults ? await db.opponentResults.toArray() : []; break;
                     case 'venues': data = await db.venues.toArray(); break;
                     case 'players': data = await db.players.toArray(); break;
                     case 'fixtures': data = await db.fixtures.toArray(); break;
@@ -19328,6 +20110,20 @@
                     await db.opponents.clear();
                     if(Array.isArray(data) && data.length) await db.opponents.bulkAdd(data);
                     setOpponents(await db.opponents.toArray());
+                } else if(key === 'opponentResults') {
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import opponent results',
+                        description: 'Replace imported opponent results with this file?',
+                        confirmLabel: 'Replace opponent results',
+                        danger: true
+                    });
+                    if(!approved) return;
+                    if (db.opponentResults) {
+                        await db.opponentResults.clear();
+                        if(Array.isArray(data) && data.length) await db.opponentResults.bulkPut(data);
+                    }
+                    pushSettingsToast('Opponent results imported.', 'success');
+                    return;
                 } else if(key === 'venues') {
                     const approved = await requestSettingsConfirmation({
                         title: 'Import venues',
@@ -19480,6 +20276,7 @@
                         await db.transactions.clear();
                         await db.participations.clear();
                         await db.opponents.clear();
+                        if (db.opponentResults) await db.opponentResults.clear();
                         await db.venues.clear();
                         await db.referees.clear();
                         await db.kitDetails.clear();
@@ -19491,6 +20288,7 @@
                         const txCount = await runStep('transactions', async () => runListWithProgress('Rebuilding ledger entries', data.transactions?.map(t => ({ ...t, flow: t.flow || deriveFlow(t.type) })), rec => db.transactions.add(rec))) || 0;
                         const participationCount = await runStep('participations', async () => runListWithProgress('Linking participations', data.participations, rec => db.participations.add(rec))) || 0;
                         await runStep('opponents', async () => runListWithProgress('Restoring opponents', data.opponents, rec => db.opponents.add(rec)));
+                        const opponentResultCount = await runStep('opponentResults', async () => runListWithProgress('Restoring imported results', data.opponentResults, rec => db.opponentResults ? db.opponentResults.add(rec) : Promise.resolve())) || 0;
                         await runStep('venues', async () => runListWithProgress('Restoring venues', data.venues, rec => db.venues.add(rec)));
                         await runStep('referees', async () => runListWithProgress('Restoring referees', data.referees, rec => db.referees.add(rec)));
                         await runStep('kitDetails', async () => runListWithProgress('Restoring kit holders', data.kitDetails, rec => db.kitDetails.add(rec)));
@@ -19525,6 +20323,7 @@
                             fixtureCount ? `${fixtureCount} games` : '',
                             txCount ? `${txCount} ledger rows` : '',
                             participationCount ? `${participationCount} participations` : '',
+                            opponentResultCount ? `${opponentResultCount} imported results` : '',
                             sponsorCount ? `${sponsorCount} sponsors` : ''
                         ].filter(Boolean);
                         setImportAllStatus(`Import complete.${summaryParts.length ? ` Imported ${summaryParts.join(', ')}.` : ''}`);
@@ -19573,6 +20372,7 @@
                     transactions,
                     participations,
                     opponents,
+                    opponentResults,
                     venues,
                     referees,
                     kitDetails,
@@ -19585,6 +20385,7 @@
                     db.transactions.toArray(),
                     db.participations.toArray(),
                     db.opponents.toArray(),
+                    db.opponentResults ? db.opponentResults.toArray() : [],
                     db.venues.toArray(),
                     db.referees.toArray(),
                     db.kitDetails.toArray(),
@@ -19599,6 +20400,7 @@
                     transactions,
                     participations,
                     opponents,
+                    opponentResults,
                     venues,
                     referees,
                     kitDetails,
@@ -19630,6 +20432,7 @@
                     transactions: transactions.length,
                     participations: participations.length,
                     opponents: opponents.length,
+                    opponentResults: opponentResults.length,
                     venues: venues.length,
                     referees: referees.length,
                     kitDetails: kitDetails.length,
@@ -19643,6 +20446,7 @@
                     ['transactions', 'ledger entries'],
                     ['participations', 'participations'],
                     ['opponents', 'opponents'],
+                    ['opponentResults', 'imported results'],
                     ['venues', 'venues'],
                     ['referees', 'referees'],
                     ['kitDetails', 'kit holders'],
@@ -20195,6 +20999,7 @@
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Exports</div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                             <button onClick={() => exportEntity('opponents')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Opponents</button>
+                            <button onClick={() => exportEntity('opponentResults')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Opponent Results</button>
                             <button onClick={() => exportEntity('venues')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Venues</button>
                             <button onClick={() => exportEntity('players')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Players</button>
                             <button onClick={() => exportEntity('fixtures')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Games</button>
@@ -20213,6 +21018,7 @@
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Imports (replace current)</div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                             <button onClick={() => { setImportTarget('opponents'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Opponents</button>
+                            <button onClick={() => { setImportTarget('opponentResults'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Opponent Results</button>
                             <button onClick={() => { setImportTarget('venues'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Venues</button>
                             <button onClick={() => { setImportTarget('players'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Players</button>
                             <button onClick={() => { setImportTarget('fixtures'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Games</button>
@@ -20861,6 +21667,8 @@
             const [kitSizeOptions, setKitSizeOptions] = useState(loadKitSizeOptions());
             const [playerNameMatchHistory, setPlayerNameMatchHistory] = useState({});
             const [appChangeLog, setAppChangeLog] = useState(() => normalizeAppChangeLogEntries(DEFAULT_APP_CHANGE_LOG));
+            const [appFixtures, setAppFixtures] = useState([]);
+            const [liveHeaderNow, setLiveHeaderNow] = useState(() => Date.now());
             const [hasLocalVersionMismatch, setHasLocalVersionMismatch] = useState(false);
             const [hasRemoteVersionMismatch, setHasRemoteVersionMismatch] = useState(false);
             const [availableBuildVersion, setAvailableBuildVersion] = useState(APP_VERSION);
@@ -20892,6 +21700,11 @@
                 return () => {
                     if (style.parentNode) style.parentNode.removeChild(style);
                 };
+            }, []);
+            const refreshAppFixtures = useCallback(async () => {
+                await waitForDb();
+                const list = await db.fixtures.orderBy('date').reverse().toArray();
+                setAppFixtures(list);
             }, []);
             const startImportProgress = useCallback((label = 'Updating data…') => {
                 setImportCount(prev => {
@@ -20948,6 +21761,25 @@
                 progressDetails,
                 isImporting: importCount > 0
             }), [startImportProgress, finishImportProgress, addProgressDetail, progressDetails, importCount]);
+            const activeLiveFixture = useMemo(() => {
+                return [...appFixtures]
+                    .filter((fixture) => !!fixture?.matchdayPlanner?.live?.active)
+                    .sort((a, b) => {
+                        const aUpdated = Date.parse(a?.matchdayPlanner?.live?.clock?.updatedAt || a?.updatedAt || a?.date || '') || 0;
+                        const bUpdated = Date.parse(b?.matchdayPlanner?.live?.clock?.updatedAt || b?.updatedAt || b?.date || '') || 0;
+                        if (aUpdated !== bUpdated) return bUpdated - aUpdated;
+                        return Number(b?.id || 0) - Number(a?.id || 0);
+                    })[0] || null;
+            }, [appFixtures]);
+            const hasActiveLiveFixture = !!activeLiveFixture;
+            const activeLiveClock = useMemo(() => normalizeLiveClock(activeLiveFixture?.matchdayPlanner?.live?.clock || {}), [activeLiveFixture]);
+            const activeLiveClockDisplay = useMemo(() => getLiveClockDisplay(activeLiveClock, liveHeaderNow), [activeLiveClock, liveHeaderNow]);
+            const activeLivePhase = normalizeLivePhase(activeLiveClock.phase);
+            const activeLivePhaseLabel = MATCHDAY_LIVE_PHASE_SHORT_LABELS[activeLivePhase] || 'LIVE';
+            const activeLiveHomeScore = normalizeFixtureScoreValue(activeLiveFixture?.homeScore);
+            const activeLiveAwayScore = normalizeFixtureScoreValue(activeLiveFixture?.awayScore);
+            const activeLiveScoreLabel = `${activeLiveHomeScore ?? 0}-${activeLiveAwayScore ?? 0}`;
+            const activeLiveOpponentLabel = activeLiveFixture?.opponent || 'Opponent';
             const authStatus = useMemo(() => {
                 if (!isAuthReady) {
                     return { label: 'DB: Connecting...', tone: 'text-slate-400', actionLabel: 'Check database login' };
@@ -21008,6 +21840,27 @@
                     alert('Unable to log in: ' + (err?.message || 'Unexpected error'));
                 }
             }, [authUser, requestAuthConfirmation]);
+
+            useEffect(() => {
+                refreshAppFixtures();
+                const handler = (e) => {
+                    if (!e.detail || !e.detail.name) return;
+                    if (e.detail.name === 'fixtures') {
+                        refreshAppFixtures();
+                    }
+                };
+                window.addEventListener('gaffer-firestore-update', handler);
+                return () => window.removeEventListener('gaffer-firestore-update', handler);
+            }, [refreshAppFixtures]);
+
+            useEffect(() => {
+                if (!hasActiveLiveFixture) return undefined;
+                setLiveHeaderNow(Date.now());
+                const timer = window.setInterval(() => {
+                    setLiveHeaderNow(Date.now());
+                }, 1000);
+                return () => window.clearInterval(timer);
+            }, [hasActiveLiveFixture, activeLiveFixture?.id]);
 
             useEffect(() => {
                 if (typeof window === 'undefined') return () => {};
@@ -21332,6 +22185,27 @@
                 setActiveTab(target);
             }, [activeTab, setActiveTab, scrollCurrentTabToTop]);
 
+            const jumpToActiveLiveFixture = useCallback(() => {
+                if (!activeLiveFixture?.id) return;
+                const backTab = activeTab || 'dashboard';
+                setFixtureFocusContext({
+                    fixtureId: activeLiveFixture.id,
+                    opponent: activeLiveFixture.opponent || '',
+                    backTab
+                });
+                window.dispatchEvent(new CustomEvent(FOCUS_FIXTURE_NOW_EVENT, {
+                    detail: {
+                        fixtureId: activeLiveFixture.id,
+                        backTab
+                    }
+                }));
+                if (activeTab !== 'matchday') {
+                    navigate('matchday');
+                } else {
+                    scrollCurrentTabToTop('matchday');
+                }
+            }, [activeLiveFixture, activeTab, navigate, scrollCurrentTabToTop]);
+
             return (
                 <ImportProgressContext.Provider value={importProgressContext}>
                     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-brand-100 selection:text-brand-900 relative overflow-hidden">
@@ -21340,8 +22214,39 @@
                              <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-emerald-100/40 rounded-full blur-[120px]"></div>
                         </div>
 
+                        {hasActiveLiveFixture && (
+                            <div className="fixed inset-x-0 top-0 z-30 pointer-events-none">
+                                <div className="max-w-md mx-auto px-5 pt-[calc(env(safe-area-inset-top)+0.5rem)] pointer-events-auto">
+                                    <button
+                                        type="button"
+                                        onClick={jumpToActiveLiveFixture}
+                                        className="w-full rounded-[24px] border border-emerald-300/40 bg-gradient-to-r from-slate-950 via-emerald-950 to-emerald-900 text-white shadow-soft px-4 py-3 flex items-center justify-between gap-3 text-left"
+                                    >
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="relative flex h-2.5 w-2.5">
+                                                    <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75 animate-ping"></span>
+                                                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300"></span>
+                                                </span>
+                                                <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-100">Live</span>
+                                            </div>
+                                            <div className="mt-1 truncate text-[15px] font-display font-bold">vs {activeLiveOpponentLabel}</div>
+                                        </div>
+                                        <div className="shrink-0 text-center">
+                                            <div className="text-xl font-display font-bold leading-none">{activeLiveScoreLabel}</div>
+                                            <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white/60">Exiles</div>
+                                        </div>
+                                        <div className="shrink-0 text-right">
+                                            <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-100">{activeLivePhaseLabel}</div>
+                                            <div className="mt-1 text-[15px] font-display font-bold">{activeLiveClockDisplay}</div>
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         {isVersionMismatch && (
-                            <div className="max-w-md mx-auto mt-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-[11px] relative z-10 space-y-2">
+                            <div className={cx('max-w-md mx-auto px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-[11px] relative z-10 space-y-2', hasActiveLiveFixture ? 'mt-[calc(env(safe-area-inset-top)+5.25rem)]' : 'mt-4')}>
                                 <div className="text-xs font-bold text-amber-900 tracking-wide">New build detected</div>
                                 <p>
                                     Version {availableBuildVersion || APP_VERSION} is live. Hard refresh (Cmd/Ctrl + Shift + R or hold Shift + click reload)
@@ -21353,7 +22258,7 @@
                             </div>
                         )}
 
-                        <main className="max-w-md mx-auto min-h-screen relative z-10 px-5 pt-safe pb-[calc(6rem+env(safe-area-inset-bottom))]">
+                        <main className={cx('max-w-md mx-auto min-h-screen relative z-10 px-5 pb-[calc(6rem+env(safe-area-inset-bottom))]', hasActiveLiveFixture ? 'pt-[calc(env(safe-area-inset-top)+5.5rem)]' : 'pt-safe')}>
                             {activeTab === 'dashboard' && (
                                 <div data-tab-container="dashboard">
                                     <Dashboard onNavigate={navigate} kitDetails={kitDetails} kitQueue={kitQueue} kitNumberLimit={kitNumberLimit} />
