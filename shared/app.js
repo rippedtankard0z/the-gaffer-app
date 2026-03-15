@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-98';
+        const MASTER_BUILD_VERSION = '2026.03.15-101';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,55 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-16-matchday-whistle-nav',
+                at: '2026-03-16T01:10:00+08:00',
+                build: '2026.03.15-101',
+                area: 'Navigation',
+                title: 'Match Day now uses a whistle icon in navigation',
+                summary: 'The Match Day tab now uses a whistle icon in the bottom menu bar so it reads more like live football mode at a glance.',
+                changes: [
+                    { label: 'Bottom nav icon', from: 'Goal icon for Match Day', to: 'Whistle icon for Match Day with a safe goal fallback if the icon set does not include it' },
+                    { label: 'Guide shortcut', from: 'Generic history-style Match Day icon', to: 'Whistle icon so guide navigation matches the live tab identity' }
+                ],
+                details: [
+                    'This is a visual identity change only. Match Day behaviour, routes, and live tracking are unchanged.',
+                    'If an older cached shell does not have the whistle icon available, the app falls back safely instead of showing a broken icon.'
+                ]
+            },
+            {
+                id: '2026-03-16-user-guide-index-collapse',
+                at: '2026-03-16T00:52:00+08:00',
+                build: '2026.03.15-100',
+                area: 'User Guide',
+                title: 'User Guide now starts collapsed and includes a clickable section index',
+                summary: 'The guide opens in a calmer collapsed state by default, and a new index at the top lets you jump straight to any section and open it automatically.',
+                changes: [
+                    { label: 'Default state', from: 'The first guide sections opened automatically', to: 'All guide sections now start collapsed by default' },
+                    { label: 'Navigation', from: 'You had to scroll through the guide manually', to: 'A section index at the top now jumps you directly to the part you want' }
+                ],
+                details: [
+                    'Index taps open the target section and scroll it into view.',
+                    'Search, Open all, and Collapse all still work the same way once you are inside the guide.'
+                ]
+            },
+            {
+                id: '2026-03-16-backup-import-settings-coverage',
+                at: '2026-03-16T00:35:00+08:00',
+                build: '2026.03.15-99',
+                area: 'Backup & import',
+                title: 'Backup and import coverage now includes the fuller settings/config shape',
+                summary: 'Settings-related exports and imports now cover the richer data the app captures today, including raw settings docs, app settings payloads, kit settings, referee defaults, position definitions, and newer app metadata.',
+                changes: [
+                    { label: 'Settings coverage', from: 'Single-item backup/import mainly covered the older list exports', to: 'You can now export and import raw settings docs, app settings, kit settings, referee defaults, and position definitions directly' },
+                    { label: 'Restore fallback', from: 'Backup restore only fell back to a narrower subset of top-level settings fields', to: 'Restore now understands appSettings plus newer fields like player name memory, app log, and build metadata' },
+                    { label: 'Full reset hygiene', from: 'Some newer imported data was not included in a full wipe path', to: 'Imported opponent results are now cleared with the rest of the app data during a full reset' }
+                ],
+                details: [
+                    'This keeps backup, restore, export, and import much closer to the real data shape the app now uses.',
+                    'It also makes the settings-side tools safer when you move data between devices or restore after a cleanup.'
+                ]
+            },
             {
                 id: '2026-03-16-import-review-raw-date-ignore',
                 at: '2026-03-16T00:12:00+08:00',
@@ -2149,6 +2198,7 @@
                 await waitForDb();
                 if (!db?.settings) return false;
                 await db.settings.bulkPut([{ id: SETTINGS_DOC_ID, ...patch }]);
+                window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'settings' } }));
                 return true;
             } catch (err) {
                 console.warn('Unable to persist settings', err);
@@ -12401,7 +12451,7 @@
             const items = [
                 { id: 'dashboard', icon: 'LayoutGrid', label: 'Home' },
                 { id: 'fixtures', icon: 'Calendar', label: 'Games' },
-                { id: 'matchday', icon: 'Goal', fallbackIcon: 'History', label: 'Match Day' },
+                { id: 'matchday', icon: 'Whistle', fallbackIcon: 'Goal', label: 'Match Day' },
                 { id: 'more', icon: 'MoreHorizontal', label: 'More' }
             ];
 
@@ -12796,11 +12846,12 @@
         const UserGuideHub = ({ onNavigate = () => {} }) => {
             const [search, setSearch] = useState('');
             const [openSections, setOpenSections] = useState(() => (
-                USER_GUIDE_SECTIONS.reduce((acc, section, index) => {
-                    acc[section.id] = index < 2;
+                USER_GUIDE_SECTIONS.reduce((acc, section) => {
+                    acc[section.id] = false;
                     return acc;
                 }, {})
             ));
+            const sectionRefs = useRef({});
             const normalizedSearch = (search || '').trim().toLowerCase();
             const visibleSections = USER_GUIDE_SECTIONS.filter((section) => {
                 if (!normalizedSearch) return true;
@@ -12828,10 +12879,22 @@
                     return next;
                 });
             };
+            const focusGuideSection = (sectionId) => {
+                if (!sectionId) return;
+                setOpenSections((prev) => ({ ...prev, [sectionId]: true }));
+                window.requestAnimationFrame(() => {
+                    window.requestAnimationFrame(() => {
+                        const node = sectionRefs.current?.[sectionId];
+                        if (node && typeof node.scrollIntoView === 'function') {
+                            node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                    });
+                });
+            };
             const quickLinks = [
                 { label: 'Home', tab: 'dashboard', icon: 'LayoutGrid' },
                 { label: 'Games', tab: 'fixtures', icon: 'Calendar' },
-                { label: 'Match Day', tab: 'matchday', icon: 'History' },
+                { label: 'Match Day', tab: 'matchday', icon: 'Whistle', fallbackIcon: 'Goal' },
                 { label: 'Reports', tab: 'reports', icon: 'Wallet' },
                 { label: 'Settings', tab: 'settings', icon: 'Settings' }
             ];
@@ -12861,6 +12924,9 @@
 
                         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                             {quickLinks.map((item) => (
+                                (() => {
+                                    const iconName = window?.lucide?.icons?.[item.icon] ? item.icon : (item.fallbackIcon || item.icon);
+                                    return (
                                 <button
                                     key={`guide-quick-${item.tab}`}
                                     type="button"
@@ -12869,9 +12935,42 @@
                                 >
                                     <div className="flex items-center gap-2">
                                         <div className="h-8 w-8 rounded-xl border border-slate-200 bg-white flex items-center justify-center text-slate-700">
-                                            <Icon name={item.icon} size={15} />
+                                            <Icon name={iconName} size={15} />
                                         </div>
                                         <div className="text-[12px] font-bold text-slate-900">{item.label}</div>
+                                    </div>
+                                </button>
+                                    );
+                                })()
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Guide Index</div>
+                                <div className="mt-1 text-[13px] text-slate-500">Jump straight to a section and open it.</div>
+                            </div>
+                            <div className="text-[11px] font-bold text-slate-400">{USER_GUIDE_SECTIONS.length} sections</div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {USER_GUIDE_SECTIONS.map((section, index) => (
+                                <button
+                                    key={`guide-index-${section.id}`}
+                                    type="button"
+                                    onClick={() => focusGuideSection(section.id)}
+                                    className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-left hover:border-brand-200"
+                                >
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Section {index + 1}</div>
+                                            <div className="mt-1 text-[13px] font-bold text-slate-900">{section.title}</div>
+                                            <div className="mt-1 text-[12px] text-slate-500">{section.badge}</div>
+                                        </div>
+                                        <div className="h-8 w-8 rounded-xl border border-slate-200 bg-white flex items-center justify-center text-slate-500 shrink-0">
+                                            <Icon name="ArrowRight" size={15} />
+                                        </div>
                                     </div>
                                 </button>
                             ))}
@@ -12939,7 +13038,13 @@
                         {visibleSections.length ? visibleSections.map((section) => {
                             const isOpen = !!openSections[section.id];
                             return (
-                                <div key={section.id} className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft">
+                                <div
+                                    key={section.id}
+                                    ref={(node) => {
+                                        if (node) sectionRefs.current[section.id] = node;
+                                    }}
+                                    className="bg-white border border-slate-200 rounded-3xl p-4 shadow-soft scroll-mt-28"
+                                >
                                     <button
                                         type="button"
                                         onClick={() => toggleSection(section.id)}
@@ -18833,6 +18938,7 @@
             { key: 'kitQueue', type: 'collection', label: 'Kit order queue', description: 'Upcoming kit requests and priorities.' },
             { key: 'sponsors', type: 'collection', label: 'Sponsors & revenue', description: 'Sponsor deals, payment schedules, and tracked receipts.' },
             { key: 'settings', type: 'collection', label: 'Settings records', description: 'Raw settings documents, including advanced app settings.' },
+            { key: 'appSettings', type: 'setting', label: 'App settings payload', description: 'Normalized app settings including app log, build info, and player-name memory.' },
             { key: 'kitSettings', type: 'setting', label: 'Kit settings', description: 'Number limits and available size options.' },
             { key: 'positionDefinitions', type: 'collection', label: 'Position definitions', description: 'Master list that powers player roles.' },
             { key: 'categories', type: 'collection', label: 'Cost categories', description: 'Custom buckets for expenses and income.' },
@@ -18858,6 +18964,7 @@
                 kitQueue: countList(data.kitQueue),
                 sponsors: countList(data.sponsors),
                 settings: countList(data.settings),
+                appSettings: data?.appSettings ? 1 : 0,
                 kitSettings: (hasKitLimit || hasKitSizes) ? 1 : 0,
                 positionDefinitions: countList(data.positionDefinitions),
                 categories: countList(data.categories),
@@ -20082,6 +20189,7 @@
                     await runStep('transactions', async () => db.transactions.clear());
                     await runStep('participations', async () => db.participations.clear());
                     await runStep('opponents', async () => { await db.opponents.clear(); setOpponents([]); });
+                    await runStep('opponentResults', async () => { if (db.opponentResults) await db.opponentResults.clear(); });
                     await runStep('venues', async () => { await db.venues.clear(); setVenues([]); });
                     await runStep('referees', async () => { await db.referees.clear(); setReferees([]); });
                     await runStep('kitDetails', async () => db.kitDetails.clear());
@@ -20398,16 +20506,58 @@
             const normalizeSettingsFromBackup = (data = {}) => {
                 const settingsDocs = Array.isArray(data.settings) ? data.settings : [];
                 const appDoc = settingsDocs.find(doc => String(doc?.id) === SETTINGS_DOC_ID) || null;
+                const appSettings = (data.appSettings && typeof data.appSettings === 'object' && !Array.isArray(data.appSettings))
+                    ? data.appSettings
+                    : {};
                 const fallback = {
+                    ...appSettings,
                     categories: data.categories,
                     itemCategories: data.itemCategories,
                     seasonCategories: data.seasonCategories,
                     refDefaults: data.refDefaults,
                     positionDefinitions: data.positionDefinitions,
                     kitNumberLimit: data.kitNumberLimit,
-                    kitSizeOptions: data.kitSizeOptions
+                    kitSizeOptions: data.kitSizeOptions,
+                    playerNameMatchHistory: data.playerNameMatchHistory,
+                    appChangeLog: data.appChangeLog,
+                    buildVersion: extractBuildVersion(data) || appSettings.buildVersion
                 };
                 return normalizeSettings(appDoc ? { ...fallback, ...appDoc } : fallback);
+            };
+
+            const buildAppSettingsExportPayload = async () => {
+                const allSettings = await db.settings.toArray();
+                const appDoc = allSettings.find(doc => String(doc?.id) === SETTINGS_DOC_ID) || allSettings[0] || {};
+                const normalized = normalizeSettings(appDoc);
+                return {
+                    id: SETTINGS_DOC_ID,
+                    ...appDoc,
+                    ...normalized
+                };
+            };
+
+            const applyNormalizedSettingsState = async (normalizedSettings) => {
+                const next = normalizeSettings(normalizedSettings);
+                setCategories(next.categories);
+                persistCategories(next.categories);
+                setItemCategories(next.itemCategories);
+                persistItemCategories(next.itemCategories);
+                setSeasonCategories(next.seasonCategories);
+                persistSeasonCategories(next.seasonCategories);
+                setRefDefaults(next.refDefaults);
+                persistRefDefaults(next.refDefaults);
+                setKitNumberLimit(next.kitNumberLimit);
+                persistKitNumberLimit(next.kitNumberLimit);
+                setKitSizeOptions(next.kitSizeOptions);
+                persistKitSizeOptions(next.kitSizeOptions);
+                setPositionDefinitions(next.positionDefinitions);
+                persistPositionDefinitions(next.positionDefinitions);
+                await saveSettingsPatch({
+                    playerNameMatchHistory: next.playerNameMatchHistory,
+                    appChangeLog: next.appChangeLog,
+                    buildVersion: next.buildVersion || APP_VERSION
+                });
+                return next;
             };
 
             const exportEntity = async (key) => {
@@ -20424,6 +20574,11 @@
                     case 'kitDetails': data = await db.kitDetails.toArray(); break;
                     case 'kitQueue': data = await db.kitQueue.toArray(); break;
                     case 'sponsors': data = db.sponsors ? await db.sponsors.toArray() : []; break;
+                    case 'settings': data = await db.settings.toArray(); break;
+                    case 'appSettings': data = await buildAppSettingsExportPayload(); break;
+                    case 'kitSettings': data = { kitNumberLimit, kitSizeOptions }; break;
+                    case 'refDefaults': data = { ...refDefaults }; break;
+                    case 'positionDefinitions': data = clonePositionDefinitions(positionDefinitions); break;
                     case 'itemCategories': data = itemCategories; break;
                     case 'categories': data = categories; break;
                     case 'seasonCategories': data = seasonCategories; break;
@@ -20476,6 +20631,33 @@
                         if(Array.isArray(data) && data.length) await db.opponentResults.bulkPut(data);
                     }
                     pushSettingsToast('Opponent results imported.', 'success');
+                    return;
+                } else if(key === 'settings') {
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import settings records',
+                        description: 'Replace raw settings documents with this file and apply the app settings inside it?',
+                        confirmLabel: 'Replace settings',
+                        danger: true
+                    });
+                    if(!approved) return;
+                    const records = Array.isArray(data) ? data : [data].filter(Boolean);
+                    await db.settings.clear();
+                    if (records.length) await db.settings.bulkPut(records);
+                    const normalized = normalizeSettingsFromBackup({ settings: records });
+                    await applyNormalizedSettingsState(normalized);
+                    pushSettingsToast('Settings records imported.', 'success');
+                    return;
+                } else if(key === 'appSettings') {
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import app settings',
+                        description: 'Apply categories, seasons, kit settings, app log, build info, and the rest of the app settings from this file?',
+                        confirmLabel: 'Apply app settings',
+                        danger: true
+                    });
+                    if(!approved) return;
+                    const normalized = normalizeSettings(Array.isArray(data) ? data[0] : data);
+                    await applyNormalizedSettingsState(normalized);
+                    pushSettingsToast('App settings imported.', 'success');
                     return;
                 } else if(key === 'venues') {
                     const approved = await requestSettingsConfirmation({
@@ -20567,6 +20749,57 @@
                     }
                     pushSettingsToast('Sponsor records imported.', 'success');
                     return;
+                } else if(key === 'kitSettings') {
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import kit settings',
+                        description: 'Replace the saved kit number limit and size options with this file?',
+                        confirmLabel: 'Apply kit settings',
+                        danger: true
+                    });
+                    if(!approved) return;
+                    const payload = Array.isArray(data) ? data[0] : data;
+                    const nextLimit = Number.isFinite(Number(payload?.kitNumberLimit))
+                        ? Math.max(1, Number(payload.kitNumberLimit))
+                        : DEFAULT_KIT_NUMBER_LIMIT;
+                    const nextSizes = Array.isArray(payload?.kitSizeOptions) && payload.kitSizeOptions.length
+                        ? payload.kitSizeOptions
+                        : [...DEFAULT_KIT_SIZE_OPTIONS];
+                    setKitNumberLimit(nextLimit);
+                    persistKitNumberLimit(nextLimit);
+                    setKitSizeOptions(nextSizes);
+                    persistKitSizeOptions(nextSizes);
+                    pushSettingsToast('Kit settings imported.', 'success');
+                    return;
+                } else if(key === 'refDefaults') {
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import referee defaults',
+                        description: 'Replace the saved referee defaults with this file?',
+                        confirmLabel: 'Apply referee defaults',
+                        danger: true
+                    });
+                    if(!approved) return;
+                    const payload = Array.isArray(data) ? data[0] : data;
+                    const nextDefaults = {
+                        total: Number(payload?.total) || DEFAULT_REF_DEFAULTS.total,
+                        split: Number(payload?.split) || DEFAULT_REF_DEFAULTS.split
+                    };
+                    setRefDefaults(nextDefaults);
+                    persistRefDefaults(nextDefaults);
+                    pushSettingsToast('Referee defaults imported.', 'success');
+                    return;
+                } else if(key === 'positionDefinitions') {
+                    const approved = await requestSettingsConfirmation({
+                        title: 'Import position definitions',
+                        description: 'Replace the saved position definitions with this file?',
+                        confirmLabel: 'Apply positions',
+                        danger: true
+                    });
+                    if(!approved) return;
+                    const nextDefinitions = normalizePositionDefinitions(Array.isArray(data) ? data : [], DEFAULT_POSITION_DEFINITIONS);
+                    setPositionDefinitions(nextDefinitions);
+                    persistPositionDefinitions(nextDefinitions);
+                    pushSettingsToast('Position definitions imported.', 'success');
+                    return;
                 } else if(key === 'itemCategories') {
                     const approved = await requestSettingsConfirmation({
                         title: 'Import player item categories',
@@ -20653,20 +20886,7 @@
                             await db.settings.bulkPut(data.settings);
                         }
                         const normalizedSettings = normalizeSettingsFromBackup(data);
-                        setCategories(normalizedSettings.categories);
-                        persistCategories(normalizedSettings.categories);
-                        setItemCategories(normalizedSettings.itemCategories);
-                        persistItemCategories(normalizedSettings.itemCategories);
-                        setSeasonCategories(normalizedSettings.seasonCategories);
-                        persistSeasonCategories(normalizedSettings.seasonCategories);
-                        setRefDefaults(normalizedSettings.refDefaults);
-                        persistRefDefaults(normalizedSettings.refDefaults);
-                        setKitNumberLimit(normalizedSettings.kitNumberLimit);
-                        persistKitNumberLimit(normalizedSettings.kitNumberLimit);
-                        setKitSizeOptions(normalizedSettings.kitSizeOptions);
-                        persistKitSizeOptions(normalizedSettings.kitSizeOptions);
-                        setPositionDefinitions(normalizedSettings.positionDefinitions);
-                        persistPositionDefinitions(normalizedSettings.positionDefinitions);
+                        await applyNormalizedSettingsState(normalizedSettings);
                         markImportStep('settings', 'done');
                         setOpponents(await db.opponents.toArray());
                         setVenues(await db.venues.toArray());
@@ -20747,7 +20967,10 @@
                     db.settings.toArray()
                 ]);
                 const generatedAt = new Date();
+                const appSettings = normalizeSettingsFromBackup({ settings: settingsRecords });
                 const payload = {
+                    backupSchemaVersion: 2,
+                    buildVersion: APP_VERSION,
                     players,
                     fixtures,
                     transactions,
@@ -20760,6 +20983,7 @@
                     kitQueue: kitQueueEntries,
                     sponsors,
                     settings: settingsRecords,
+                    appSettings,
                     kitNumberLimit,
                     kitSizeOptions,
                     positionDefinitions,
@@ -20767,6 +20991,8 @@
                     itemCategories,
                     seasonCategories,
                     refDefaults,
+                    playerNameMatchHistory: appSettings.playerNameMatchHistory,
+                    appChangeLog: appSettings.appChangeLog,
                     generatedAt: generatedAt.toISOString()
                 };
                 const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -20859,6 +21085,7 @@
                     await db.transactions.clear();
                     await db.participations.clear();
                     await db.opponents.clear();
+                    if (db.opponentResults) await db.opponentResults.clear();
                     await db.venues.clear();
                     await db.referees.clear();
                     await db.kitDetails.clear();
@@ -20894,6 +21121,12 @@
                         if(data.opponents?.length) {
                             addProgressDetail(`Adding ${data.opponents.length} opponents…`);
                             await db.opponents.bulkAdd(data.opponents);
+                        }
+                    });
+                    await runStep('opponentResults', async () => {
+                        if (db.opponentResults && data.opponentResults?.length) {
+                            addProgressDetail(`Restoring ${data.opponentResults.length} imported opposition result(s)…`);
+                            await db.opponentResults.bulkPut(data.opponentResults);
                         }
                     });
                     await runStep('venues', async () => {
@@ -20933,20 +21166,7 @@
                         }
                         const normalizedSettings = normalizeSettingsFromBackup(data);
                         addProgressDetail('Applying saved app settings…');
-                        setCategories(normalizedSettings.categories);
-                        persistCategories(normalizedSettings.categories);
-                        setItemCategories(normalizedSettings.itemCategories);
-                        persistItemCategories(normalizedSettings.itemCategories);
-                        setSeasonCategories(normalizedSettings.seasonCategories);
-                        persistSeasonCategories(normalizedSettings.seasonCategories);
-                        setRefDefaults(normalizedSettings.refDefaults);
-                        persistRefDefaults(normalizedSettings.refDefaults);
-                        setKitNumberLimit(normalizedSettings.kitNumberLimit);
-                        persistKitNumberLimit(normalizedSettings.kitNumberLimit);
-                        setKitSizeOptions(normalizedSettings.kitSizeOptions);
-                        persistKitSizeOptions(normalizedSettings.kitSizeOptions);
-                        setPositionDefinitions(normalizedSettings.positionDefinitions);
-                        persistPositionDefinitions(normalizedSettings.positionDefinitions);
+                        await applyNormalizedSettingsState(normalizedSettings);
                     });
                     setOpponents(await db.opponents.toArray());
                     setVenues(await db.venues.toArray());
@@ -21360,6 +21580,11 @@
                             <button onClick={() => exportEntity('kitDetails')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Kit Details</button>
                             <button onClick={() => exportEntity('kitQueue')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Kit Queue</button>
                             <button onClick={() => exportEntity('sponsors')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Sponsors</button>
+                            <button onClick={() => exportEntity('settings')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Settings</button>
+                            <button onClick={() => exportEntity('appSettings')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export App Settings</button>
+                            <button onClick={() => exportEntity('kitSettings')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Kit Settings</button>
+                            <button onClick={() => exportEntity('refDefaults')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Ref Defaults</button>
+                            <button onClick={() => exportEntity('positionDefinitions')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Positions</button>
                             <button onClick={() => exportEntity('itemCategories')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Player Items</button>
                             <button onClick={() => exportEntity('categories')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Cost Categories</button>
                             <button onClick={() => exportEntity('seasonCategories')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Seasons</button>
@@ -21377,6 +21602,11 @@
                             <button onClick={() => { setImportTarget('fixtures'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Games</button>
                             <button onClick={() => { setImportTarget('referees'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Referees</button>
                             <button onClick={() => { setImportTarget('sponsors'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Sponsors</button>
+                            <button onClick={() => { setImportTarget('settings'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Settings</button>
+                            <button onClick={() => { setImportTarget('appSettings'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import App Settings</button>
+                            <button onClick={() => { setImportTarget('kitSettings'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Kit Settings</button>
+                            <button onClick={() => { setImportTarget('refDefaults'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Ref Defaults</button>
+                            <button onClick={() => { setImportTarget('positionDefinitions'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Positions</button>
                             <button onClick={() => { setImportTarget('itemCategories'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Player Items</button>
                             <button onClick={() => { setImportTarget('categories'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Cost Categories</button>
                             <button onClick={() => { setImportTarget('seasonCategories'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Seasons</button>
