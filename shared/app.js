@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-94';
+        const MASTER_BUILD_VERSION = '2026.03.15-96';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -86,6 +86,7 @@
         });
 
         const TEAM_ALIAS_BLOCKLIST = new Set(['fc', 'sc', 'afc', 'club', 'football', 'association', 'sports', 'sport', 'team']);
+        const PRIMARY_CLUB_NAME = 'BRITISH EXILES';
 
         const toTitleishTeamName = (name = '') => {
             return (name || '')
@@ -132,6 +133,14 @@
             const lookup = aliasLookup || buildTeamAliasLookup(knownTeamNames);
             const normalized = normalizeEntityText(clean);
             return lookup[normalized] || toTitleishTeamName(clean);
+        };
+
+        const isPrimaryClubTeamName = (value = '') => {
+            return normalizeEntityText(value) === normalizeEntityText(PRIMARY_CLUB_NAME);
+        };
+
+        const getFixtureMatchdayPlan = (fixture = {}) => {
+            return fixture?.matchdayPlan || fixture?.matchdayPlanner || {};
         };
 
         const makeOpponentResultFingerprint = (row = {}) => {
@@ -648,6 +657,38 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-live-header-matchdayplan-fix',
+                at: '2026-03-15T23:45:00+08:00',
+                build: '2026.03.15-96',
+                area: 'Match Day',
+                title: 'The global live-match header now reads the saved live planner correctly',
+                summary: 'The app-level live header was watching the wrong fixture field, so live matches could be running in Match Day without appearing on Home or other screens. It now reads the saved matchday plan field correctly.',
+                changes: [
+                    { label: 'Live match detection', from: 'The global header looked at fixture.matchdayPlanner, which is not the saved field used by live Match Day', to: 'The global header now reads fixture.matchdayPlan and falls back safely if older data uses matchdayPlanner' }
+                ],
+                details: [
+                    'This fixes the case where a live game is clearly running in Match Day but no top bar appears elsewhere in the app.',
+                    'It also makes the Match Centre and live resume logic use the same saved planner source more consistently.'
+                ]
+            },
+            {
+                id: '2026-03-15-legacy-results-import-split',
+                at: '2026-03-15T23:15:00+08:00',
+                build: '2026.03.15-95',
+                area: 'Import results',
+                title: 'Import Results now separates Exiles fixtures from general league results',
+                summary: 'The older Games-side importer no longer assumes every pasted score is a British Exiles match. Non-Exiles results now keep their true home and away teams and save into opponent intel instead of being mislabelled as Exiles fixtures.',
+                changes: [
+                    { label: 'Result detection', from: 'Any pasted result could be coerced into an Exiles scoreline during review', to: 'Only exact British Exiles fixtures are treated as Games fixtures; other results stay as neutral league results' },
+                    { label: 'Review screen', from: 'The preview only showed opponent and venue, even for non-Exiles matches', to: 'The preview now shows the correct import type and lets you review home and away teams for league results' }
+                ],
+                details: [
+                    'British Exiles Vets or other clubs containing the word Exiles are no longer treated as the main Exiles team automatically.',
+                    'General league results are saved into opponent results storage, while real Exiles fixtures continue to save into the Games list.',
+                    'The review modal now makes it much clearer what will be imported before you press save.'
+                ]
+            },
             {
                 id: '2026-03-15-live-match-global-header',
                 at: '2026-03-15T21:25:00+08:00',
@@ -8019,30 +8060,64 @@
             };
 
             const parseLegacyBlocks = (text) => {
-                const blocks = text.split(/\n\s*\n/).map(b => b.split(/\r?\n/).map(l => l.trim()).filter(Boolean)).filter(b => b.length >= 4);
-                return blocks.map(lines => {
+                const blocks = text
+                    .split(/\n\s*\n/)
+                    .map(block => block.split(/\r?\n/).map(line => line.trim()).filter(Boolean))
+                    .filter(block => block.length >= 4);
+                const knownLegacyTeamNames = Array.from(new Set([
+                    PRIMARY_CLUB_NAME,
+                    ...opponents.map(row => (row?.name || '').trim()).filter(Boolean),
+                    ...fixtures.map(row => (row?.opponent || '').trim()).filter(Boolean)
+                ]));
+                const legacyAliasLookup = buildTeamAliasLookup(knownLegacyTeamNames);
+                return blocks.map((lines, index) => {
                     const [dateLine, scoreLine, venueLine, matchLine] = lines;
-                    const scoreMatch = scoreLine.match(/(\d+)\s*[-–]\s*(\d+)/);
-                    if(!scoreMatch) return null;
+                    const scoreMatch = (scoreLine || '').match(/(\d+)\s*[-–]\s*(\d+)/);
+                    if (!scoreMatch) return null;
                     const leftScore = Number(scoreMatch[1]);
                     const rightScore = Number(scoreMatch[2]);
-                    const parts = matchLine.split(/vs/i).map(s => s.trim()).filter(Boolean);
-                    if(parts.length < 2) return null;
+                    const parts = (matchLine || '').split(/vs/i).map(s => s.trim()).filter(Boolean);
+                    if (parts.length < 2) return null;
                     const teamA = parts[0];
                     const teamB = parts[1];
-                    const exilesA = teamA.toLowerCase().includes('exile');
-                    const exilesB = teamB.toLowerCase().includes('exile');
-                    let ourScore = exilesA ? leftScore : exilesB ? rightScore : leftScore;
-                    let theirScore = exilesA ? rightScore : exilesB ? leftScore : rightScore;
-                    const opponentName = exilesA ? teamB : exilesB ? teamA : teamB;
+                    const canonicalTeamA = resolveCanonicalTeamName(teamA, knownLegacyTeamNames, legacyAliasLookup);
+                    const canonicalTeamB = resolveCanonicalTeamName(teamB, knownLegacyTeamNames, legacyAliasLookup);
+                    const exilesA = isPrimaryClubTeamName(canonicalTeamA);
+                    const exilesB = isPrimaryClubTeamName(canonicalTeamB);
                     const dt = new Date(dateLine);
                     const isoDate = isNaN(dt.getTime()) ? new Date().toISOString().split('T')[0] : dt.toISOString().split('T')[0];
+
+                    if (exilesA || exilesB) {
+                        const ourScore = exilesA ? leftScore : rightScore;
+                        const theirScore = exilesA ? rightScore : leftScore;
+                        const opponentName = exilesA ? canonicalTeamB : canonicalTeamA;
+                        return {
+                            id: `legacy-result-${index + 1}`,
+                            importMode: 'fixture',
+                            date: isoDate,
+                            opponent: opponentName,
+                            opponentRaw: exilesA ? teamB : teamA,
+                            venue: venueLine,
+                            homeScore: ourScore,
+                            awayScore: theirScore
+                        };
+                    }
+
+                    const intelRow = {
+                        resultDate: isoDate,
+                        venue: (venueLine || '').toString().trim(),
+                        homeTeam: canonicalTeamA,
+                        awayTeam: canonicalTeamB,
+                        homeScore: leftScore,
+                        awayScore: rightScore,
+                        homeTeamRaw: teamA,
+                        awayTeamRaw: teamB
+                    };
                     return {
-                        date: isoDate,
-                        opponent: opponentName,
-                        venue: venueLine,
-                        homeScore: ourScore,
-                        awayScore: theirScore
+                        id: `legacy-result-${index + 1}`,
+                        importMode: 'intel',
+                        ...intelRow,
+                        fingerprint: makeOpponentResultFingerprint(intelRow)
                     };
                 }).filter(Boolean);
             };
@@ -8052,17 +8127,54 @@
                 if(!parsed.length) { pushFixtureToast('No results found to import.', 'warning'); return; }
                 const sortedOpps = [...opponents].sort((a,b)=>a.name.localeCompare(b.name));
                 const sortedVens = [...venues].sort((a,b)=>a.name.localeCompare(b.name));
+                const existingOpponentResultFingerprints = new Set(
+                    db.opponentResults
+                        ? (await db.opponentResults.toArray()).map(row => row.fingerprint || makeOpponentResultFingerprint(row))
+                        : []
+                );
+                const existingFixtureFingerprints = new Set(
+                    fixtures
+                        .filter(row => row?.date && row?.opponent)
+                        .map(row => [
+                            row.date,
+                            normalizeEntityText(row.opponent || ''),
+                            Number(row.homeScore ?? -1),
+                            Number(row.awayScore ?? -1)
+                        ].join('|'))
+                );
+                const registeredTeamChoices = Array.from(new Set([
+                    PRIMARY_CLUB_NAME,
+                    ...sortedOpps.map(row => row.name).filter(Boolean)
+                ])).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
                 const preview = parsed.map(item => {
-                    const bestOpp = sortedOpps.map(o => ({ o, score: stringSimilarity(item.opponent, o.name) })).sort((a,b)=>b.score-a.score)[0];
                     const bestVen = sortedVens.map(v => ({ v, score: stringSimilarity(item.venue, v.name) })).sort((a,b)=>b.score-a.score)[0];
+                    if (item.importMode === 'fixture') {
+                        const bestOpp = sortedOpps.map(o => ({ o, score: stringSimilarity(item.opponent, o.name) })).sort((a,b)=>b.score-a.score)[0];
+                        const duplicateFingerprint = [
+                            item.date,
+                            normalizeEntityText((bestOpp && bestOpp.score > 0.7) ? bestOpp.o.name : item.opponent),
+                            Number(item.homeScore ?? -1),
+                            Number(item.awayScore ?? -1)
+                        ].join('|');
+                        return {
+                            ...item,
+                            opponent: (bestOpp && bestOpp.score > 0.7) ? bestOpp.o.name : item.opponent,
+                            opponentId: (bestOpp && bestOpp.score > 0.7) ? bestOpp.o.id : null,
+                            venue: (bestVen && bestVen.score > 0.7) ? bestVen.v.name : item.venue,
+                            venueId: (bestVen && bestVen.score > 0.7) ? bestVen.v.id : null,
+                            newOpponent: '',
+                            newVenue: '',
+                            duplicate: existingFixtureFingerprints.has(duplicateFingerprint),
+                            duplicateReason: 'Existing game'
+                        };
+                    }
                     return {
                         ...item,
-                        opponent: (bestOpp && bestOpp.score > 0.7) ? bestOpp.o.name : item.opponent,
-                        opponentId: (bestOpp && bestOpp.score > 0.7) ? bestOpp.o.id : null,
                         venue: (bestVen && bestVen.score > 0.7) ? bestVen.v.name : item.venue,
                         venueId: (bestVen && bestVen.score > 0.7) ? bestVen.v.id : null,
-                        newOpponent: '',
-                        newVenue: ''
+                        teamChoices: registeredTeamChoices,
+                        duplicate: existingOpponentResultFingerprints.has(item.fingerprint),
+                        duplicateReason: 'Existing result'
                     };
                 });
                 setResultsPreview(preview);
@@ -8070,23 +8182,25 @@
 
             const commitResultsPreview = async () => {
                 if(!resultsPreview.length) return;
-                let added = 0;
+                const existingFixtureFingerprints = new Set(
+                    fixtures
+                        .filter(row => row?.date && row?.opponent)
+                        .map(row => [
+                            row.date,
+                            normalizeEntityText(row.opponent || ''),
+                            Number(row.homeScore ?? -1),
+                            Number(row.awayScore ?? -1)
+                        ].join('|'))
+                );
+                const existingOpponentResultFingerprints = new Set(
+                    db.opponentResults
+                        ? (await db.opponentResults.toArray()).map(row => row.fingerprint || makeOpponentResultFingerprint(row))
+                        : []
+                );
+                let addedFixtures = 0;
+                let addedIntel = 0;
                 for(const item of resultsPreview) {
-                    // opponent resolve
-                    let oppName = item.opponent;
-                    let oppId = item.opponentId || null;
-                    if(item.opponent === '__new__') {
-                        const name = (item.newOpponent || '').trim();
-                        if(!name) continue;
-                        oppName = name;
-                        oppId = await db.opponents.add({ name: oppName });
-                        setOpponents(prev => [...prev, { id: oppId, name: oppName }]);
-                    } else if(!oppId) {
-                        const existing = opponents.find(o => o.name.toLowerCase() === (item.opponent || '').toLowerCase());
-                        if(existing) { oppId = existing.id; oppName = existing.name; }
-                    }
-
-                    // venue resolve
+                    if (item.duplicate) continue;
                     let venueName = item.venue;
                     let venueId = item.venueId || null;
                     if(item.venue === '__new__') {
@@ -8100,24 +8214,77 @@
                         if(existing) { venueId = existing.id; venueName = existing.name; }
                     }
 
-                    await db.fixtures.add({
-                        opponent: oppName,
-                        opponentId: oppId,
-                        venue: venueName,
-                        venueId,
-                        date: item.date,
-                        time: '15:00',
-                        feeAmount: 20,
-                        competitionType: 'LEAGUE',
-                        seasonTag: selectedSeason || (seasonCategories?.[0] || '2025/2026 Season'),
-                        homeScore: item.homeScore,
-                        awayScore: item.awayScore,
-                        forfeitResult: FORFEIT_RESULT.NONE,
-                        status: 'PLAYED'
+                    if (item.importMode === 'fixture') {
+                        let oppName = item.opponent;
+                        let oppId = item.opponentId || null;
+                        if(item.opponent === '__new__') {
+                            const name = (item.newOpponent || '').trim();
+                            if(!name) continue;
+                            oppName = name;
+                            oppId = await db.opponents.add({ name: oppName });
+                            setOpponents(prev => [...prev, { id: oppId, name: oppName }]);
+                        } else if(!oppId) {
+                            const existing = opponents.find(o => o.name.toLowerCase() === (item.opponent || '').toLowerCase());
+                            if(existing) { oppId = existing.id; oppName = existing.name; }
+                        }
+
+                        const fixtureFingerprint = [
+                            item.date,
+                            normalizeEntityText(oppName || ''),
+                            Number(item.homeScore ?? -1),
+                            Number(item.awayScore ?? -1)
+                        ].join('|');
+                        if (existingFixtureFingerprints.has(fixtureFingerprint)) continue;
+                        await db.fixtures.add({
+                            opponent: oppName,
+                            opponentId: oppId,
+                            venue: venueName,
+                            venueId,
+                            date: item.date,
+                            time: '15:00',
+                            feeAmount: 20,
+                            competitionType: 'LEAGUE',
+                            seasonTag: selectedSeason || (seasonCategories?.[0] || '2025/2026 Season'),
+                            homeScore: item.homeScore,
+                            awayScore: item.awayScore,
+                            forfeitResult: FORFEIT_RESULT.NONE,
+                            status: 'PLAYED'
+                        });
+                        existingFixtureFingerprints.add(fixtureFingerprint);
+                        addedFixtures++;
+                        continue;
+                    }
+
+                    if (!db.opponentResults) continue;
+                    const intelRow = {
+                        resultDate: item.resultDate || item.date,
+                        venue: venueName || '',
+                        homeTeam: item.homeTeam,
+                        awayTeam: item.awayTeam,
+                        homeScore: Number(item.homeScore || 0),
+                        awayScore: Number(item.awayScore || 0),
+                        homeTeamRaw: item.homeTeamRaw || item.homeTeam,
+                        awayTeamRaw: item.awayTeamRaw || item.awayTeam
+                    };
+                    const fingerprint = makeOpponentResultFingerprint(intelRow);
+                    if (existingOpponentResultFingerprints.has(fingerprint)) continue;
+                    await db.opponentResults.put({
+                        ...intelRow,
+                        fingerprint,
+                        source: 'legacy_results_import',
+                        importedAt: new Date().toISOString()
                     });
-                    added++;
+                    existingOpponentResultFingerprints.add(fingerprint);
+                    addedIntel++;
                 }
-                pushFixtureToast(`Imported ${added} result${added === 1 ? '' : 's'}.`, 'success');
+                if (addedIntel) {
+                    window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'opponentResults' } }));
+                }
+                const summaryBits = [];
+                if (addedFixtures) summaryBits.push(`${addedFixtures} game${addedFixtures === 1 ? '' : 's'} into Games`);
+                if (addedIntel) summaryBits.push(`${addedIntel} result${addedIntel === 1 ? '' : 's'} into Opponent Intel`);
+                const importedTotal = addedFixtures + addedIntel;
+                pushFixtureToast(importedTotal ? `Imported ${summaryBits.join(' and ')}.` : 'Nothing new to import.', importedTotal ? 'success' : 'warning');
                 setResultsPreview([]);
                 setIsLegacyResultsOpen(false);
                 setLegacyResultsText('');
@@ -10079,7 +10246,7 @@
                     </Modal>
 
                     {/* Legacy Results Import */}
-                    <Modal isOpen={isLegacyResultsOpen} onClose={() => { setIsLegacyResultsOpen(false); setResultsPreview([]); }} title={resultsPreview.length ? 'Review Past Results' : 'Import Past Results'}>
+                    <Modal isOpen={isLegacyResultsOpen} onClose={() => { setIsLegacyResultsOpen(false); setResultsPreview([]); }} title={resultsPreview.length ? 'Review Imported Results' : 'Import Results'}>
                         {!resultsPreview.length ? (
                             <div className="space-y-3">
                                 <div className="text-xs text-slate-500">Paste blocks like:
@@ -10090,45 +10257,98 @@
                                     <button onClick={() => { setIsLegacyResultsOpen(false); setResultsPreview([]); }} className="flex-1 bg-slate-100 text-slate-700 font-bold py-3 rounded-xl border border-slate-200">Cancel</button>
                                     <button onClick={importLegacyResults} className="flex-1 bg-slate-900 text-white font-bold py-3 rounded-xl">Import</button>
                                 </div>
-                                <div className="text-[11px] text-slate-500">We auto-detect Exiles side, opponent, venue and score; new opponents/venues are suggested. You can review before saving.</div>
+                                <div className="text-[11px] text-slate-500">If a result is a real British Exiles game, we save it into Games. If it is a league result between other clubs, we keep the true home and away teams and save it into Opponent Intel.</div>
                             </div>
                         ) : (
                             <div className="space-y-3 pr-1">
                                 {resultsPreview.map((r, idx) => (
                                     <div key={idx} className="p-3 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
                                         <div className="flex justify-between items-center text-sm font-bold text-slate-800">
-                                            <span>{new Date(r.date).toLocaleDateString()} · {r.homeScore} - {r.awayScore}</span>
-                                            <span className="text-xs text-slate-500">Game #{idx + 1}</span>
+                                            <span>{new Date(r.resultDate || r.date).toLocaleDateString()} · {r.homeScore} - {r.awayScore}</span>
+                                            <span className={`text-xs font-bold ${r.duplicate ? 'text-amber-700' : 'text-slate-500'}`}>{r.importMode === 'fixture' ? `Game #${idx + 1}` : `League Result #${idx + 1}`}</span>
                                         </div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <div>
-                                                <label className="text-[11px] font-bold text-slate-600 uppercase">Opponent</label>
-                                                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.opponentId ? `id:${r.opponentId}` : (r.opponent || '')} onChange={e => {
-                                                    const val = e.target.value;
-                                                    setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, opponent: val.startsWith('id:') ? opponents.find(o=>o.id===Number(val.replace('id:','')))?.name : val, opponentId: val.startsWith('id:') ? Number(val.replace('id:','')) : null }) : x));
-                                                }}>
-                                                    {opponents.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(o => <option key={o.id} value={`id:${o.id}`}>{o.name}</option>)}
-                                                    <option value="__new__">Create new...</option>
-                                                </select>
-                                                {r.opponent === '__new__' && (
-                                                    <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New opponent name" value={r.newOpponent} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newOpponent: e.target.value }) : x))} />
-                                                )}
-                                            </div>
-                                            <div>
-                                                <label className="text-[11px] font-bold text-slate-600 uppercase">Venue</label>
-                                                <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.venueId ? `id:${r.venueId}` : (r.venue || '')} onChange={e => {
-                                                    const val = e.target.value;
-                                                    setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val, venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null }) : x));
-                                                }}>
-                                                    {venues.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v => <option key={v.id} value={`id:${v.id}`}>{v.name}</option>)}
-                                                    <option value="__new__">Create new...</option>
-                                                </select>
-                                                {r.venue === '__new__' && (
-                                                    <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New venue name" value={r.newVenue} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newVenue: e.target.value }) : x))} />
-                                                )}
-                                            </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            <span className={getChipClass(r.importMode === 'fixture' ? 'info' : 'neutral')}>
+                                                {r.importMode === 'fixture' ? 'Save into Games' : 'Save into Opponent Intel'}
+                                            </span>
+                                            {r.duplicate ? <span className={getChipClass('warning')}>{r.duplicateReason}</span> : <span className={getChipClass('success')}>New</span>}
                                         </div>
-                                        <div className="text-[11px] text-slate-500">Score: Exiles {r.homeScore} - {r.awayScore} {r.opponent}</div>
+                                        {r.importMode === 'fixture' ? (
+                                            <>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <div>
+                                                        <label className="text-[11px] font-bold text-slate-600 uppercase">Opponent</label>
+                                                        <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.opponentId ? `id:${r.opponentId}` : (r.opponent || '')} onChange={e => {
+                                                            const val = e.target.value;
+                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, opponent: val.startsWith('id:') ? opponents.find(o=>o.id===Number(val.replace('id:','')))?.name : val, opponentId: val.startsWith('id:') ? Number(val.replace('id:','')) : null, duplicate: false }) : x));
+                                                        }}>
+                                                            {opponents.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(o => <option key={o.id} value={`id:${o.id}`}>{o.name}</option>)}
+                                                            <option value="__new__">Create new...</option>
+                                                        </select>
+                                                        {r.opponent === '__new__' && (
+                                                            <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New opponent name" value={r.newOpponent} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newOpponent: e.target.value, duplicate: false }) : x))} />
+                                                        )}
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[11px] font-bold text-slate-600 uppercase">Venue</label>
+                                                        <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.venueId ? `id:${r.venueId}` : (r.venue || '')} onChange={e => {
+                                                            const val = e.target.value;
+                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val, venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null }) : x));
+                                                        }}>
+                                                            {venues.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v => <option key={v.id} value={`id:${v.id}`}>{v.name}</option>)}
+                                                            <option value="__new__">Create new...</option>
+                                                        </select>
+                                                        {r.venue === '__new__' && (
+                                                            <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New venue name" value={r.newVenue} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newVenue: e.target.value }) : x))} />
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div className="text-[11px] text-slate-500">Score: Exiles {r.homeScore} - {r.awayScore} {r.opponent}</div>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div className="grid grid-cols-1 gap-2">
+                                                    <div>
+                                                        <label className="text-[11px] font-bold text-slate-600 uppercase">Home team</label>
+                                                        <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.homeTeam || ''} onChange={e => {
+                                                            const val = e.target.value;
+                                                            setResultsPreview(prev => prev.map((x, i) => i === idx ? ({ ...x, homeTeam: val, duplicate: false }) : x));
+                                                        }}>
+                                                            {Array.from(new Set([r.homeTeam, ...(r.teamChoices || [])])).filter(Boolean).map(option => (
+                                                                <option key={`legacy-home-${idx}-${option}`} value={option}>{option}</option>
+                                                            ))}
+                                                        </select>
+                                                        <div className="text-[11px] text-slate-500 mt-1">Imported as {r.homeTeamRaw}</div>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[11px] font-bold text-slate-600 uppercase">Away team</label>
+                                                        <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.awayTeam || ''} onChange={e => {
+                                                            const val = e.target.value;
+                                                            setResultsPreview(prev => prev.map((x, i) => i === idx ? ({ ...x, awayTeam: val, duplicate: false }) : x));
+                                                        }}>
+                                                            {Array.from(new Set([r.awayTeam, ...(r.teamChoices || [])])).filter(Boolean).map(option => (
+                                                                <option key={`legacy-away-${idx}-${option}`} value={option}>{option}</option>
+                                                            ))}
+                                                        </select>
+                                                        <div className="text-[11px] text-slate-500 mt-1">Imported as {r.awayTeamRaw}</div>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[11px] font-bold text-slate-600 uppercase">Venue</label>
+                                                        <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.venueId ? `id:${r.venueId}` : (r.venue || '')} onChange={e => {
+                                                            const val = e.target.value;
+                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val, venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null }) : x));
+                                                        }}>
+                                                            {venues.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v => <option key={v.id} value={`id:${v.id}`}>{v.name}</option>)}
+                                                            <option value="__new__">Create new...</option>
+                                                        </select>
+                                                        {r.venue === '__new__' && (
+                                                            <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New venue name" value={r.newVenue} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newVenue: e.target.value }) : x))} />
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div className="text-[11px] text-slate-500">Score: {r.homeTeam} {r.homeScore} - {r.awayScore} {r.awayTeam}</div>
+                                            </>
+                                        )}
                                     </div>
                                 ))}
                                 <div className="flex gap-2 sticky bottom-0 bg-white/80 backdrop-blur-sm pt-2">
