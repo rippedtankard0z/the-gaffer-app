@@ -232,7 +232,6 @@
                 if (!scoreMatch || !matchupMatch || !resultDate) continue;
                 const homeTeam = resolveCanonicalTeamName(matchupMatch[1], knownTeamNames, resolvedAliasLookup);
                 const awayTeam = resolveCanonicalTeamName(matchupMatch[2], knownTeamNames, resolvedAliasLookup);
-                if (!resultDate) continue;
                 parsed.push({
                     id: `import-result-${parsed.length + 1}`,
                     resultDate,
@@ -10481,7 +10480,13 @@
                                 ))}
                                 <div className="flex gap-2 sticky bottom-0 bg-white/80 backdrop-blur-sm pt-2">
                                     <button onClick={() => { setResultsPreview([]); }} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Back</button>
-                                    <button onClick={commitResultsPreview} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg">Save {resultsPreview.filter(row => !row.duplicate && !row.ignored).length || 0}</button>
+                                    <button
+                                        onClick={commitResultsPreview}
+                                        disabled={!resultsPreview.some(row => !row.duplicate && !row.ignored)}
+                                        className={`flex-1 font-bold py-2 rounded-lg ${resultsPreview.some(row => !row.duplicate && !row.ignored) ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'}`}
+                                    >
+                                        Save {resultsPreview.filter(row => !row.duplicate && !row.ignored).length || 0}
+                                    </button>
                                 </div>
                             </div>
                         )}
