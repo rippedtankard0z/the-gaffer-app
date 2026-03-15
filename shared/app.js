@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-105';
+        const MASTER_BUILD_VERSION = '2026.03.15-106';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,22 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-16-import-results-review-highlights',
+                at: '2026-03-16T02:16:00+08:00',
+                build: '2026.03.15-106',
+                area: 'Import results',
+                title: 'Imported results now highlight uncertain team and venue matches in red',
+                summary: 'Any imported team or pitch/venue field that does not have a clean database match now stands out with a red review treatment, making risky mappings much easier to spot before saving.',
+                changes: [
+                    { label: 'Legacy review', from: 'Opponent and venue mismatches could blend into the normal form layout', to: 'Uncertain opponent and venue fields now get a red review card and helper note' },
+                    { label: 'Opponent Intel review', from: 'Team review used chips only and venue review was not surfaced clearly', to: 'Home team, away team, and venue boxes now turn red when the match is not confident' }
+                ],
+                details: [
+                    'This is meant to make imperfect imports visually obvious even before you read the helper text.',
+                    'Clean matches still use the normal neutral styling so your eye is pulled toward the items that need checking.'
+                ]
+            },
             {
                 id: '2026-03-16-import-results-db-put-fix',
                 at: '2026-03-16T02:02:00+08:00',
@@ -8369,18 +8385,24 @@
                     const bestVen = sortedVens.map(v => ({ v, score: stringSimilarity(item.venue, v.name) })).sort((a,b)=>b.score-a.score)[0];
                     if (item.importMode === 'fixture') {
                         const bestOpp = sortedOpps.map(o => ({ o, score: stringSimilarity(item.opponent, o.name) })).sort((a,b)=>b.score-a.score)[0];
+                        const opponentMatched = !!(bestOpp && bestOpp.score > 0.7);
+                        const venueMatched = !!(bestVen && bestVen.score > 0.7);
                         const duplicateFingerprint = [
                             item.date,
-                            normalizeEntityText((bestOpp && bestOpp.score > 0.7) ? bestOpp.o.name : item.opponent),
+                            normalizeEntityText(opponentMatched ? bestOpp.o.name : item.opponent),
                             Number(item.homeScore ?? -1),
                             Number(item.awayScore ?? -1)
                         ].join('|');
                         return {
                             ...item,
-                            opponent: (bestOpp && bestOpp.score > 0.7) ? bestOpp.o.name : item.opponent,
-                            opponentId: (bestOpp && bestOpp.score > 0.7) ? bestOpp.o.id : null,
-                            venue: (bestVen && bestVen.score > 0.7) ? bestVen.v.name : item.venue,
-                            venueId: (bestVen && bestVen.score > 0.7) ? bestVen.v.id : null,
+                            opponent: opponentMatched ? bestOpp.o.name : item.opponent,
+                            opponentId: opponentMatched ? bestOpp.o.id : null,
+                            opponentNeedsReview: !opponentMatched,
+                            opponentMatchNote: opponentMatched ? 'Clean database match' : 'Check this team name before import',
+                            venue: venueMatched ? bestVen.v.name : item.venue,
+                            venueId: venueMatched ? bestVen.v.id : null,
+                            venueNeedsReview: !venueMatched,
+                            venueMatchNote: venueMatched ? 'Clean venue match' : 'Check this venue/pitch before import',
                             newOpponent: '',
                             newVenue: '',
                             duplicate: existingFixtureFingerprints.has(duplicateFingerprint),
@@ -8391,6 +8413,8 @@
                         ...item,
                         venue: (bestVen && bestVen.score > 0.7) ? bestVen.v.name : item.venue,
                         venueId: (bestVen && bestVen.score > 0.7) ? bestVen.v.id : null,
+                        venueNeedsReview: !(bestVen && bestVen.score > 0.7),
+                        venueMatchNote: (bestVen && bestVen.score > 0.7) ? 'Clean venue match' : 'Check this venue/pitch before import',
                         teamChoices: registeredTeamChoices,
                         duplicate: existingOpponentResultFingerprints.has(item.fingerprint),
                         duplicateReason: 'Existing result'
@@ -10541,11 +10565,19 @@
                                         {r.importMode === 'fixture' ? (
                                             <>
                                                 <div className="grid grid-cols-2 gap-2">
-                                                    <div>
+                                                    <div className={cx('rounded-xl border p-2', r.opponentNeedsReview ? 'border-rose-200 bg-rose-50/70' : 'border-transparent bg-transparent')}>
                                                         <label className="text-[11px] font-bold text-slate-600 uppercase">Opponent</label>
                                                         <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.opponentId ? `id:${r.opponentId}` : (r.opponent || '')} onChange={e => {
                                                             const val = e.target.value;
-                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, opponent: val.startsWith('id:') ? opponents.find(o=>o.id===Number(val.replace('id:','')))?.name : val, opponentId: val.startsWith('id:') ? Number(val.replace('id:','')) : null, duplicate: false, ignored: false }) : x));
+                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({
+                                                                ...x,
+                                                                opponent: val.startsWith('id:') ? opponents.find(o=>o.id===Number(val.replace('id:','')))?.name : val,
+                                                                opponentId: val.startsWith('id:') ? Number(val.replace('id:','')) : null,
+                                                                opponentNeedsReview: !val.startsWith('id:'),
+                                                                opponentMatchNote: val.startsWith('id:') ? 'Clean database match' : 'Check this team name before import',
+                                                                duplicate: false,
+                                                                ignored: false
+                                                            }) : x));
                                                         }}>
                                                             {opponents.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(o => <option key={o.id} value={`id:${o.id}`}>{o.name}</option>)}
                                                             <option value="__new__">Create new...</option>
@@ -10553,12 +10585,20 @@
                                                         {r.opponent === '__new__' && (
                                                             <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New opponent name" value={r.newOpponent} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newOpponent: e.target.value, duplicate: false, ignored: false }) : x))} />
                                                         )}
+                                                        <div className={`mt-1 text-[11px] ${r.opponentNeedsReview ? 'text-rose-700 font-semibold' : 'text-slate-500'}`}>{r.opponentMatchNote || 'Clean database match'}</div>
                                                     </div>
-                                                    <div>
+                                                    <div className={cx('rounded-xl border p-2', r.venueNeedsReview ? 'border-rose-200 bg-rose-50/70' : 'border-transparent bg-transparent')}>
                                                         <label className="text-[11px] font-bold text-slate-600 uppercase">Venue</label>
                                                         <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.venueId ? `id:${r.venueId}` : (r.venue || '')} onChange={e => {
                     const val = e.target.value;
-                    setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val, venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null, ignored: false }) : x));
+                    setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({
+                        ...x,
+                        venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val,
+                        venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null,
+                        venueNeedsReview: !val.startsWith('id:'),
+                        venueMatchNote: val.startsWith('id:') ? 'Clean venue match' : 'Check this venue/pitch before import',
+                        ignored: false
+                    }) : x));
                                                         }}>
                                                             {venues.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v => <option key={v.id} value={`id:${v.id}`}>{v.name}</option>)}
                                                             <option value="__new__">Create new...</option>
@@ -10566,6 +10606,7 @@
                                                         {r.venue === '__new__' && (
                                                             <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New venue name" value={r.newVenue} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newVenue: e.target.value, ignored: false }) : x))} />
                                                         )}
+                                                        <div className={`mt-1 text-[11px] ${r.venueNeedsReview ? 'text-rose-700 font-semibold' : 'text-slate-500'}`}>{r.venueMatchNote || 'Clean venue match'}</div>
                                                     </div>
                                                 </div>
                                                 <div className="text-[11px] text-slate-500">Score: Exiles {r.homeScore} - {r.awayScore} {r.opponent}</div>
@@ -10597,11 +10638,18 @@
                                                         </select>
                                                         <div className="text-[11px] text-slate-500 mt-1">Imported as {r.awayTeamRaw}</div>
                                                     </div>
-                                                    <div>
+                                                    <div className={cx('rounded-xl border p-2', r.venueNeedsReview ? 'border-rose-200 bg-rose-50/70' : 'border-transparent bg-transparent')}>
                                                         <label className="text-[11px] font-bold text-slate-600 uppercase">Venue</label>
                                                         <select className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm" value={r.venueId ? `id:${r.venueId}` : (r.venue || '')} onChange={e => {
                                                             const val = e.target.value;
-                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val, venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null, ignored: false }) : x));
+                                                            setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({
+                                                                ...x,
+                                                                venue: val.startsWith('id:') ? venues.find(v=>v.id===Number(val.replace('id:','')))?.name : val,
+                                                                venueId: val.startsWith('id:') ? Number(val.replace('id:','')) : null,
+                                                                venueNeedsReview: !val.startsWith('id:'),
+                                                                venueMatchNote: val.startsWith('id:') ? 'Clean venue match' : 'Check this venue/pitch before import',
+                                                                ignored: false
+                                                            }) : x));
                                                         }}>
                                                             {venues.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v => <option key={v.id} value={`id:${v.id}`}>{v.name}</option>)}
                                                             <option value="__new__">Create new...</option>
@@ -10609,6 +10657,7 @@
                                                         {r.venue === '__new__' && (
                                                             <input className="w-full bg-white border border-slate-200 rounded-lg p-2 text-sm mt-1" placeholder="New venue name" value={r.newVenue} onChange={e => setResultsPreview(prev => prev.map((x,i)=> i===idx ? ({ ...x, newVenue: e.target.value, ignored: false }) : x))} />
                                                         )}
+                                                        <div className={`mt-1 text-[11px] ${r.venueNeedsReview ? 'text-rose-700 font-semibold' : 'text-slate-500'}`}>{r.venueMatchNote || 'Clean venue match'}</div>
                                                     </div>
                                                 </div>
                                                 <div className="text-[11px] text-slate-500">Score: {r.homeTeam} {r.homeScore} - {r.awayScore} {r.awayTeam}</div>
@@ -15568,6 +15617,44 @@
                 };
             }, [opponentAliasLookup, registeredTeamChoices]);
 
+            const inferImportedVenueMatch = useCallback((rawVenue = '') => {
+                const clean = (rawVenue || '').trim();
+                if (!clean) {
+                    return {
+                        mappedName: '',
+                        mappedId: null,
+                        needsReview: true,
+                        matchNote: 'No venue found in the pasted result'
+                    };
+                }
+                const candidates = venues
+                    .map((venue) => ({ venue, score: stringSimilarity(clean, venue.name || '') }))
+                    .sort((a, b) => b.score - a.score);
+                const best = candidates[0];
+                if (best && best.score >= 0.88) {
+                    return {
+                        mappedName: best.venue.name,
+                        mappedId: best.venue.id,
+                        needsReview: false,
+                        matchNote: 'Clean venue match'
+                    };
+                }
+                if (best && best.score >= 0.6) {
+                    return {
+                        mappedName: best.venue.name,
+                        mappedId: best.venue.id,
+                        needsReview: true,
+                        matchNote: 'Check the suggested venue/pitch'
+                    };
+                }
+                return {
+                    mappedName: clean,
+                    mappedId: null,
+                    needsReview: true,
+                    matchNote: 'No confident venue match yet'
+                };
+            }, [venues]);
+
             const recomputeResultsPreview = useCallback((rows = []) => {
                 const existingFingerprints = new Set(opponentResults.map((row) => makeOpponentResultFingerprint({
                     resultDate: row.resultDate || row.date,
@@ -15608,6 +15695,7 @@
                 const preview = recomputeResultsPreview(parsed.map((row, index) => {
                     const homeMatch = inferImportedTeamMatch(row.homeTeamRaw || row.homeTeam);
                     const awayMatch = inferImportedTeamMatch(row.awayTeamRaw || row.awayTeam);
+                    const venueMatch = inferImportedVenueMatch(row.venue || '');
                     return {
                         ...row,
                         id: `opponent-result-preview-${index + 1}`,
@@ -15618,18 +15706,22 @@
                         homeMatchNote: homeMatch.matchNote,
                         awayMatchNote: awayMatch.matchNote,
                         rememberHomeAlias: homeMatch.rememberAlias,
-                        rememberAwayAlias: awayMatch.rememberAlias
+                        rememberAwayAlias: awayMatch.rememberAlias,
+                        venue: venueMatch.mappedName,
+                        venueId: venueMatch.mappedId,
+                        venueNeedsReview: venueMatch.needsReview,
+                        venueMatchNote: venueMatch.matchNote
                     };
                 }));
                 const newCount = preview.filter(row => !row.duplicate).length;
                 const duplicateCount = preview.length - newCount;
-                const reviewCount = preview.filter(row => row.homeNeedsReview || row.awayNeedsReview).length;
+                const reviewCount = preview.filter(row => row.homeNeedsReview || row.awayNeedsReview || row.venueNeedsReview).length;
                 setResultsPreview(preview);
                 setResultsImportFeedback({
                     tone: newCount ? (reviewCount ? 'warning' : 'success') : 'warning',
                     message: `Parsed ${preview.length} result${preview.length === 1 ? '' : 's'} · ${newCount} new · ${duplicateCount} duplicate${duplicateCount === 1 ? '' : 's'}${reviewCount ? ` · ${reviewCount} need name review` : ''}`
                 });
-            }, [resultsPasteText, knownTeamNames, opponentAliasLookup, inferImportedTeamMatch, recomputeResultsPreview]);
+            }, [resultsPasteText, knownTeamNames, opponentAliasLookup, inferImportedTeamMatch, inferImportedVenueMatch, recomputeResultsPreview]);
 
             const updatePreviewTeamMatch = useCallback((rowId, side, mappedName) => {
                 setResultsPreview((prev) => recomputeResultsPreview(prev.map((row) => {
@@ -16008,14 +16100,14 @@
                                                         ...registeredTeamChoices.filter(name => normalizeEntityText(name) !== normalizeEntityText(teamRow.rawName))
                                                     ];
                                                     return (
-                                                        <div key={`${row.id}-${teamRow.side}`} className="rounded-xl border border-slate-200 bg-white/90 p-3 space-y-2">
+                                                        <div key={`${row.id}-${teamRow.side}`} className={cx('rounded-xl border p-3 space-y-2', teamRow.needsReview ? 'border-rose-200 bg-rose-50/80' : 'border-slate-200 bg-white/90')}>
                                                             <div className="flex items-center justify-between gap-2">
                                                                 <div className="text-[12px] font-bold uppercase tracking-wide text-slate-500">{teamRow.side === 'home' ? 'Home team' : 'Away team'}</div>
-                                                                {teamRow.needsReview ? <span className={getChipClass('warning')}>Review</span> : <span className={getChipClass('success')}>Checked</span>}
+                                                                {teamRow.needsReview ? <span className={getChipClass('danger')}>Review</span> : <span className={getChipClass('success')}>Checked</span>}
                                                             </div>
                                                             <div className="text-[13px] text-slate-500">Imported as <span className="font-semibold text-slate-700">{teamRow.rawName}</span></div>
                                                             <select
-                                                                className={cx(FORM_CONTROL_CLASS, 'py-2.5')}
+                                                                className={cx(FORM_CONTROL_CLASS, 'py-2.5', teamRow.needsReview ? 'border-rose-300 bg-white' : '')}
                                                                 value={teamRow.mappedName}
                                                                 onChange={(event) => updatePreviewTeamMatch(row.id, teamRow.side, event.target.value)}
                                                             >
@@ -16025,7 +16117,7 @@
                                                                     </option>
                                                                 ))}
                                                             </select>
-                                                            <div className="text-[12px] text-slate-500">{teamRow.matchNote}</div>
+                                                            <div className={cx('text-[12px]', teamRow.needsReview ? 'text-rose-700 font-semibold' : 'text-slate-500')}>{teamRow.matchNote}</div>
                                                             {isRegistered && normalizeEntityText(teamRow.rawName) !== normalizedMapped ? (
                                                                 <label className="flex items-center gap-2 text-[12px] font-medium text-slate-600">
                                                                     <input
@@ -16039,6 +16131,30 @@
                                                         </div>
                                                     );
                                                 })}
+                                            </div>
+                                            <div className={cx('mt-3 rounded-xl border p-3 space-y-2', row.venueNeedsReview ? 'border-rose-200 bg-rose-50/80' : 'border-slate-200 bg-white/90')}>
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="text-[12px] font-bold uppercase tracking-wide text-slate-500">Venue</div>
+                                                    {row.venueNeedsReview ? <span className={getChipClass('danger')}>Review</span> : <span className={getChipClass('success')}>Checked</span>}
+                                                </div>
+                                                <select
+                                                    className={cx(FORM_CONTROL_CLASS, 'py-2.5', row.venueNeedsReview ? 'border-rose-300 bg-white' : '')}
+                                                    value={row.venueId ? `id:${row.venueId}` : (row.venue || '')}
+                                                    onChange={(event) => {
+                                                        const val = event.target.value;
+                                                        setResultsPreview(prev => prev.map((item) => item.id === row.id ? ({
+                                                            ...item,
+                                                            venue: val.startsWith('id:') ? venues.find(v => v.id === Number(val.replace('id:', '')))?.name : val,
+                                                            venueId: val.startsWith('id:') ? Number(val.replace('id:', '')) : null,
+                                                            venueNeedsReview: !val.startsWith('id:'),
+                                                            venueMatchNote: val.startsWith('id:') ? 'Clean venue match' : 'Check this venue/pitch before import'
+                                                        }) : item));
+                                                    }}
+                                                >
+                                                    {venues.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(v => <option key={`${row.id}-venue-${v.id}`} value={`id:${v.id}`}>{v.name}</option>)}
+                                                    {row.venue && !row.venueId ? <option value={row.venue}>{row.venue}</option> : null}
+                                                </select>
+                                                <div className={cx('text-[12px]', row.venueNeedsReview ? 'text-rose-700 font-semibold' : 'text-slate-500')}>{row.venueMatchNote}</div>
                                             </div>
                                         </div>
                                     ))}
