@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-101';
+        const MASTER_BUILD_VERSION = '2026.03.15-102';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,22 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-16-import-results-footer-safe-area',
+                at: '2026-03-16T01:22:00+08:00',
+                build: '2026.03.15-102',
+                area: 'Import results',
+                title: 'Import results footer lifted above bottom navigation',
+                summary: 'The review modal for imported results now keeps its Back and Save actions clear of the fixed tab bar on mobile.',
+                changes: [
+                    { label: 'Footer position', from: 'The sticky Back/Save row could sit under the bottom navigation', to: 'The footer now sits higher with safe-area-aware bottom spacing' },
+                    { label: 'Scroll room', from: 'The last review card could run into the action row and nav at the bottom', to: 'Extra bottom padding keeps the final imported result fully visible above the footer' }
+                ],
+                details: [
+                    'This only changes the import review layout and does not affect how rows are parsed or saved.',
+                    'The fix is targeted at phones and PWA mode where the bottom tab bar stays visible above modal content.'
+                ]
+            },
             {
                 id: '2026-03-16-matchday-whistle-nav',
                 at: '2026-03-16T01:10:00+08:00',
@@ -10416,7 +10432,7 @@
                                 <div className="text-[11px] text-slate-500">If a result is a real British Exiles game, we save it into Games. If it is a league result between other clubs, we keep the true home and away teams and save it into Opponent Intel.</div>
                             </div>
                         ) : (
-                            <div className="space-y-3 pr-1">
+                            <div className="space-y-3 pr-1 pb-[calc(env(safe-area-inset-bottom,0px)+9rem)]">
                                 {resultsPreview.map((r, idx) => (
                                     <div key={idx} className="p-3 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
                                         <div className="flex justify-between items-center text-sm font-bold text-slate-800">
@@ -10528,7 +10544,7 @@
                                         )}
                                     </div>
                                 ))}
-                                <div className="flex gap-2 sticky bottom-0 bg-white/80 backdrop-blur-sm pt-2">
+                                <div className="sticky bottom-[calc(env(safe-area-inset-bottom,0px)+5.75rem)] z-10 flex gap-2 bg-white/95 backdrop-blur-sm pt-2 pb-1">
                                     <button onClick={() => { setResultsPreview([]); }} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Back</button>
                                     <button
                                         onClick={commitResultsPreview}
