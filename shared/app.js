@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-87';
+        const MASTER_BUILD_VERSION = '2026.03.15-89';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -516,6 +516,37 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-sponsors-crash-fix',
+                at: '2026-03-15T17:05:00+08:00',
+                build: '2026.03.15-89',
+                area: 'Bug fix',
+                title: 'Sponsors screen no longer crashes on open from a stray player dialog reference',
+                summary: 'A leftover Squad confirmation modal was still mounted inside Sponsors, which caused a runtime ReferenceError when the page rendered.',
+                changes: [
+                    { label: 'Sponsors render path', from: 'Referenced playerConfirmDialog / closePlayerConfirmation that do not exist in Sponsors', to: 'Only uses Sponsors-specific state and dialog controls' }
+                ],
+                details: [
+                    'This was a real runtime bug and was separate from the Firebase shell warnings.',
+                    'The remaining Tailwind/Babel warnings are still build-time warnings, not the cause of the Sponsors crash.'
+                ]
+            },
+            {
+                id: '2026-03-15-firestore-shell-refresh-mode',
+                at: '2026-03-15T16:50:00+08:00',
+                build: '2026.03.15-88',
+                area: 'Infrastructure',
+                title: 'Firebase shell now uses safer refresh-based syncing instead of always-on watch streams',
+                summary: 'The app shell no longer opens permanent Firestore listeners in the prod/viewer PWA layers, which should reduce the noisy Listen/Write transport failures some browsers and webviews were throwing on launch.',
+                changes: [
+                    { label: 'Firestore sync', from: 'Always-on onSnapshot watch streams in the shell', to: 'Initial load plus throttled refresh on focus, online, visibility, and after writes' },
+                    { label: 'PWA startup', from: 'Repeated watch-stream transport errors in stricter browsers/webviews', to: 'A lighter sync pattern that is less dependent on fragile long-lived channels' }
+                ],
+                details: [
+                    'This does not change your underlying Firestore data model; it only changes how the shell keeps local cache in sync.',
+                    'The remaining Tailwind CDN and Babel warnings are still build-pipeline warnings, not finance or data corruption issues.'
+                ]
+            },
             {
                 id: '2026-03-15-page-mode-colors',
                 at: '2026-03-15T05:10:00+08:00',
@@ -14965,7 +14996,6 @@
                         )}
                     </Modal>
 
-                    <ConfirmationModal dialog={playerConfirmDialog} onClose={closePlayerConfirmation} />
                 </div>
             );
         };

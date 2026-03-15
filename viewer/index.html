@@ -49,7 +49,7 @@
         import { getAuth, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
         import {
             initializeFirestore, collection, doc, setDoc, addDoc, updateDoc, deleteDoc,
-            getDocs, onSnapshot
+            getDocs
         } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
         const firebaseConfig = window.GAFFER_FIREBASE_CONFIG;
@@ -103,6 +103,32 @@
                 sponsors: [],
                 settings: []
             };
+            const collectionNames = Object.keys(cache);
+            const lastRefreshAt = {};
+            const REFRESH_THROTTLE_MS = 8000;
+
+            const emitCollectionUpdate = (name) => {
+                window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name } }));
+            };
+
+            const refreshCollection = async (name, { force = false } = {}) => {
+                if (!collectionNames.includes(name)) return;
+                if (!force && !navigator.onLine) return;
+                const now = Date.now();
+                if (!force && lastRefreshAt[name] && now - lastRefreshAt[name] < REFRESH_THROTTLE_MS) return;
+                try {
+                    const snap = await getDocs(collection(fs, name));
+                    cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
+                    lastRefreshAt[name] = now;
+                    emitCollectionUpdate(name);
+                } catch (err) {
+                    console.warn(`Collection refresh failed for ${name}`, err);
+                }
+            };
+
+            const refreshCollections = async ({ force = false } = {}) => {
+                await Promise.all(collectionNames.map((name) => refreshCollection(name, { force })));
+            };
 
             const ready = (async () => {
                 try {
@@ -110,19 +136,17 @@
                 } catch (err) {
                     console.error("Anon auth failed", err);
                 }
-                const names = Object.keys(cache);
-                await Promise.all(names.map(async (name) => {
-                    const snap = await getDocs(collection(fs, name));
-                    cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
-                }));
-                names.forEach((name) => {
-                    const colRef = collection(fs, name);
-                    onSnapshot(colRef, (snap) => {
-                        cache[name] = snap.docs.map(d => ({ id: numericOrId(d.id), ...d.data() }));
-                        window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name } }));
-                    });
-                });
+                await refreshCollections({ force: true });
             })();
+
+            window.addEventListener('focus', () => { refreshCollections(); });
+            window.addEventListener('online', () => { refreshCollections({ force: true }); });
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') refreshCollections();
+            });
+            window.setInterval(() => {
+                if (document.visibilityState === 'visible' && navigator.onLine) refreshCollections();
+            }, 90000);
 
             const docRef = (name, id) => doc(fs, name, String(id));
 
@@ -154,6 +178,7 @@
                 async delete() {
                     const arr = await this.toArray();
                     await Promise.all(arr.map(item => deleteDoc(docRef(name, item.id))));
+                    await refreshCollection(name, { force: true });
                 },
                 async modify(patch) {
                     const arr = await this.toArray();
@@ -161,6 +186,7 @@
                         const data = typeof patch === 'function' ? patch(item) : patch;
                         return updateDoc(docRef(name, item.id), data);
                     }));
+                    await refreshCollection(name, { force: true });
                 },
                 async sortBy(field) {
                     const arr = await this.toArray();
@@ -210,6 +236,7 @@
                         await ready;
                         const id = allocateId(data);
                         await setDoc(docRef(name, id), { ...data, id });
+                        await refreshCollection(name, { force: true });
                         return id;
                     },
                     async bulkAdd(items = []) {
@@ -220,6 +247,7 @@
                             await setDoc(docRef(name, id), { ...item, id });
                             ids.push(id);
                         }
+                        await refreshCollection(name, { force: true });
                         return ids;
                     },
                     async bulkPut(items = []) {
@@ -228,10 +256,11 @@
                             const id = allocateId(item);
                             return setDoc(docRef(name, id), { ...item, id }, { merge: true });
                         }));
+                        await refreshCollection(name, { force: true });
                     },
-                    async update(id, data) { await ready; await updateDoc(docRef(name, id), data); },
-                    async delete(id) { await ready; await deleteDoc(docRef(name, id)); },
-                    async bulkDelete(ids) { await ready; await Promise.all(ids.map(i => deleteDoc(docRef(name, i)))); },
+                    async update(id, data) { await ready; await updateDoc(docRef(name, id), data); await refreshCollection(name, { force: true }); },
+                    async delete(id) { await ready; await deleteDoc(docRef(name, id)); await refreshCollection(name, { force: true }); },
+                    async bulkDelete(ids) { await ready; await Promise.all(ids.map(i => deleteDoc(docRef(name, i)))); await refreshCollection(name, { force: true }); },
                     async clear() { await ready; await this.bulkDelete(cache[name].map(x => x.id)); },
                     filter(predicate) {
                         const fn = typeof predicate === 'function' ? predicate : () => true;
@@ -289,6 +318,7 @@
                 }
                 try {
                     await deleteDoc(docRef('kitDetails', targetId));
+                    await refreshCollection('kitDetails', { force: true });
                     return true;
                 } catch (err) {
                     console.error('releaseKitDetail failed', err);
