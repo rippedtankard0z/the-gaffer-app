@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-84';
+        const MASTER_BUILD_VERSION = '2026.03.15-86';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -516,6 +516,44 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-15-full-ui-rollout-phase-two',
+                at: '2026-03-15T03:30:00+08:00',
+                build: '2026.03.15-86',
+                area: 'UI',
+                title: 'Distinctive design rollout expanded across Squad, Kit, Opponents, Venues, Settings, and live operations',
+                summary: 'The remaining legacy screens now share the redesigned visual system, larger readable type, calmer admin layouts, and in-app confirmation flows instead of browser popups.',
+                changes: [
+                    { label: 'Legacy modules', from: 'Older flat white-card styling in Squad, Kit, Opponents, Venues, and Settings', to: 'Section-specific roster, intel, and admin surfaces with stronger visual identity' },
+                    { label: 'Confirmations', from: 'Browser confirm() and prompt() in core flows', to: 'App-styled confirmation and input modals for player, kit, bank, and auth actions' },
+                    { label: 'Readability', from: 'Tiny meta labels across live and admin screens', to: 'Larger helper text, chips, and action labels in high-traffic workflows' },
+                    { label: 'Action hierarchy', from: 'Text links and inconsistent inline actions', to: 'Shared button treatments for edit, open, release, delete, and admin actions' }
+                ],
+                details: [
+                    'Match Day live panels were also loosened up so pitch-board rows, quick-log tiles, and bench areas are easier to read under pressure.',
+                    'Settings and audit-control screens were regrouped into clearer operational sections with calmer color semantics.'
+                ]
+            },
+            {
+                id: '2026-03-15-ui-foundation-refresh',
+                at: '2026-03-15T01:45:00+08:00',
+                build: '2026.03.15-85',
+                area: 'UI',
+                title: 'Major UI refresh across Home, Games, Match Day, Bank, Reports, and More',
+                summary: 'The app now uses a more consistent design system with clearer buttons, larger baseline text, calmer report cards, more distinct section styling, and lighter sticky action trays.',
+                changes: [
+                    { label: 'Typography', from: 'Many tiny 10px/11px labels in core screens', to: 'Higher baseline readability across primary modules' },
+                    { label: 'Buttons', from: 'Screen-by-screen button styles', to: 'Shared primary / secondary / info / warning / danger / success system' },
+                    { label: 'Module styling', from: 'Mostly similar white cards everywhere', to: 'Distinct Home, Games, Match Day, Bank, Reports, and More visual treatments' },
+                    { label: 'Reports & audit', from: 'Heavier pill stacks and dense issue cards', to: 'Calmer structured cards with clearer hierarchy' },
+                    { label: 'Sticky actions', from: 'Heavier fixed trays on long screens', to: 'Lighter blurred action bars with better spacing' }
+                ],
+                details: [
+                    'Form controls were also unified so modal and panel fields feel more consistent.',
+                    'Home now uses clearer bank and match-centre cards, while Games and Match Day use a more operational visual language.',
+                    'Banking now reads more like a finance workspace and less like a raw admin dump.'
+                ]
+            },
             {
                 id: '2026-03-15-audit-action-items',
                 at: '2026-03-15T00:40:00+08:00',
@@ -2006,6 +2044,262 @@
 
         // --- 3. UI Primitives ---
 
+        const cx = (...parts) => parts.filter(Boolean).join(' ');
+
+        const UI_TEXT = {
+            eyebrow: 'text-[12px] font-bold uppercase tracking-[0.16em]',
+            label: 'text-[13px] font-bold uppercase tracking-[0.14em]',
+            meta: 'text-[13px] font-medium text-slate-500',
+            body: 'text-[14px] text-slate-700',
+            subtle: 'text-[13px] text-slate-400',
+            value: 'text-2xl font-display font-bold text-slate-900',
+            sectionTitle: 'text-[15px] font-bold text-slate-900',
+            helper: 'text-[13px] text-slate-600'
+        };
+
+        const BUTTON_VARIANTS = {
+            primary: 'bg-slate-900 text-white hover:bg-slate-800 shadow-lg shadow-slate-900/10',
+            secondary: 'border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50',
+            subtle: 'border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100',
+            info: 'border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100',
+            warning: 'border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100',
+            danger: 'border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100',
+            success: 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg shadow-emerald-900/10',
+            ghost: 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+        };
+
+        const BUTTON_SIZES = {
+            xs: 'min-h-[36px] px-3 text-[12px]',
+            sm: 'min-h-[40px] px-3.5 text-[13px]',
+            md: 'min-h-[44px] px-4 text-sm',
+            lg: 'min-h-[48px] px-4 text-sm'
+        };
+
+        const SURFACE_VARIANTS = {
+            default: 'rounded-[1.5rem] border border-slate-200/80 bg-white shadow-soft',
+            muted: 'rounded-[1.5rem] border border-slate-200 bg-slate-50/85 shadow-soft',
+            dashboard: 'rounded-[1.5rem] border border-slate-200/80 bg-white/95 shadow-soft backdrop-blur-sm',
+            roster: 'rounded-[1.5rem] border border-violet-100/90 bg-gradient-to-br from-violet-50/70 via-white to-emerald-50/55 shadow-soft',
+            fixtures: 'rounded-[1.5rem] border border-emerald-100/90 bg-white shadow-soft',
+            matchday: 'rounded-[1.5rem] border border-amber-100/90 bg-white shadow-soft',
+            finance: 'rounded-[1.5rem] border border-sky-100/90 bg-white shadow-soft',
+            report: 'rounded-[1.5rem] border border-sky-100/90 bg-white shadow-soft',
+            intel: 'rounded-[1.5rem] border border-violet-100/90 bg-gradient-to-br from-violet-50/65 via-white to-sky-50/55 shadow-soft',
+            admin: 'rounded-[1.5rem] border border-slate-200/80 bg-gradient-to-br from-slate-50/85 via-white to-slate-100/55 shadow-soft',
+            info: 'rounded-[1.5rem] border border-sky-200 bg-sky-50/85 shadow-soft',
+            success: 'rounded-[1.5rem] border border-emerald-200 bg-emerald-50/80 shadow-soft',
+            warning: 'rounded-[1.5rem] border border-amber-200 bg-amber-50/85 shadow-soft',
+            critical: 'rounded-[1.5rem] border border-rose-200 bg-rose-50/70 shadow-soft'
+        };
+
+        const CHIP_TONES = {
+            neutral: 'border border-slate-200 bg-slate-50 text-slate-700',
+            info: 'border border-sky-200 bg-sky-50 text-sky-700',
+            success: 'border border-emerald-200 bg-emerald-50 text-emerald-700',
+            warning: 'border border-amber-200 bg-amber-50 text-amber-700',
+            danger: 'border border-rose-200 bg-rose-50 text-rose-700'
+        };
+
+        const ICON_TONES = {
+            slate: 'border border-slate-200 bg-slate-100 text-slate-700',
+            blue: 'border border-sky-200 bg-sky-50 text-sky-700',
+            emerald: 'border border-emerald-200 bg-emerald-50 text-emerald-700',
+            amber: 'border border-amber-200 bg-amber-50 text-amber-700',
+            rose: 'border border-rose-200 bg-rose-50 text-rose-700',
+            violet: 'border border-violet-200 bg-violet-50 text-violet-700'
+        };
+
+        const PAGE_HEADER_TONES = {
+            default: 'bg-white/94 border-slate-200/80',
+            roster: 'bg-gradient-to-r from-violet-50 via-white to-emerald-50 border-violet-100',
+            fixtures: 'bg-gradient-to-r from-emerald-50 via-white to-teal-50 border-emerald-100',
+            matchday: 'bg-gradient-to-r from-amber-50 via-white to-rose-50 border-amber-100',
+            finance: 'bg-gradient-to-r from-sky-50 via-white to-indigo-50 border-sky-100',
+            report: 'bg-gradient-to-r from-blue-50 via-white to-cyan-50 border-sky-100',
+            admin: 'bg-gradient-to-r from-slate-50 via-white to-slate-100 border-slate-200/90',
+            intel: 'bg-gradient-to-r from-violet-50 via-white to-fuchsia-50 border-violet-100'
+        };
+
+        const getButtonClass = (variant = 'secondary', size = 'md', extra = '') => cx(
+            'inline-flex items-center justify-center gap-2 rounded-xl font-bold transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
+            BUTTON_SIZES[size] || BUTTON_SIZES.md,
+            BUTTON_VARIANTS[variant] || BUTTON_VARIANTS.secondary,
+            extra
+        );
+
+        const getSegmentedButtonClass = (active = false, extra = '') => cx(
+            'inline-flex items-center justify-center gap-2 rounded-xl border font-bold transition-colors',
+            active
+                ? 'border-slate-900 bg-slate-900 text-white shadow-sm shadow-slate-900/10'
+                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+            extra
+        );
+
+        const getSurfaceClass = (tone = 'default', extra = '') => cx(
+            SURFACE_VARIANTS[tone] || SURFACE_VARIANTS.default,
+            extra
+        );
+
+        const getChipClass = (tone = 'neutral', extra = '') => cx(
+            'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[12px] font-semibold',
+            CHIP_TONES[tone] || CHIP_TONES.neutral,
+            extra
+        );
+
+        const getIconBadgeClass = (tone = 'slate', extra = '') => cx(
+            'flex items-center justify-center rounded-xl',
+            ICON_TONES[tone] || ICON_TONES.slate,
+            extra
+        );
+
+        const FORM_CONTROL_CLASS = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-[14px] text-slate-700 shadow-sm shadow-slate-900/5 outline-none transition focus:border-sky-300 focus:ring-2 focus:ring-sky-100';
+
+        const inferPageHeaderTone = (title = '') => {
+            const normalized = (title || '').toString().trim().toLowerCase();
+            if (normalized === 'games') return 'fixtures';
+            if (normalized === 'squad' || normalized === 'kit') return 'roster';
+            if (normalized === 'match day') return 'matchday';
+            if (normalized === 'reports') return 'report';
+            if (normalized === 'bank') return 'finance';
+            if (['more', 'settings', 'app log', 'user guide', 'app & database', 'audit & controls'].includes(normalized)) return 'admin';
+            if (['opponent intel', 'opponents', 'venues'].includes(normalized)) return 'intel';
+            return 'default';
+        };
+
+        const useModalDialogs = () => {
+            const confirmResolveRef = useRef(null);
+            const promptResolveRef = useRef(null);
+            const [confirmDialog, setConfirmDialog] = useState({
+                open: false,
+                title: '',
+                description: '',
+                confirmLabel: 'Confirm',
+                danger: false
+            });
+            const [textPrompt, setTextPrompt] = useState({
+                open: false,
+                title: '',
+                description: '',
+                confirmLabel: 'Save',
+                placeholder: '',
+                initialValue: ''
+            });
+            const [textPromptValue, setTextPromptValue] = useState('');
+
+            const requestConfirmation = useCallback((config = {}) => {
+                return new Promise((resolve) => {
+                    confirmResolveRef.current = resolve;
+                    setConfirmDialog({
+                        open: true,
+                        title: config.title || 'Confirm action',
+                        description: config.description || '',
+                        confirmLabel: config.confirmLabel || 'Confirm',
+                        danger: !!config.danger
+                    });
+                });
+            }, []);
+
+            const closeConfirmation = useCallback((confirmed = false) => {
+                setConfirmDialog(prev => ({ ...prev, open: false }));
+                if (confirmResolveRef.current) {
+                    confirmResolveRef.current(confirmed);
+                    confirmResolveRef.current = null;
+                }
+            }, []);
+
+            const requestTextPrompt = useCallback((config = {}) => {
+                return new Promise((resolve) => {
+                    promptResolveRef.current = resolve;
+                    setTextPrompt({
+                        open: true,
+                        title: config.title || 'Enter value',
+                        description: config.description || '',
+                        confirmLabel: config.confirmLabel || 'Save',
+                        placeholder: config.placeholder || '',
+                        initialValue: config.initialValue || ''
+                    });
+                    setTextPromptValue(config.initialValue || '');
+                });
+            }, []);
+
+            const closeTextPrompt = useCallback((commit = false) => {
+                setTextPrompt(prev => ({ ...prev, open: false }));
+                const value = textPromptValue;
+                setTextPromptValue('');
+                if (promptResolveRef.current) {
+                    promptResolveRef.current(commit ? value : null);
+                    promptResolveRef.current = null;
+                }
+            }, [textPromptValue]);
+
+            useEffect(() => {
+                return () => {
+                    if (confirmResolveRef.current) {
+                        confirmResolveRef.current(false);
+                        confirmResolveRef.current = null;
+                    }
+                    if (promptResolveRef.current) {
+                        promptResolveRef.current(null);
+                        promptResolveRef.current = null;
+                    }
+                };
+            }, []);
+
+            return {
+                confirmDialog,
+                requestConfirmation,
+                closeConfirmation,
+                textPrompt,
+                textPromptValue,
+                setTextPromptValue,
+                requestTextPrompt,
+                closeTextPrompt
+            };
+        };
+
+        const ConfirmationModal = ({ dialog, onClose }) => (
+            <Modal isOpen={!!dialog?.open} onClose={() => onClose(false)} title={dialog?.title || 'Confirm action'} placement="center">
+                <div className="space-y-4">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-[14px] text-slate-700">
+                        {dialog?.description}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button onClick={() => onClose(false)} className={getButtonClass('secondary', 'md', 'w-full')}>
+                            Cancel
+                        </button>
+                        <button onClick={() => onClose(true)} className={getButtonClass(dialog?.danger ? 'danger' : 'primary', 'md', 'w-full')}>
+                            {dialog?.confirmLabel || 'Confirm'}
+                        </button>
+                    </div>
+                </div>
+            </Modal>
+        );
+
+        const TextPromptModal = ({ dialog, value, onChange, onClose }) => (
+            <Modal isOpen={!!dialog?.open} onClose={() => onClose(false)} title={dialog?.title || 'Enter value'} placement="center">
+                <div className="space-y-4">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-[14px] text-slate-700">
+                        {dialog?.description}
+                    </div>
+                    <input
+                        className={FORM_CONTROL_CLASS}
+                        value={value}
+                        onChange={e => onChange(e.target.value)}
+                        placeholder={dialog?.placeholder || ''}
+                        autoFocus
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                        <button onClick={() => onClose(false)} className={getButtonClass('secondary', 'md', 'w-full')}>
+                            Cancel
+                        </button>
+                        <button onClick={() => onClose(true)} className={getButtonClass('primary', 'md', 'w-full')}>
+                            {dialog?.confirmLabel || 'Save'}
+                        </button>
+                    </div>
+                </div>
+            </Modal>
+        );
+
         const Modal = ({ isOpen, onClose, title, children, placement = 'sheet' }) => {
             useEffect(() => {
                 if (!isOpen) return;
@@ -2016,13 +2310,13 @@
             const isCentered = placement === 'center';
             return (
                 <div className={`fixed inset-0 z-[300] flex justify-center ${isCentered ? 'items-center p-4' : 'items-end sm:items-center sm:p-4'}`} role="dialog" aria-modal="true">
-                    <div className="absolute inset-0 bg-slate-900/30" onClick={onClose}></div>
-                    <div className={`relative w-full max-w-md bg-white shadow-2xl animate-fade-in overflow-hidden ${isCentered ? 'rounded-3xl max-h-[85dvh]' : 'h-[100dvh] sm:h-auto sm:max-h-[92dvh] sm:rounded-3xl rounded-t-3xl'}`}>
-                        <div className="px-5 pt-4 pb-3 sm:px-6 sm:pt-5 sm:pb-4 border-b border-slate-100 bg-white/95 backdrop-blur sticky top-0 z-10">
+                    <div className="absolute inset-0 bg-slate-950/35" onClick={onClose}></div>
+                    <div className={`relative w-full max-w-md bg-white shadow-2xl animate-fade-in overflow-hidden border border-white/70 ${isCentered ? 'rounded-3xl max-h-[85dvh]' : 'h-[100dvh] sm:h-auto sm:max-h-[92dvh] sm:rounded-3xl rounded-t-3xl'}`}>
+                        <div className="px-5 pt-4 pb-3 sm:px-6 sm:pt-5 sm:pb-4 border-b border-slate-200 bg-white/96 backdrop-blur sticky top-0 z-10">
                             {!isCentered && <div className="w-10 h-1 rounded-full bg-slate-200 mx-auto mb-3 sm:hidden"></div>}
                             <div className="flex justify-between items-center">
-                                <h3 className="text-xl font-display font-bold text-slate-900">{title}</h3>
-                                <button onClick={onClose} className="h-11 w-11 flex items-center justify-center bg-slate-100 rounded-full hover:bg-slate-200 transition-colors">
+                                <h3 className="text-[1.65rem] font-display font-bold tracking-tight text-slate-950">{title}</h3>
+                                <button onClick={onClose} className={getButtonClass('subtle', 'sm', 'h-11 w-11 rounded-full p-0')}>
                                     <Icon name="X" size={20} className="text-slate-500" />
                                 </button>
                             </div>
@@ -2035,13 +2329,18 @@
             );
         };
 
-        const PageHeader = ({ title, subtitle = '', actions = null, inlineActionsOnMobile = false }) => {
+        const PageHeader = ({ title, subtitle = '', actions = null, inlineActionsOnMobile = false, tone = 'default' }) => {
+            const resolvedTone = PAGE_HEADER_TONES[tone] ? tone : inferPageHeaderTone(title);
             return (
                 <header className="px-1">
-                    <div className={`bg-white/90 backdrop-blur rounded-2xl border border-slate-200/70 p-4 shadow-soft ${inlineActionsOnMobile ? 'flex items-start justify-between gap-3' : 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'}`}>
+                    <div className={cx(
+                        'backdrop-blur rounded-[1.6rem] border p-4 shadow-soft',
+                        PAGE_HEADER_TONES[resolvedTone] || PAGE_HEADER_TONES.default,
+                        inlineActionsOnMobile ? 'flex items-start justify-between gap-3' : 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'
+                    )}>
                         <div className="min-w-0">
-                            <h1 className="text-3xl font-display font-bold text-slate-900 tracking-tight">{title}</h1>
-                            {subtitle ? <p className="text-slate-500 text-sm font-medium mt-0.5">{subtitle}</p> : null}
+                            <h1 className="text-[2rem] leading-none font-display font-bold text-slate-950 tracking-tight">{title}</h1>
+                            {subtitle ? <p className="text-slate-600 text-[14px] font-medium mt-1 max-w-2xl">{subtitle}</p> : null}
                         </div>
                         {actions ? (
                             <div className={`flex flex-wrap items-center gap-2 ${inlineActionsOnMobile ? 'justify-end shrink-0' : 'sm:justify-end'}`}>
@@ -2064,10 +2363,10 @@
             return (
                 <div className="fixed top-3 right-3 z-[220] w-[min(92vw,22rem)] space-y-2">
                     {toasts.map((toast) => (
-                        <div key={toast.id} className={`rounded-xl border px-3 py-2 shadow-soft ${toneClass(toast.tone)}`}>
+                        <div key={toast.id} className={`rounded-2xl border px-4 py-3 shadow-soft ${toneClass(toast.tone)}`}>
                             <div className="flex items-start gap-2">
-                                <div className="text-xs font-semibold flex-1">{toast.message}</div>
-                                <button onClick={() => onDismiss(toast.id)} className="text-[11px] font-bold opacity-70 hover:opacity-100">
+                                <div className="text-[13px] font-semibold flex-1">{toast.message}</div>
+                                <button onClick={() => onDismiss(toast.id)} className="text-[12px] font-bold opacity-70 hover:opacity-100">
                                     ×
                                 </button>
                             </div>
@@ -2078,25 +2377,28 @@
         };
 
         const Fab = ({ onClick, icon }) => (
-            <button onClick={onClick} className="fixed bottom-24 right-4 w-14 h-14 bg-brand-600 text-white rounded-full shadow-float flex items-center justify-center hover:scale-105 active:scale-95 transition-all z-40">
+            <button onClick={onClick} className="fixed bottom-24 right-4 w-14 h-14 bg-slate-900 text-white rounded-full shadow-float flex items-center justify-center hover:scale-105 active:scale-95 transition-all z-40">
                 <Icon name={icon} size={28} />
             </button>
         );
 
-        const StatCard = ({ icon, label, value, subtext, color = "blue" }) => (
-            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 flex flex-col justify-between h-full">
+        const StatCard = ({ icon, label, value, subtext, color = "blue" }) => {
+            const tone = color === 'emerald' ? 'emerald' : color === 'amber' ? 'amber' : color === 'rose' ? 'rose' : color === 'violet' ? 'violet' : 'blue';
+            return (
+            <div className={getSurfaceClass('default', 'p-4 flex flex-col justify-between h-full')}>
                 <div className="flex justify-between items-start mb-2">
-                    <span className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">{label}</span>
-                    <div className={`p-1.5 rounded-lg bg-${color}-50 text-${color}-600`}>
+                    <span className={cx(UI_TEXT.label, 'text-slate-500')}>{label}</span>
+                    <div className={getIconBadgeClass(tone, 'h-9 w-9')}>
                         <Icon name={icon} size={16} />
                     </div>
                 </div>
                 <div>
-                    <div className="text-2xl font-display font-bold text-slate-900">{value}</div>
-                    {subtext && <div className="text-xs text-slate-400 font-medium mt-1">{subtext}</div>}
+                    <div className={UI_TEXT.value}>{value}</div>
+                    {subtext && <div className="text-[13px] text-slate-500 font-medium mt-1.5">{subtext}</div>}
                 </div>
             </div>
         );
+        };
 
         const Sparkline = ({ data, color = "#2563eb", height = 60 }) => {
             if (!data || data.length < 2) return null;
@@ -2129,10 +2431,10 @@
             <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm pointer-events-none">
                 <div className="pointer-events-auto w-full max-w-xs rounded-3xl bg-white/90 border border-white/50 px-6 py-8 text-center shadow-2xl space-y-3">
                     <div className="mx-auto mb-3 h-12 w-12 rounded-full border-4 border-slate-200 border-t-slate-900 animate-spin"></div>
-                    <p className="text-sm font-bold text-slate-900">{message}</p>
-                    <p className="text-[11px] text-slate-500 mt-1">Hang tight while we sync the latest records.</p>
+                    <p className="text-[15px] font-bold text-slate-900">{message}</p>
+                    <p className="text-[13px] text-slate-500 mt-1">Hang tight while we sync the latest records.</p>
                     {details?.length ? (
-                        <div className="max-h-28 overflow-y-auto text-left text-[11px] text-slate-500 bg-slate-50/70 border border-slate-200 rounded-xl px-3 py-2 no-scrollbar">
+                        <div className="max-h-28 overflow-y-auto text-left text-[13px] text-slate-500 bg-slate-50/70 border border-slate-200 rounded-xl px-3 py-2 no-scrollbar">
                             {details.map((line, idx) => (
                                 <div key={`${line}-${idx}`} className="flex items-start gap-2">
                                     <span className="mt-[2px] text-slate-300">•</span>
@@ -2421,6 +2723,11 @@
             const [playerSearch, setPlayerSearch] = useState('');
             const [isReleasingKit, setIsReleasingKit] = useState(false);
             const [deleteDialog, setDeleteDialog] = useState({ open: false, player: null, balance: 0, outstandingCount: 0, outstandingTotal: 0, outstandingItems: [] });
+            const {
+                confirmDialog: playerConfirmDialog,
+                requestConfirmation: requestPlayerConfirmation,
+                closeConfirmation: closePlayerConfirmation
+            } = useModalDialogs();
             const selectedPlayerKit = useMemo(() => {
                 if (!selectedPlayer) return null;
                 return kitDetails.find(detail => detail?.playerId && String(detail.playerId) === String(selectedPlayer.id)) || null;
@@ -2433,7 +2740,13 @@
                     alert('No kit record found for this player.');
                     return;
                 }
-                if (!confirm(`Release ${player.firstName} ${player.lastName}'s kit (this frees up ${kitRecord.numberAssigned || 'their'} number)?`)) {
+                const approved = await requestPlayerConfirmation({
+                    title: 'Release kit',
+                    description: `Release ${player.firstName} ${player.lastName}'s kit and free up ${kitRecord.numberAssigned || 'their'} number?`,
+                    confirmLabel: 'Release kit',
+                    danger: true
+                });
+                if (!approved) {
                     return;
                 }
                 setIsReleasingKit(true);
@@ -2452,7 +2765,7 @@
                     setIsReleasingKit(false);
                     finishImportProgress();
                 }
-            }, [kitDetails, selectedPlayer, startImportProgress, finishImportProgress]);
+            }, [kitDetails, selectedPlayer, startImportProgress, finishImportProgress, requestPlayerConfirmation]);
 
             const refresh = async () => {
                 await waitForDb();
@@ -2596,7 +2909,12 @@
 
             const handlePay = async (tx) => {
                 if (hasExistingPayment(tx)) { alert('Already settled.'); return; }
-                if (!confirm("Mark this specific item as received?")) return;
+                const approved = await requestPlayerConfirmation({
+                    title: 'Mark fee received',
+                    description: 'Mark this specific fee item as received and create the covering payment entry?',
+                    confirmLabel: 'Mark received'
+                });
+                if (!approved) return;
                 startImportProgress('Recording payment…');
                 try {
                     const chargeLabel = buildChargeLabel(tx);
@@ -2623,7 +2941,12 @@
                 if (!selectedPlayer || !tx || tx.amount >= 0) return;
                 const existingWriteOff = findWriteOffForCharge(tx, playerTx);
                 if (existingWriteOff) {
-                    if (!confirm('Undo write-off for this charge?')) return;
+                    const approved = await requestPlayerConfirmation({
+                        title: 'Undo write-off',
+                        description: 'Undo the write-off for this charge and return it to unpaid status?',
+                        confirmLabel: 'Undo write-off'
+                    });
+                    if (!approved) return;
                     startImportProgress('Removing write-off…');
                     try {
                         await db.transactions.delete(existingWriteOff.id);
@@ -2639,7 +2962,13 @@
                     alert('Already paid.');
                     return;
                 }
-                if (!confirm('Write off this unpaid charge?')) return;
+                const approved = await requestPlayerConfirmation({
+                    title: 'Write off unpaid charge',
+                    description: 'Write off this unpaid charge without recording cash received?',
+                    confirmLabel: 'Write off charge',
+                    danger: true
+                });
+                if (!approved) return;
                 startImportProgress('Writing off charge…');
                 try {
                     const chargeLabel = buildChargeLabel(tx);
@@ -2957,7 +3286,7 @@
                         title="Squad"
                         subtitle="Manage roster, debts, and attendance."
                         actions={
-                            <button onClick={() => setIsAddOpen(true)} className="min-h-[44px] px-4 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/20 flex items-center gap-2 hover:bg-slate-800 transition-colors text-sm font-bold">
+                            <button onClick={() => setIsAddOpen(true)} className={getButtonClass('primary', 'md')}>
                                 <Icon name="Plus" size={16} />
                                 New Player
                             </button>
@@ -2965,70 +3294,72 @@
                     />
                     <div className="px-1 space-y-3">
                         <div className="grid grid-cols-1 gap-2">
-                            <button onClick={() => setIsDebtOpen(true)} className="w-full min-h-[44px] text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center justify-center gap-1">
+                            <button onClick={() => setIsDebtOpen(true)} className={getButtonClass('info', 'md', 'w-full')}>
                                 <Icon name="MessageSquare" size={14} /> Debt Message
                             </button>
                         </div>
-                        <div className="flex flex-wrap gap-2 items-center text-[11px] text-slate-600">
-                            <span className="font-bold uppercase tracking-wider text-slate-500">Sort:</span>
-                            <select value={sortPlayersBy} onChange={e => setSortPlayersBy(e.target.value)} className="bg-white border border-slate-200 rounded-lg p-2 text-xs">
-                                <option value="name">Name</option>
-                                <option value="shirt">Shirt #</option>
-                                <option value="games">Games played</option>
-                                <option value="paid">Paid status</option>
-                                <option value="active">Active status</option>
-                            </select>
-                            <button type="button" onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')} className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-600">
-                                <Icon name={sortDirection === 'asc' ? 'ArrowUp' : 'ArrowDown'} size={12} />
-                                {sortDirection === 'asc' ? 'Asc' : 'Desc'}
-                            </button>
-                        </div>
-                        <div className="w-full sm:w-72 relative">
+                        <div className={getSurfaceClass('roster', 'p-4 space-y-3')}>
+                            <div className="flex flex-wrap gap-2 items-center text-[12px] text-slate-600">
+                                <span className="font-bold uppercase tracking-wider text-slate-500">Sort:</span>
+                                <select value={sortPlayersBy} onChange={e => setSortPlayersBy(e.target.value)} className={cx(FORM_CONTROL_CLASS, 'w-auto min-w-[12rem] py-2.5 text-[13px]')}>
+                                    <option value="name">Name</option>
+                                    <option value="shirt">Shirt #</option>
+                                    <option value="games">Games played</option>
+                                    <option value="paid">Paid status</option>
+                                    <option value="active">Active status</option>
+                                </select>
+                                <button type="button" onClick={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')} className={getButtonClass('secondary', 'sm')}>
+                                    <Icon name={sortDirection === 'asc' ? 'ArrowUp' : 'ArrowDown'} size={14} />
+                                    {sortDirection === 'asc' ? 'Ascending' : 'Descending'}
+                                </button>
+                            </div>
+                            <div className="w-full sm:w-80 relative">
                             <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                             <input
                                 type="search"
                                 value={playerSearch}
                                 onChange={(e) => setPlayerSearch(e.target.value)}
                                 placeholder="Search players"
-                                className="w-full bg-white border border-slate-200 rounded-xl py-2.5 pl-9 pr-3 text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                                className={cx(FORM_CONTROL_CLASS, 'py-2.5 pl-9 pr-3')}
                             />
                             {playerSearch && (
                                 <button
                                     type="button"
                                     onClick={() => setPlayerSearch('')}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 hover:text-slate-600"
+                                    className={cx(getButtonClass('ghost', 'xs'), 'absolute right-2 top-1/2 -translate-y-1/2 min-h-0 h-8 px-2')}
                                 >
                                     Clear
                                 </button>
                             )}
                         </div>
+                        </div>
                     </div>
 
-                    <div className="bg-white rounded-2xl shadow-soft border border-slate-100 overflow-hidden divide-y divide-slate-50">
+                    <div className={getSurfaceClass('roster', 'overflow-hidden divide-y divide-white/80')}>
                         {filteredPlayers.length ? filteredPlayers.map((p) => {
                             const bal = balances[p.id] || 0;
                             const availPositions = p.positions || [p.position, p.preferredPosition || p.position].filter(Boolean).join(', ');
                             return (
-                                <button key={p.id} onClick={() => openPlayerDetails(p)} className={`w-full text-left p-4 flex items-center justify-between hover:bg-slate-50 transition-colors ${p.isActive === false ? 'opacity-60' : ''}`}>
+                                <button key={p.id} onClick={() => openPlayerDetails(p)} className={`w-full text-left p-4 flex items-center justify-between hover:bg-white/80 transition-colors ${p.isActive === false ? 'opacity-60' : ''}`}>
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-600 font-display font-bold text-sm border border-white shadow-inner">
+                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-100 to-emerald-100 flex items-center justify-center text-slate-700 font-display font-bold text-sm border border-white shadow-inner">
                                             {p.firstName[0]}{p.lastName[0]}
                                         </div>
                                         <div>
-                                            <div className="font-bold text-slate-900 text-sm">{p.firstName} {p.lastName}</div>
-                                            <div className="text-[11px] text-slate-500">{availPositions || p.position}</div>
+                                            <div className="font-bold text-slate-900 text-[15px]">{p.firstName} {p.lastName}</div>
+                                            <div className="text-[12px] text-slate-500">{availPositions || p.position}</div>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <button onClick={(e) => { e.stopPropagation(); toggleActiveStatus(p); }} className={`text-[10px] font-bold px-2 py-1 rounded-md border ${p.isActive === false ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                                        <button onClick={(e) => { e.stopPropagation(); toggleActiveStatus(p); }} className={getChipClass(p.isActive === false ? 'warning' : 'success')}>
                                             {p.isActive === false ? 'Inactive' : 'Active'}
                                         </button>
                                         {bal < 0 && (
-                                            <span className="text-xs font-bold text-rose-600 bg-rose-50 px-2 py-1 rounded-md">
+                                            <span className={getChipClass('danger')}>
                                                 {formatCurrency(bal, { maximumFractionDigits: 0 })}
                                             </span>
                                         )}
-                                        {bal >= 0 && <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md">Paid</span>}
+                                        {bal >= 0 && <span className={getChipClass('success')}>Paid</span>}
                                         <Icon name="ChevronRight" size={16} className="text-slate-300" />
                                     </div>
                                 </button>
@@ -3066,19 +3397,19 @@
                     <Modal isOpen={!!selectedPlayer} onClose={() => setSelectedPlayer(null)} title={selectedPlayer ? `${selectedPlayer.firstName} ${selectedPlayer.lastName}` : ''}>
                         {selectedPlayer && (
                             <div className="space-y-4">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600 font-display font-bold text-sm">
+                                <div className={getSurfaceClass('roster', 'p-4 flex items-center gap-3')}>
+                                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-100 to-emerald-100 flex items-center justify-center text-slate-700 font-display font-bold text-sm border border-white shadow-inner">
                                         {selectedPlayer.firstName[0]}{selectedPlayer.lastName[0]}
                                     </div>
                                     <div className="flex-1">
                                         <div className="text-sm font-bold text-slate-900">{selectedPlayer.firstName} {selectedPlayer.lastName}</div>
-                                        <div className="text-[11px] text-slate-500">Pos {selectedPlayer.position} · Pref {selectedPlayer.preferredPosition || selectedPlayer.position}</div>
+                                        <div className="text-[12px] text-slate-500">Pos {selectedPlayer.position} · Pref {selectedPlayer.preferredPosition || selectedPlayer.position}</div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <button onClick={() => startEdit(selectedPlayer)} className="text-xs font-bold text-brand-600 bg-brand-50 px-3 py-1 rounded-lg border border-brand-100">Edit</button>
+                                        <button onClick={() => startEdit(selectedPlayer)} className={getButtonClass('primary', 'sm')}>Edit</button>
                                     </div>
                                 </div>
-                                <div className="space-y-1 text-[11px] text-slate-500">
+                                <div className="space-y-1 text-[12px] text-slate-500">
                                     {selectedPlayer.phone && <div>Phone: {selectedPlayer.phone}</div>}
                                     {(selectedPlayer.age || selectedPlayer.dateOfBirth) && (
                                         <div>
@@ -3095,7 +3426,7 @@
                                     <div className="flex flex-wrap gap-2">
                                         {selectedPlayerKit.shirtSize && <span>Shirt size: {selectedPlayerKit.shirtSize}</span>}
                                         {selectedPlayerKit.shortSize && <span>Short size: {selectedPlayerKit.shortSize}</span>}
-                                        <button onClick={() => releasePlayerKit(selectedPlayer)} disabled={isReleasingKit} className="text-[11px] font-bold px-3 py-1 rounded-full border border-rose-200 bg-rose-50 text-rose-700">
+                                        <button onClick={() => releasePlayerKit(selectedPlayer)} disabled={isReleasingKit} className={getButtonClass('danger', 'xs', 'min-h-0 h-8 px-3 rounded-full')}>
                                             {isReleasingKit ? 'Releasing…' : 'Release kit'}
                                         </button>
                                     </div>
@@ -3108,43 +3439,43 @@
                                             const def = positionDefinitions.find(d => d.code === pos);
                                             const label = def ? `${def.code} · ${def.label}` : pos;
                                             return (
-                                                <span key={`player-pos-${selectedPlayer.id}-${pos}`} className="flex items-center gap-2 text-[11px] px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700">
+                                                <span key={`player-pos-${selectedPlayer.id}-${pos}`} className="flex items-center gap-2 text-[12px] px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700">
                                                     <span>{label}</span>
                                                     <button onClick={() => removePositionFromPlayer(pos)} className="text-rose-600 font-bold">✕</button>
                                                 </span>
                                             );
                                         }) : (
-                                            <span className="text-[11px] text-slate-400">No additional positions recorded.</span>
+                                            <span className="text-[12px] text-slate-400">No additional positions recorded.</span>
                                         )}
                                     </div>
                                     <div className="grid sm:grid-cols-3 gap-2">
-                                        <select className="bg-white border border-slate-200 rounded-lg p-2 text-sm" value={playerPositionSelection} onChange={e => setPlayerPositionSelection(e.target.value)}>
+                                        <select className={FORM_CONTROL_CLASS} value={playerPositionSelection} onChange={e => setPlayerPositionSelection(e.target.value)}>
                                             <option value="">Add position</option>
                                             {positionDefinitions.map(def => (
                                                 <option key={`player-def-${def.code}`} value={def.code}>{def.code} · {def.label}</option>
                                             ))}
                                         </select>
-                                        <button onClick={() => addPositionToPlayer(playerPositionSelection)} className="bg-slate-900 text-white text-xs font-bold rounded-lg px-3 py-2">Add</button>
+                                        <button onClick={() => addPositionToPlayer(playerPositionSelection)} className={getButtonClass('primary', 'sm')}>Add</button>
                                         <div className="flex gap-2">
-                                            <input value={playerCustomPositionInput} onChange={e => setPlayerCustomPositionInput(e.target.value)} placeholder="Custom code" className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-sm" />
-                                            <button onClick={() => addPositionToPlayer(playerCustomPositionInput)} className="bg-emerald-600 text-white text-xs font-bold rounded-lg px-3 py-2">Add</button>
+                                            <input value={playerCustomPositionInput} onChange={e => setPlayerCustomPositionInput(e.target.value)} placeholder="Custom code" className={cx(FORM_CONTROL_CLASS, 'flex-1')} />
+                                            <button onClick={() => addPositionToPlayer(playerCustomPositionInput)} className={getButtonClass('success', 'sm')}>Add</button>
                                         </div>
                                     </div>
                                 </div>
 
                                 <div className="grid grid-cols-3 gap-2">
-                                    <div className="bg-slate-50 p-3 rounded-xl text-center">
-                                        <div className="text-[10px] uppercase font-bold text-slate-400">Balance</div>
+                                    <div className={getSurfaceClass('roster', 'p-3 text-center')}>
+                                        <div className="text-[11px] uppercase font-bold text-slate-400">Balance</div>
                                         <div className={`text-xl font-display font-bold ${balances[selectedPlayer.id] < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                                             {formatCurrency(balances[selectedPlayer.id])}
                                         </div>
                                     </div>
-                                    <div className="bg-slate-50 p-3 rounded-xl text-center">
-                                        <div className="text-[10px] uppercase font-bold text-slate-400">Games</div>
+                                    <div className={getSurfaceClass('roster', 'p-3 text-center')}>
+                                        <div className="text-[11px] uppercase font-bold text-slate-400">Games</div>
                                         <div className="text-xl font-display font-bold text-slate-900">{playerStats[selectedPlayer.id]?.games || 0}</div>
                                     </div>
-                                    <div className="bg-slate-50 p-3 rounded-xl text-center">
-                                        <div className="text-[10px] uppercase font-bold text-slate-400">Goals</div>
+                                    <div className={getSurfaceClass('roster', 'p-3 text-center')}>
+                                        <div className="text-[11px] uppercase font-bold text-slate-400">Goals</div>
                                         <div className="text-xl font-display font-bold text-slate-900">{playerStats[selectedPlayer.id]?.goals || 0}</div>
                                     </div>
                                 </div>
@@ -3160,10 +3491,10 @@
                                                 <div key={pa.id} className="flex justify-between items-center p-2 rounded-lg bg-white border border-slate-100">
                                                     <div>
                                                         <div className="text-xs font-bold text-slate-900">vs {fx.opponent}</div>
-                                                        <div className="text-[11px] text-slate-500">{new Date(fx.date).toLocaleDateString()} · {fx.venue || 'TBC'}</div>
-                                                        {scored > 0 && <div className="text-[11px] text-emerald-600 font-bold">Goals: {scored}</div>}
+                                                        <div className="text-[12px] text-slate-500">{new Date(fx.date).toLocaleDateString()} · {fx.venue || 'TBC'}</div>
+                                                        {scored > 0 && <div className="text-[12px] text-emerald-600 font-bold">Goals: {scored}</div>}
                                                     </div>
-                                                    <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">Played</span>
+                                                    <span className={getChipClass('neutral')}>Played</span>
                                                 </div>
                                             );
                                         })}
@@ -3190,20 +3521,20 @@
                                                 <div key={tx.id} className="flex justify-between items-center p-3 border border-slate-100 rounded-xl bg-white">
                                                     <div>
                                                         <div className="text-xs font-bold text-slate-900">{tx.description}</div>
-                                                        <div className="text-[10px] text-slate-400">{(isCharge && fixtureDetails) ? fixtureDetails : new Date(tx.date).toLocaleDateString()}</div>
+                                                        <div className="text-[11px] text-slate-400">{(isCharge && fixtureDetails) ? fixtureDetails : new Date(tx.date).toLocaleDateString()}</div>
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <div className={`text-sm font-bold ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                                             {formatCurrency(tx.amount)}
                                                         </div>
                                                         {isWrittenOff && (
-                                                            <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">Written off</span>
+                                                            <span className={getChipClass('warning')}>Written off</span>
                                                         )}
                                                         {outstanding && (
-                                                            <button onClick={() => handlePay(tx)} className="text-xs bg-brand-600 text-white px-2 py-1 rounded">Pay</button>
+                                                            <button onClick={() => handlePay(tx)} className={getButtonClass('primary', 'xs')}>Pay</button>
                                                         )}
                                                         {showWriteOffAction && (
-                                                            <button onClick={() => handleWriteOff(tx)} className={`text-xs font-bold px-2 py-1 rounded border ${isWrittenOff ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                                                            <button onClick={() => handleWriteOff(tx)} className={getButtonClass(isWrittenOff ? 'secondary' : 'warning', 'xs')}>
                                                                 {isWrittenOff ? 'Undo write-off' : 'Write off'}
                                                             </button>
                                                         )}
@@ -3213,15 +3544,15 @@
                                         })}
                                             {playerTx.length === 0 && <div className="text-center text-slate-400 text-sm">No history found.</div>}
                                     </div>
-                                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                                        <div className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">Add Player Charge</div>
+                                    <div className={getSurfaceClass('roster', 'p-3 space-y-2')}>
+                                        <div className="text-[12px] font-bold text-slate-600 uppercase tracking-wider">Add Player Charge</div>
                                         <div className="grid grid-cols-2 gap-2">
-                                            <select className="bg-white border border-slate-200 rounded-lg p-2 text-sm" value={newCharge.item} onChange={e => setNewCharge({ ...newCharge, item: e.target.value })}>
+                                            <select className={FORM_CONTROL_CLASS} value={newCharge.item} onChange={e => setNewCharge({ ...newCharge, item: e.target.value })}>
                                                 {itemCategories.map(it => <option key={it} value={it}>{it}</option>)}
                                             </select>
-                                            <input type="number" className="bg-white border border-slate-200 rounded-lg p-2 text-sm" placeholder="Amount" value={newCharge.amount} onChange={e => setNewCharge({ ...newCharge, amount: e.target.value })} />
+                                            <input type="number" className={FORM_CONTROL_CLASS} placeholder="Amount" value={newCharge.amount} onChange={e => setNewCharge({ ...newCharge, amount: e.target.value })} />
                                         </div>
-                                        <button onClick={addCharge} className="w-full bg-slate-900 text-white font-bold py-2 rounded-lg text-sm">Add Charge</button>
+                                        <button onClick={addCharge} className={getButtonClass('primary', 'md', 'w-full')}>Add Charge</button>
                                     </div>
                                 </div>
                             </div>
@@ -6868,10 +7199,10 @@
                 : fixtureSaveStatus === 'saved'
                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                     : 'bg-rose-50 text-rose-700 border-rose-200';
-            const touchModalSelectClass = 'w-full min-h-[72px] bg-slate-50 border-2 border-slate-200 rounded-2xl px-5 pr-14 py-4 text-[22px] font-semibold leading-tight outline-none';
-            const touchPanelSelectClass = 'w-full min-h-[60px] bg-white border-2 border-slate-200 rounded-xl px-4 py-3 text-[18px] font-semibold leading-tight';
-            const touchModalInputClass = 'w-full min-h-[60px] bg-slate-50 border-2 border-slate-200 rounded-2xl px-4 py-3 text-[19px] font-semibold leading-tight outline-none';
-            const touchPanelInputClass = 'w-full min-h-[60px] bg-white border-2 border-slate-200 rounded-xl px-4 py-3 text-[18px] font-semibold leading-tight outline-none';
+            const touchModalSelectClass = 'w-full min-h-[72px] bg-slate-50 border-2 border-slate-200 rounded-2xl px-5 pr-14 py-4 text-[22px] font-semibold leading-tight text-slate-900 outline-none focus:border-sky-300 focus:bg-white';
+            const touchPanelSelectClass = 'w-full min-h-[62px] bg-white border-2 border-slate-200 rounded-2xl px-4 py-3 text-[18px] font-semibold leading-tight text-slate-900 outline-none focus:border-sky-300 focus:bg-sky-50/30';
+            const touchModalInputClass = 'w-full min-h-[60px] bg-slate-50 border-2 border-slate-200 rounded-2xl px-4 py-3 text-[19px] font-semibold leading-tight text-slate-900 outline-none focus:border-sky-300 focus:bg-white';
+            const touchPanelInputClass = 'w-full min-h-[62px] bg-white border-2 border-slate-200 rounded-2xl px-4 py-3 text-[18px] font-semibold leading-tight text-slate-900 outline-none focus:border-sky-300 focus:bg-sky-50/30';
 
             const fixtureTotals = useMemo(() => {
                 if(!selectedFixture) return { cost: 0, ref: 0 };
@@ -7511,17 +7842,17 @@
                         subtitle={launchMode === 'matchday' ? 'One-match lineup board with live subs and swaps.' : 'Season schedule and result history.'}
                         actions={
                             <>
-                                <button onClick={() => openAddFixtureModal({ openAfterCreate: launchMode === 'matchday' })} className="min-h-[44px] px-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/20 flex items-center gap-1.5 hover:bg-slate-800 transition-colors text-xs font-bold">
+                                <button onClick={() => openAddFixtureModal({ openAfterCreate: launchMode === 'matchday' })} className={getButtonClass('primary', 'md')}>
                                     <Icon name="Plus" size={16} />
                                     {launchMode === 'matchday' ? 'New Match Day' : 'New Game'}
                                 </button>
                                 {!isMatchdayWorkspace && (
                                     <>
-                                        <button onClick={() => setIsLegacyResultsOpen(true)} className="min-h-[44px] px-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-500/20 flex items-center gap-1.5 hover:bg-slate-800 transition-colors text-xs font-bold">
+                                        <button onClick={() => setIsLegacyResultsOpen(true)} className={getButtonClass('secondary', 'md')}>
                                             <Icon name="History" size={16} />
                                             Import Results
                                         </button>
-                                        <button onClick={() => setIsMagicOpen(true)} className="min-h-[44px] px-3 bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-500/20 flex items-center gap-1.5 hover:bg-indigo-700 transition-colors text-xs font-bold">
+                                        <button onClick={() => setIsMagicOpen(true)} className={getButtonClass('info', 'md')}>
                                             <Icon name="Sparkles" size={16} />
                                             Magic Import
                                         </button>
@@ -7532,29 +7863,29 @@
                     />
 
                     {!isMatchdayWorkspace && (
-                        <div className="bg-white p-3 rounded-2xl border border-slate-100 space-y-2">
-                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Season Snapshot</div>
+                        <div className={getSurfaceClass('fixtures', 'p-4 space-y-3')}>
+                            <div className={cx(UI_TEXT.eyebrow, 'text-emerald-700')}>Season Snapshot</div>
                             <div className="flex flex-wrap gap-2">
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                                <span className={getChipClass('neutral')}>
                                     Total <span className="font-bold text-slate-900">{gamesStats.total}</span>
                                 </span>
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                                <span className={getChipClass('neutral')}>
                                     This year <span className="font-bold text-slate-900">{gamesStats.thisYear}</span>
                                 </span>
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] font-semibold text-emerald-700">
+                                <span className={getChipClass('success')}>
                                     W <span className="font-bold">{gamesStats.wins}</span>
                                 </span>
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] font-semibold text-amber-700">
+                                <span className={getChipClass('warning')}>
                                     D <span className="font-bold">{gamesStats.draws}</span>
                                 </span>
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-[11px] font-semibold text-rose-700">
+                                <span className={getChipClass('danger')}>
                                     L <span className="font-bold">{gamesStats.losses}</span>
                                 </span>
                             </div>
                             {Object.entries(gamesStats.bySeason).slice(0, 2).length > 0 && (
                                 <div className="flex flex-wrap gap-2">
                                     {Object.entries(gamesStats.bySeason).slice(0, 2).map(([season, info]) => (
-                                        <span key={season} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-600">
+                                        <span key={season} className={getChipClass('neutral')}>
                                             <span className="font-semibold text-slate-700">{season}:</span> {info.games} games
                                         </span>
                                     ))}
@@ -7567,25 +7898,25 @@
                         {isMatchdayWorkspace ? (
                             <>
                                 {!matchdayPrimaryFixture ? (
-                                    <div className="bg-white border border-slate-100 rounded-2xl p-5 shadow-soft text-center space-y-3">
-                                        <div className="text-sm text-slate-500">No upcoming game yet.</div>
-                                        <button onClick={() => openAddFixtureModal({ openAfterCreate: true })} className="min-h-[44px] px-4 bg-slate-900 text-white rounded-xl font-bold text-sm inline-flex items-center gap-2">
+                                    <div className={getSurfaceClass('matchday', 'p-5 text-center space-y-3')}>
+                                        <div className={UI_TEXT.helper}>No upcoming game yet.</div>
+                                        <button onClick={() => openAddFixtureModal({ openAfterCreate: true })} className={getButtonClass('primary', 'md')}>
                                             <Icon name="Plus" size={16} />
                                             Create Upcoming Game
                                         </button>
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
-                                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{matchdayLiveFixture ? 'Live Match' : 'Current Match Day'}</div>
+                                        <div className={cx(UI_TEXT.eyebrow, 'text-amber-700')}>{matchdayLiveFixture ? 'Live Match' : 'Current Match Day'}</div>
                                         <button
                                             type="button"
                                             onClick={() => openMatchMode(matchdayPrimaryFixture)}
-                                            className="w-full text-left bg-white border border-slate-100 rounded-2xl p-4 shadow-soft hover:border-brand-200 transition-colors"
+                                            className={getSurfaceClass('matchday', 'w-full p-4 text-left hover:border-amber-200 transition-colors')}
                                         >
                                             <div className="flex items-start justify-between gap-3">
                                                 <div>
-                                                    <div className="text-sm font-bold text-slate-900">vs {matchdayPrimaryFixture.opponent || 'Opponent TBC'}</div>
-                                                    <div className="text-[11px] text-slate-500 mt-1">
+                                                    <div className="text-base font-bold text-slate-900">vs {matchdayPrimaryFixture.opponent || 'Opponent TBC'}</div>
+                                                    <div className="text-[13px] text-slate-500 mt-1">
                                                         {matchdayPrimaryFixture.venue || 'Venue TBC'} · {new Date(matchdayPrimaryFixture.date || Date.now()).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
                                                     </div>
                                                 </div>
@@ -7595,7 +7926,7 @@
                                                             ? getLiveClockDisplay(matchdayPrimaryFixture?.matchdayPlanner?.live?.clock || {})
                                                             : renderTimeLabel(matchdayPrimaryFixture.time)}
                                                     </div>
-                                                    <div className={`text-[10px] font-bold mt-1 ${matchdayLiveFixture ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                    <div className={`text-[12px] font-bold mt-1 ${matchdayLiveFixture ? 'text-rose-600' : 'text-emerald-600'}`}>
                                                         {matchdayLiveFixture
                                                             ? `${MATCHDAY_LIVE_PHASE_LABELS[normalizeLivePhase(matchdayPrimaryFixture?.matchdayPlanner?.live?.clock?.phase)] || 'LIVE'} · RESUME`
                                                             : 'UPCOMING'}
@@ -7603,13 +7934,13 @@
                                                 </div>
                                             </div>
                                             {matchdayLiveFixture && (
-                                                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 font-semibold">
+                                                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700 font-semibold">
                                                     Live tracking is still running for this game. Reopen it to continue logging, even after leaving the screen or reloading the app.
                                                 </div>
                                             )}
                                         </button>
                                         {matchdayHiddenCount > 0 && (
-                                            <div className="text-[11px] text-slate-500">
+                                            <div className={UI_TEXT.meta}>
                                                 {matchdayHiddenCount} {matchdayLiveFixture ? 'upcoming' : 'later upcoming'} game{matchdayHiddenCount === 1 ? '' : 's'} hidden. Match Day tracks one game at a time.
                                             </div>
                                         )}
@@ -7630,11 +7961,11 @@
                                                 type="button"
                                                 onClick={() => setOpenSeasonTags(prev => prev.includes(season) ? prev.filter(tag => tag !== season) : [...prev, season])}
                                                 aria-expanded={isOpen}
-                                                className="w-full flex items-center justify-between gap-3 bg-white px-4 py-3 rounded-2xl border border-slate-100 shadow-soft text-left"
+                                                className={getSurfaceClass('fixtures', 'w-full px-4 py-3 flex items-center justify-between gap-3 text-left')}
                                             >
                                                 <div>
-                                                    <div className="text-sm font-bold text-slate-900">{season}</div>
-                                                    <div className="text-[11px] text-slate-500">{seasonFixtures.length} match{seasonFixtures.length === 1 ? '' : 'es'}</div>
+                                                    <div className="text-base font-bold text-slate-900">{season}</div>
+                                                    <div className={UI_TEXT.meta}>{seasonFixtures.length} match{seasonFixtures.length === 1 ? '' : 'es'}</div>
                                                 </div>
                                                 <Icon name={isOpen ? 'ChevronUp' : 'ChevronDown'} size={16} className="text-slate-500" />
                                             </button>
@@ -7646,47 +7977,39 @@
                                                         const outcome = getFixtureOutcome(f);
                                                         const fixtureNet = Number(fixtureNetLookup[f.id] || 0);
                                                         const statusLabel = outcome.played ? 'Played' : 'Upcoming';
-                                                        const statusTone = outcome.played
-                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                            : 'bg-sky-50 text-sky-700 border-sky-200';
-                                                        const netTone = fixtureNet > 0
-                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                            : fixtureNet < 0
-                                                                ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                                                : 'bg-slate-50 text-slate-600 border-slate-200';
                                                         return (
                                                         <div
                                                             key={f.id}
                                                             onClick={() => openMatchMode(f)}
-                                                            className="relative bg-white p-4 rounded-2xl shadow-soft border border-slate-100 cursor-pointer hover:border-brand-200 transition-colors group"
+                                                            className={getSurfaceClass('fixtures', 'relative p-4 cursor-pointer hover:border-emerald-200 transition-colors group')}
                                                         >
                                                             <div className="flex items-start justify-between gap-3">
                                                                 <div className="min-w-0">
                                                                     <div className="flex flex-wrap items-center gap-2">
-                                                                        <span className="text-[10px] font-bold text-brand-600 uppercase tracking-wider">{(f.competitionType || 'LEAGUE').replace('_', ' ')}</span>
-                                                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusTone}`}>{statusLabel}</span>
+                                                                        <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">{(f.competitionType || 'LEAGUE').replace('_', ' ')}</span>
+                                                                        <span className={cx(getChipClass(outcome.played ? 'success' : 'info'), 'py-0.5 px-2')}>{statusLabel}</span>
                                                                     </div>
-                                                                    <div className="mt-1 text-base font-bold text-slate-900 group-hover:text-brand-600 transition-colors truncate">vs {f.opponent || 'Opponent'}</div>
-                                                                    <div className="mt-1 text-[11px] text-slate-500 flex items-center gap-1 truncate">
+                                                                    <div className="mt-1 text-[1.15rem] font-bold text-slate-900 group-hover:text-emerald-700 transition-colors truncate">vs {f.opponent || 'Opponent'}</div>
+                                                                    <div className="mt-1 text-[13px] text-slate-500 flex items-center gap-1 truncate">
                                                                         <Icon name="MapPin" size={12} /> {f.venue || 'Venue TBC'}
                                                                     </div>
                                                                 </div>
                                                                 <div className="text-right shrink-0">
                                                                     <div className="text-base font-display font-bold text-slate-900">{renderTimeLabel(f.time)}</div>
-                                                                    <div className="text-[11px] text-slate-500">{new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</div>
+                                                                    <div className="text-[12px] text-slate-500">{new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</div>
                                                                 </div>
                                                             </div>
                                                             <div className="mt-3 flex flex-wrap items-center gap-2">
                                                                 {forfeitLabel ? (
-                                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-700">
+                                                                    <span className={getChipClass('warning')}>
                                                                         {forfeitLabel}
                                                                     </span>
                                                                 ) : (
-                                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] font-semibold text-slate-700">
+                                                                    <span className={getChipClass('neutral')}>
                                                                         {hasScore ? `Exiles ${f.homeScore ?? '-'}-${f.awayScore ?? '-'} ${f.opponent || ''}` : 'Score TBC'}
                                                                     </span>
                                                                 )}
-                                                                <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-bold ${netTone}`}>
+                                                                <span className={cx(getChipClass(fixtureNet > 0 ? 'success' : fixtureNet < 0 ? 'danger' : 'neutral'), 'font-bold')}>
                                                                     P&amp;L {fixtureNet > 0 ? '+' : fixtureNet < 0 ? '-' : ''}{formatCurrency(Math.abs(fixtureNet), { maximumFractionDigits: 0 })}
                                                                 </span>
                                                             </div>
@@ -7811,32 +8134,32 @@
                                             <div className="flex items-center gap-2 shrink-0">
                                                 <button
                                                     onClick={requestCloseSelectedFixtureView}
-                                                    className="min-h-[34px] px-3 rounded-md border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
+                                                    className={getButtonClass('secondary', 'xs')}
                                                 >
                                                     Back
                                                 </button>
                                                 <button
                                                     onClick={() => deleteFixture(selectedFixture)}
-                                                    className="min-h-[34px] px-3 rounded-md border border-rose-200 bg-rose-50 text-[11px] font-bold text-rose-700"
+                                                    className={getButtonClass('danger', 'xs')}
                                                 >
                                                     Delete
                                                 </button>
                                             </div>
                                         ) : (
                                             <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:justify-end">
-                                                <button onClick={requestCloseSelectedFixtureView} className="min-h-[46px] px-4 py-2 rounded-lg border border-slate-200 text-sm font-bold">Back</button>
-                                                <button onClick={() => deleteFixture(selectedFixture)} className="min-h-[46px] px-4 py-2 rounded-lg border border-rose-200 bg-rose-50 text-sm font-bold text-rose-700">Delete</button>
+                                                <button onClick={requestCloseSelectedFixtureView} className={getButtonClass('secondary', 'md')}>Back</button>
+                                                <button onClick={() => deleteFixture(selectedFixture)} className={getButtonClass('danger', 'md')}>Delete</button>
                                             </div>
                                         )}
                                     </div>
                                     {!isMatchdayWorkspace && (
                                         <div className="grid grid-cols-4 gap-2">
-                                            <button onClick={() => setFixtureDetailTab('overview')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${fixtureDetailTab === 'overview' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>Overview</button>
-                                            <button onClick={() => setFixtureDetailTab('squad')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${fixtureDetailTab === 'squad' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>Squad</button>
-                                            <button onClick={() => setFixtureDetailTab('payments')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${fixtureDetailTab === 'payments' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            <button onClick={() => setFixtureDetailTab('overview')} className={getSegmentedButtonClass(fixtureDetailTab === 'overview', 'min-h-[42px] text-[12px]')}>Overview</button>
+                                            <button onClick={() => setFixtureDetailTab('squad')} className={getSegmentedButtonClass(fixtureDetailTab === 'squad', 'min-h-[42px] text-[12px]')}>Squad</button>
+                                            <button onClick={() => setFixtureDetailTab('payments')} className={getSegmentedButtonClass(fixtureDetailTab === 'payments', 'min-h-[42px] text-[12px]')}>
                                                 Payments ({paymentSummary.unpaid})
                                             </button>
-                                            <button onClick={() => setFixtureDetailTab('costs')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${fixtureDetailTab === 'costs' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            <button onClick={() => setFixtureDetailTab('costs')} className={getSegmentedButtonClass(fixtureDetailTab === 'costs', 'min-h-[42px] text-[12px]')}>
                                                 Costs ({nonPlayerFixtureTx.length})
                                             </button>
                                         </div>
@@ -7844,7 +8167,7 @@
                                 </div>
 
                                 {!isMatchdayWorkspace && fixtureDetailTab === 'overview' && (
-                                <div className="bg-slate-50 p-4 rounded-2xl space-y-3">
+                                <div className={getSurfaceClass('fixtures', 'p-4 space-y-3')}>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                                         <select className={touchPanelSelectClass} value={selectedFixture.opponent} onChange={e => setSelectedFixture({ ...selectedFixture, opponent: e.target.value })}>
                                             <option value="">Select opponent</option>
@@ -7875,7 +8198,7 @@
                                     <button
                                         type="button"
                                         onClick={() => setIsFixtureAdvancedOpen(v => !v)}
-                                        className="min-h-[44px] col-span-1 sm:col-span-2 md:col-span-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 flex items-center justify-between"
+                                        className={getButtonClass('secondary', 'md', 'col-span-1 sm:col-span-2 md:col-span-3 w-full justify-between')}
                                     >
                                         <span>Advanced game fields</span>
                                         <Icon name={isFixtureAdvancedOpen ? 'ChevronUp' : 'ChevronDown'} size={14} />
@@ -7912,10 +8235,10 @@
                                 )}
 
                                 {!isMatchdayWorkspace && fixtureDetailTab === 'overview' && (
-                                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
-                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Accolades</div>
+                                    <div className={getSurfaceClass('default', 'p-4 space-y-3')}>
+                                        <div className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Accolades</div>
                                         <div className="space-y-2">
-                                            <label className="text-[11px] font-bold text-slate-500 uppercase">Man of the Match</label>
+                                            <label className={cx(UI_TEXT.label, 'text-slate-500')}>Man of the Match</label>
                                             <input list="fixture-motm-options" className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Select player or type a name" value={resolveMotmLabel(selectedFixture.manOfTheMatch) || ''} onChange={e => {
                                                 const val = e.target.value;
                                                 const match = getPlayerByMotmValue(val);
@@ -7926,43 +8249,43 @@
                                                     <option key={`motm-${p.id}`} value={`${p.firstName} ${p.lastName}`}></option>
                                                 ))}
                                             </datalist>
-                                            <p className="text-[11px] text-slate-500">Use squad suggestions or enter anything to track awards (e.g. guest players or opposition).</p>
+                                            <p className={UI_TEXT.helper}>Use squad suggestions or enter anything to track awards (e.g. guest players or opposition).</p>
                                         </div>
                                     </div>
                                 )}
 
                                 {isMatchdayWorkspace && (
-                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
+                                <div className={getSurfaceClass('matchday', 'p-4 space-y-4')}>
                                     {matchdayFlowTab !== 'live' && (
                                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                             <div>
                                                 <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Match Day</div>
-                                                <div className="text-[11px] text-slate-500 mt-1">Step {matchdayStepIndex + 1} of {MATCHDAY_FLOW_STEPS.length}: {matchdayCurrentStepLabel}</div>
+                                                <div className="text-[12px] text-slate-500 mt-1">Step {matchdayStepIndex + 1} of {MATCHDAY_FLOW_STEPS.length}: {matchdayCurrentStepLabel}</div>
                                             </div>
                                         </div>
                                     )}
 
                                     {matchdayFlowTab !== 'live' && (
-                                        <div className="flex flex-wrap gap-2 text-[11px]">
-                                            <span className={`px-2 py-1 rounded-full border font-semibold ${plannerCanAdvanceFromRoster ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                                        <div className="flex flex-wrap gap-2 text-[12px]">
+                                            <span className={getChipClass(plannerCanAdvanceFromRoster ? 'success' : 'warning')}>
                                                 Ready {plannerResolutionSummary.resolved}/{plannerResolutionSummary.total || 0}
                                             </span>
-                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Matched {plannerResolutionSummary.matched}</span>
-                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Temp {plannerResolutionSummary.temp}</span>
-                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">New {plannerResolutionSummary.newCount}</span>
+                                            <span className={getChipClass('neutral')}>Matched {plannerResolutionSummary.matched}</span>
+                                            <span className={getChipClass('neutral')}>Temp {plannerResolutionSummary.temp}</span>
+                                            <span className={getChipClass('neutral')}>New {plannerResolutionSummary.newCount}</span>
                                             {plannerResolutionSummary.unresolved > 0 && (
-                                                <span className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-amber-700 font-semibold">Unresolved {plannerResolutionSummary.unresolved}</span>
+                                                <span className={getChipClass('warning')}>Unresolved {plannerResolutionSummary.unresolved}</span>
                                             )}
-                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Starters {plannerStarterIds.length}/{plannerSlots.length}</span>
-                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">Bench {plannerBenchAllIds.length}</span>
-                                            <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-600 font-semibold">On pitch {plannerOnPitchIds.length}</span>
+                                            <span className={getChipClass('neutral')}>Starters {plannerStarterIds.length}/{plannerSlots.length}</span>
+                                            <span className={getChipClass('neutral')}>Bench {plannerBenchAllIds.length}</span>
+                                            <span className={getChipClass('neutral')}>On pitch {plannerOnPitchIds.length}</span>
                                         </div>
                                     )}
 
                                     {matchdayFlowTab === 'roster' && (
                                     <>
                                     <div className="space-y-2">
-                                        <label className="text-[11px] font-bold text-slate-500 uppercase">Paste Player List</label>
+                                        <label className="text-[12px] font-bold text-slate-500 uppercase">Paste Player List</label>
                                         <textarea
                                             className="w-full min-h-[130px] bg-slate-50 border border-slate-200 rounded-xl p-3 text-base"
                                             placeholder="Paste player names from Google Sheets (one name per line)."
@@ -8000,8 +8323,8 @@
 
                                     <div className="space-y-2">
                                         <div className="flex items-center justify-between">
-                                            <div className="text-[11px] font-bold text-slate-600 uppercase">Roster Review</div>
-                                            <div className="text-[11px] text-slate-500">
+                                            <div className="text-[12px] font-bold text-slate-600 uppercase">Roster Review</div>
+                                            <div className="text-[12px] text-slate-500">
                                                 Resolved {plannerResolutionSummary.resolved} of {plannerResolutionSummary.total}
                                             </div>
                                         </div>
@@ -8044,7 +8367,7 @@
                                                     <div key={`planner-entry-${entryIndex}-${entry.rawName}`} className={`rounded-xl border p-2 ${cardTone}`}>
                                                         <div className="flex items-center justify-between gap-2">
                                                             <div className="text-sm font-semibold text-slate-900">{entry.rawName}</div>
-                                                            <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wide ${badgeTone}`}>{badgeLabel}</span>
+                                                            <span className={`px-2 py-0.5 rounded-full border text-[11px] font-bold uppercase tracking-wide ${badgeTone}`}>{badgeLabel}</span>
                                                         </div>
                                                         <select
                                                             className="mt-2 w-full min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
@@ -8061,16 +8384,16 @@
                                                             ))}
                                                         </select>
                                                         {resolution === 'temp' && (
-                                                            <div className="mt-1 text-[11px] text-sky-700">Declared temporary player for this match day plan.</div>
+                                                            <div className="mt-1 text-[12px] text-sky-700">Declared temporary player for this match day plan.</div>
                                                         )}
                                                         {resolution === 'new' && (
-                                                            <div className="mt-1 text-[11px] text-sky-700">Declared new player (not yet in master squad).</div>
+                                                            <div className="mt-1 text-[12px] text-sky-700">Declared new player (not yet in master squad).</div>
                                                         )}
                                                         {(resolution === 'matched' && needsReview) && (
-                                                            <div className="mt-1 text-[11px] text-amber-700">Low-confidence match. Please confirm this player.</div>
+                                                            <div className="mt-1 text-[12px] text-amber-700">Low-confidence match. Please confirm this player.</div>
                                                         )}
                                                         {(entry.suggestionIds || []).length > 0 && (
-                                                            <div className="mt-1 text-[11px] text-slate-500">
+                                                            <div className="mt-1 text-[12px] text-slate-500">
                                                                 Suggested: {(entry.suggestionIds || [])
                                                                     .map(id => plannerPlayerName(id))
                                                                     .slice(0, 3)
@@ -8118,14 +8441,14 @@
                                     {matchdayLineupView === 'pitch' && (
                                         <div className="space-y-3 rounded-2xl border border-emerald-100 bg-emerald-50/30 p-3">
                                             <div className="flex flex-wrap items-center justify-between gap-2">
-                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Pitch Board</div>
-                                                <div className="text-[11px] text-slate-500">
+                                                <div className="text-[12px] font-bold text-slate-600 uppercase">Pitch Board</div>
+                                                <div className="text-[12px] text-slate-500">
                                                     {plannerLiveActive
                                                         ? (plannerBoardMode === 'swap' ? 'Tap mode: swap' : 'Tap mode: substitute')
                                                         : (plannerBoardMode === 'swap' ? 'Tap mode: swap starters' : 'Tap mode: assign starters')}
                                                 </div>
                                             </div>
-                                            <div className="text-[11px] text-slate-500">
+                                            <div className="text-[12px] text-slate-500">
                                                 {plannerLiveActive
                                                     ? 'Live mode is running. Use the Live tab for substitutions and swaps.'
                                                     : 'Tap a position, assign a player, or swap two starters directly on the pitch board.'}
@@ -8149,13 +8472,13 @@
                                                 >
                                                     Auto-fill starters
                                                 </button>
-                                                <div className="text-[11px] text-slate-500">
+                                                <div className="text-[12px] text-slate-500">
                                                     Starters {plannerStarterIds.length} / {plannerSlots.length}
                                                 </div>
                                             </div>
 
                                             <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
-                                                <div className="text-[11px] font-bold text-slate-600 uppercase">
+                                                <div className="text-[12px] font-bold text-slate-600 uppercase">
                                                     {plannerBoardSelectedSlotId
                                                         ? `Selected position: ${(plannerSlotLookup[plannerBoardSelectedSlotId]?.label || plannerBoardSelectedSlotId.toUpperCase())}`
                                                         : 'Selected position: tap a pitch slot'}
@@ -8205,7 +8528,7 @@
                                                     </button>
                                                 </div>
                                                 {!plannerLiveActive && plannerBoardMode === 'swap' && plannerSwapSlotA && (
-                                                    <div className="text-[11px] text-amber-700">
+                                                    <div className="text-[12px] text-amber-700">
                                                         Swap mode active. Tap another slot on the pitch to swap with {(plannerSlotLookup[plannerSwapSlotA]?.label || plannerSwapSlotA.toUpperCase())}.
                                                     </div>
                                                 )}
@@ -8216,8 +8539,8 @@
                                                     {plannerPitchLines.map((row) => (
                                                         <div key={`planner-pitch-row-${row.key}`} className="space-y-2">
                                                             <div className="flex items-center justify-between">
-                                                                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-900/80">{row.label}</div>
-                                                                <div className="text-[10px] text-emerald-900/60">{row.slots.length} slot{row.slots.length === 1 ? '' : 's'}</div>
+                                                                <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-900/80">{row.label}</div>
+                                                                <div className="text-[11px] text-emerald-900/60">{row.slots.length} slot{row.slots.length === 1 ? '' : 's'}</div>
                                                             </div>
                                                             <div
                                                                 className="grid gap-2"
@@ -8253,12 +8576,12 @@
                                                                             onClick={() => plannerHandlePitchSlotTap(slot.id)}
                                                                             className={`min-h-[82px] rounded-xl border px-2 py-2 text-left transition ${toneClass} ${selectedClass}`}
                                                                         >
-                                                                            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{slot.label}</div>
+                                                                            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{slot.label}</div>
                                                                             <div className={`mt-1 text-sm font-bold ${hasPlayer ? 'text-slate-900' : 'text-slate-400'}`}>
                                                                                 {plannerPlayerShortName(shownPlayerId)}
                                                                             </div>
                                                                             {!hasPlayer && (
-                                                                                <div className="text-[10px] mt-0.5 leading-tight text-slate-400">No player</div>
+                                                                                <div className="text-[11px] mt-0.5 leading-tight text-slate-400">No player</div>
                                                                             )}
                                                                         </button>
                                                                     );
@@ -8269,7 +8592,7 @@
                                                 </div>
                                             </div>
 
-                                            <div className="rounded-xl border border-slate-200 bg-white p-3 text-[11px] text-slate-500">
+                                            <div className="rounded-xl border border-slate-200 bg-white p-3 text-[12px] text-slate-500">
                                                 {plannerLiveActive
                                                     ? 'Live controls have moved to the Live tab for a cleaner setup screen.'
                                                     : 'Set your setup here. Use Live tab during the game for substitutions and swaps.'}
@@ -8279,38 +8602,38 @@
 
                                     {matchdayLineupView === 'subs' && (
                                             <div className="space-y-2">
-                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Bench Groups</div>
-                                                <div className="text-[11px] text-slate-500">Pick each player's bench area. This is where you place non-starters into Defence, Midfield, or Forward.</div>
+                                                <div className="text-[12px] font-bold text-slate-600 uppercase">Bench Groups</div>
+                                                <div className="text-[12px] text-slate-500">Pick each player's bench area. This is where you place non-starters into Defence, Midfield, or Forward.</div>
                                                 <div className="flex flex-wrap items-center gap-2">
                                                     <button
                                                         type="button"
                                                         onClick={plannerAutoFillBenchGroups}
                                                         disabled={plannerLiveActive || !plannerBenchAssignableIds.length}
-                                                        className={`min-h-[40px] px-3 rounded-lg border text-xs font-bold ${plannerLiveActive || !plannerBenchAssignableIds.length ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-white border-slate-200 text-slate-700'}`}
+                                                        className={getButtonClass((plannerLiveActive || !plannerBenchAssignableIds.length) ? 'subtle' : 'secondary', 'sm')}
                                                     >
                                                         Auto-assign bench
                                                     </button>
-                                                    <div className="text-[11px] text-slate-500">
+                                                    <div className="text-[12px] text-slate-500">
                                                         Bench candidates: {plannerBenchAssignableIds.length}
                                                     </div>
                                                 </div>
-                                                <div className="text-[11px] text-slate-500">
+                                                <div className="text-[12px] text-slate-500">
                                                     Auto-assign bench places every non-starter into the top Defence, Midfield, or Forward areas automatically.
                                                 </div>
                                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                                 {MATCHDAY_BENCH_GROUPS.map((group) => (
                                                     <div key={`planner-bench-summary-${group}`} className="rounded-xl border border-slate-200 bg-slate-50 p-2">
-                                                        <div className="text-[11px] font-bold text-slate-600 uppercase">{getBenchGroupLabel(group)}</div>
+                                                        <div className="text-[12px] font-bold text-slate-600 uppercase">{getBenchGroupLabel(group)}</div>
                                                         {(matchdayPlanner?.bench?.[group] || []).length ? (
                                                             <div className="mt-1 flex flex-wrap gap-1">
                                                                 {(matchdayPlanner?.bench?.[group] || []).map((playerId) => (
-                                                                    <span key={`planner-bench-summary-chip-${group}-${playerId}`} className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-[11px] text-slate-700">
+                                                                    <span key={`planner-bench-summary-chip-${group}-${playerId}`} className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-[12px] text-slate-700">
                                                                         {plannerPlayerShortName(playerId)}
                                                                     </span>
                                                                 ))}
                                                             </div>
                                                         ) : (
-                                                            <div className="mt-1 text-[11px] text-slate-400">No subs assigned</div>
+                                                            <div className="mt-1 text-[12px] text-slate-400">No subs assigned</div>
                                                         )}
                                                     </div>
                                                 ))}
@@ -8327,7 +8650,7 @@
                                                             <div key={`planner-bench-player-${playerId}`} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
                                                                 <div className="flex-1 min-w-0">
                                                                     <div className="text-sm font-semibold text-slate-900 truncate">{player.firstName} {player.lastName}</div>
-                                                                    <div className="text-[11px] text-slate-500">{player.position || 'Player'}</div>
+                                                                    <div className="text-[12px] text-slate-500">{player.position || 'Player'}</div>
                                                                 </div>
                                                                 <select
                                                                     className="w-40 min-h-[48px] bg-white border border-slate-200 rounded-lg px-3 py-2 text-base"
@@ -8431,44 +8754,44 @@
                                         <div className="flex flex-wrap items-center justify-between gap-2">
                                             <div className="flex flex-wrap items-center gap-2">
                                                 {!plannerLiveActive ? (
-                                                    <button onClick={plannerStartLive} className="min-h-[48px] px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-base">
+                                                    <button onClick={plannerStartLive} className={getButtonClass('success', 'lg', 'text-base')}>
                                                         Start live tracking
                                                     </button>
                                                 ) : (
                                                     <>
-                                                        <button onClick={plannerResetLiveToStarters} className="min-h-[48px] px-4 bg-white border border-slate-200 text-slate-700 font-bold rounded-lg text-base">
+                                                        <button onClick={plannerResetLiveToStarters} className={getButtonClass('secondary', 'lg', 'text-base')}>
                                                             Reset to starters
                                                         </button>
-                                                        <button onClick={plannerStopLive} className="min-h-[48px] px-4 bg-amber-50 border border-amber-200 text-amber-700 font-bold rounded-lg text-base">
+                                                        <button onClick={plannerStopLive} className={getButtonClass('warning', 'lg', 'text-base')}>
                                                             Stop live
                                                         </button>
                                                     </>
                                                 )}
                                             </div>
-                                            <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                                                <span className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 text-slate-700 font-semibold">{plannerLivePhaseLabel}</span>
-                                                <span className="px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-700 font-semibold font-mono">
+                                            <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                                                <span className={getChipClass('neutral')}>{plannerLivePhaseLabel}</span>
+                                                <span className={cx(getChipClass('neutral'), 'font-mono')}>
                                                     {matchdayClockDisplay}
                                                 </span>
-                                                <span className="px-2 py-1 rounded-full border border-brand-200 bg-brand-50 text-brand-700 font-semibold">{plannerLiveMinute}' / {MATCHDAY_TOTAL_MINUTES}'</span>
-                                                <span className="px-2 py-1 rounded-full border border-slate-200 bg-white text-slate-600 font-semibold">On pitch {plannerOnPitchIds.length}</span>
+                                                <span className={getChipClass('info')}>{plannerLiveMinute}' / {MATCHDAY_TOTAL_MINUTES}'</span>
+                                                <span className={getChipClass('neutral')}>On pitch {plannerOnPitchIds.length}</span>
                                             </div>
                                         </div>
                                         {plannerLiveActive && (
-                                            <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-800">
+                                            <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[13px] text-blue-800">
                                                 Live tracking keeps running from the saved match clock even if you leave this screen or refresh the app. You will be warned before exiting, and Match Day will show this game as the one to resume.
                                             </div>
                                         )}
 
                                         <div className={`grid gap-2 ${(isMatchFullTime || matchdayLiveView === 'summary') ? 'grid-cols-3' : 'grid-cols-2'}`}>
-                                            <button onClick={() => setMatchdayLiveView('pitch')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'pitch' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            <button onClick={() => setMatchdayLiveView('pitch')} className={getSegmentedButtonClass(matchdayLiveView === 'pitch', 'min-h-[42px] text-[12px]')}>
                                                 Pitch
                                             </button>
-                                            <button onClick={() => setMatchdayLiveView('log')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'log' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                            <button onClick={() => setMatchdayLiveView('log')} className={getSegmentedButtonClass(matchdayLiveView === 'log', 'min-h-[42px] text-[12px]')}>
                                                 Log
                                             </button>
                                             {(isMatchFullTime || matchdayLiveView === 'summary') && (
-                                                <button onClick={() => setMatchdayLiveView('summary')} className={`min-h-[40px] rounded-lg text-[11px] font-bold border ${matchdayLiveView === 'summary' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                                <button onClick={() => setMatchdayLiveView('summary')} className={getSegmentedButtonClass(matchdayLiveView === 'summary', 'min-h-[42px] text-[12px]')}>
                                                     Summary
                                                 </button>
                                             )}
@@ -8494,8 +8817,8 @@
                                                         {plannerPitchLines.map((row) => (
                                                             <div key={`planner-live-pitch-row-${row.key}`} className="space-y-2">
                                                                 <div className="flex items-center justify-between">
-                                                                    <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-900/80">{row.label}</div>
-                                                                    <div className="text-[10px] text-emerald-900/60">{row.slots.length} slot{row.slots.length === 1 ? '' : 's'}</div>
+                                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-900/80">{row.label}</div>
+                                                                    <div className="text-[11px] text-emerald-900/60">{row.slots.length} slot{row.slots.length === 1 ? '' : 's'}</div>
                                                                 </div>
                                                                 <div
                                                                     className="grid gap-2"
@@ -8531,12 +8854,12 @@
                                                                                 onClick={() => plannerHandlePitchSlotTap(slot.id)}
                                                                                 className={`min-h-[84px] rounded-xl border px-2 py-2 text-left transition-all duration-300 ${toneClass} ${selectedClass}`}
                                                                             >
-                                                                                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{slot.label}</div>
+                                                                                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{slot.label}</div>
                                                                                 <div className={`mt-1 text-sm font-bold ${hasPlayer ? 'text-slate-900' : 'text-slate-400'}`}>
                                                                                     {plannerPlayerShortName(shownPlayerId)}
                                                                                 </div>
                                                                                 {!hasPlayer && (
-                                                                                    <div className="text-[10px] mt-0.5 leading-tight text-slate-400">No player</div>
+                                                                                    <div className="text-[11px] mt-0.5 leading-tight text-slate-400">No player</div>
                                                                                 )}
                                                                             </button>
                                                                         );
@@ -8548,8 +8871,8 @@
                                                 </div>
 
                                                 <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">Available Subs</div>
-                                                    <div className="text-[11px] text-slate-500">
+                                                    <div className="text-[12px] font-bold text-slate-600 uppercase">Available Subs</div>
+                                                    <div className="text-[12px] text-slate-500">
                                                         {plannerLiveActive
                                                             ? (plannerSubSlotId ? `Tap a sub to replace ${plannerPlayerName(plannerCurrentOnPitch[plannerSubSlotId])}.` : 'Tap a player on the pitch first, then tap a sub below.')
                                                             : 'Start live tracking to activate substitutions.'}
@@ -8559,9 +8882,9 @@
                                                         const groupLabel = group === 'reserve' ? 'Reserve' : getBenchGroupLabel(group);
                                                         return (
                                                             <div key={`planner-live-subs-group-${group}`} className="space-y-1">
-                                                                <div className="text-[10px] font-bold uppercase text-slate-500">{groupLabel}</div>
+                                                                <div className="text-[11px] font-bold uppercase text-slate-500">{groupLabel}</div>
                                                                 {ids.length === 0 ? (
-                                                                    <div className="text-[11px] text-slate-400">None available.</div>
+                                                                    <div className="text-[12px] text-slate-400">None available.</div>
                                                                 ) : (
                                                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                                                         {ids.map((playerId) => {
@@ -8576,7 +8899,7 @@
                                                                                     className={`min-h-[48px] rounded-lg border px-3 py-2 text-left ${!plannerLiveActive ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : isSelectedIncoming ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-white border-slate-200 text-slate-700'}`}
                                                                                 >
                                                                                     <div className="text-sm font-bold">{player.firstName} {player.lastName}</div>
-                                                                                    <div className="text-[11px] text-slate-500">{player.position || 'Player'}</div>
+                                                                                    <div className="text-[12px] text-slate-500">{player.position || 'Player'}</div>
                                                                                 </button>
                                                                             );
                                                                         })}
@@ -8588,7 +8911,7 @@
                                                 </div>
 
                                                 <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-                                                    <div className="text-[11px] font-bold text-slate-600 uppercase">Pitch Time</div>
+                                                    <div className="text-[12px] font-bold text-slate-600 uppercase">Pitch Time</div>
                                                     {plannerLiveTimeRows.length === 0 ? (
                                                         <div className="text-sm text-slate-400">No mapped players yet.</div>
                                                     ) : (
@@ -8597,11 +8920,11 @@
                                                                 <div key={`planner-live-time-${row.playerId}`} className="rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5 flex items-center justify-between gap-2">
                                                                     <div className="min-w-0">
                                                                         <div className="text-sm font-semibold text-slate-900 truncate">{row.playerName}</div>
-                                                                        <div className="text-[11px] text-slate-500">{row.isOnPitch ? 'On pitch now' : 'Off pitch'}</div>
+                                                                        <div className="text-[12px] text-slate-500">{row.isOnPitch ? 'On pitch now' : 'Off pitch'}</div>
                                                                     </div>
                                                                     <div className="text-right">
                                                                         <div className="text-sm font-bold text-emerald-700">On {row.onMinutes}m</div>
-                                                                        <div className="text-[11px] text-slate-500">Off {row.offMinutes}m</div>
+                                                                        <div className="text-[12px] text-slate-500">Off {row.offMinutes}m</div>
                                                                     </div>
                                                                 </div>
                                                             ))}
@@ -8613,7 +8936,7 @@
 
                                         {matchdayLiveView === 'log' && (
                                             <div className="space-y-2">
-                                                <div className="text-[11px] font-bold text-slate-600 uppercase">Live Event Log</div>
+                                                <div className="text-[12px] font-bold text-slate-600 uppercase">Live Event Log</div>
                                                 {plannerRecentEvents.length === 0 ? (
                                                     <div className="text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">No live events yet.</div>
                                                 ) : (
@@ -8623,7 +8946,7 @@
                                                             const eventPhase = MATCHDAY_LIVE_PHASE_LABELS[normalizeLivePhase(event?.phase)] || MATCHDAY_LIVE_PHASE_LABELS.PRE;
                                                             return (
                                                                 <div key={`planner-event-${event.id}`} className="rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1">
-                                                                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                                                                    <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]">
                                                                         <div className="text-slate-500">{new Date(event.at || Date.now()).toLocaleTimeString()}</div>
                                                                         <div className="flex items-center gap-1">
                                                                             <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 font-semibold">{eventMinute}'</span>
@@ -8642,19 +8965,19 @@
                                             <div className="space-y-3">
                                                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                                                     <div className="flex items-center justify-between gap-2">
-                                                        <div className="text-[11px] font-bold uppercase text-slate-500">Full-time Summary</div>
-                                                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold border ${plannerLiveSummary.resultLabel === 'Win' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : plannerLiveSummary.resultLabel === 'Loss' ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+                                                        <div className="text-[12px] font-bold uppercase text-slate-500">Full-time Summary</div>
+                                                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold border ${plannerLiveSummary.resultLabel === 'Win' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : plannerLiveSummary.resultLabel === 'Loss' ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
                                                             {plannerLiveSummary.resultLabel}
                                                         </span>
                                                     </div>
                                                     <div className="mt-2 text-base font-bold text-slate-900">
                                                         Exiles {plannerLiveSummary.ourScore ?? '-'} - {plannerLiveSummary.theirScore ?? '-'} {selectedFixture?.opponent || 'Opponent'}
                                                     </div>
-                                                    <div className="mt-1 text-[11px] text-slate-500">
+                                                    <div className="mt-1 text-[12px] text-slate-500">
                                                         Finished at {plannerLiveSummary.finishedMinute}' · Events {plannerLiveSummary.eventCount} · Clock markers {plannerLiveSummary.clockMarkers}
                                                     </div>
                                                 </div>
-                                                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                                <div className="grid grid-cols-2 gap-2 text-[12px]">
                                                     <div className="rounded-lg border border-slate-200 bg-white p-2">
                                                         <div className="text-slate-500">Subs / swaps</div>
                                                         <div className="font-bold text-slate-900">{plannerLiveSummary.substitutions} / {plannerLiveSummary.swaps}</div>
@@ -8665,7 +8988,7 @@
                                                     </div>
                                                 </div>
                                                 <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
-                                                    <div className="text-[11px] font-bold uppercase text-slate-500">Top Minutes</div>
+                                                    <div className="text-[12px] font-bold uppercase text-slate-500">Top Minutes</div>
                                                     {plannerLiveSummary.topMinutes.length ? (
                                                         <div className="space-y-1">
                                                             {plannerLiveSummary.topMinutes.map((row) => (
@@ -8680,7 +9003,7 @@
                                                     )}
                                                 </div>
                                                 <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
-                                                    <div className="text-[11px] font-bold uppercase text-slate-500">Recent Timeline</div>
+                                                    <div className="text-[12px] font-bold uppercase text-slate-500">Recent Timeline</div>
                                                     {plannerLiveSummary.timeline.length ? (
                                                         <div className="space-y-1 max-h-52 overflow-y-auto pr-1">
                                                             {plannerLiveSummary.timeline.map((event) => (
@@ -8712,12 +9035,12 @@
                                 )}
 
                                 {((isMatchdayWorkspace && matchdayFlowTab === 'squad') || (!isMatchdayWorkspace && fixtureDetailTab === 'squad')) && (
-                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
+                                <div className={getSurfaceClass('matchday', 'p-4 space-y-4')}>
                                     <div className="flex justify-between items-start gap-3">
                                         <div>
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Squad Selection</div>
-                                            <p className="text-xs text-slate-500">Tap to add/remove</p>
-                                            <p className="text-[11px] text-slate-500 mt-1">Selected {selectedPlayersList.length} · Available {availablePlayersList.length}</p>
+                                            <p className="text-[13px] text-slate-500">Tap to add or remove players.</p>
+                                            <p className="text-[12px] text-slate-500 mt-1">Selected {selectedPlayersList.length} · Available {availablePlayersList.length}</p>
                                         </div>
                                         {!isMatchdayWorkspace && (
                                             <div className="flex items-center gap-2">
@@ -8728,7 +9051,7 @@
                                         )}
                                     </div>
                                     {!isMatchdayWorkspace && (
-                                        <div className="text-[11px] text-slate-500">
+                                            <div className="text-[12px] text-slate-500">
                                             Competition: {selectedFixture.competitionType || 'LEAGUE'} · {getFixtureForfeitLabel(selectedFixture) || 'No forfeit'}
                                         </div>
                                     )}
@@ -8778,28 +9101,28 @@
                                 )}
 
                                 {!isMatchdayWorkspace && fixtureDetailTab === 'payments' && (
-                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                <div className={getSurfaceClass('matchday', 'p-4 space-y-3')}>
                                     <div className="flex justify-between items-start gap-3">
                                         <div>
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments</div>
-                                            <div className="text-[11px] text-slate-500">Mark received / write-off / adjust fee / remove</div>
-                                            <div className="text-[11px] text-slate-600 mt-1">Paid {paymentSummary.paid} · Written off {paymentSummary.writtenOff} · Unpaid {paymentSummary.unpaid} · Total {paymentSummary.total}</div>
-                                            <div className="text-[11px] text-slate-500 mt-1">
+                                            <div className="text-[12px] text-slate-500">Mark received, write off, adjust fee, or remove.</div>
+                                            <div className="text-[12px] text-slate-600 mt-1">Paid {paymentSummary.paid} · Written off {paymentSummary.writtenOff} · Unpaid {paymentSummary.unpaid} · Total {paymentSummary.total}</div>
+                                            <div className="text-[12px] text-slate-500 mt-1">
                                                 Fees billed {formatCurrency(playerFeeSummary.billed)} · Collected {formatCurrency(playerFeeSummary.collected)} · Outstanding {formatCurrency(playerFeeSummary.outstanding)}
                                             </div>
-                                            <label className="mt-2 inline-flex items-center gap-2 text-[11px] font-semibold text-slate-600">
+                                            <label className="mt-2 inline-flex items-center gap-2 text-[12px] font-semibold text-slate-600">
                                                 <input type="checkbox" checked={paymentsSettled} onChange={e => updatePaymentsSettled(e.target.checked)} />
                                                 Match Payments Settled
                                             </label>
                                             {paymentsSettled && (
-                                                <div className="text-[11px] text-emerald-700 font-semibold">Payments closed for this match (no ledger changes).</div>
+                                                <div className="text-[12px] text-emerald-700 font-semibold">Payments closed for this match (no ledger changes).</div>
                                             )}
                                         </div>
                                         <div className="flex items-start gap-3">
                                             <div className="text-right">
                                                 <div className="text-xs text-slate-500">Entered costs</div>
                                                 <div className="text-sm font-bold text-slate-900">{formatCurrency(Math.abs(fixtureTotals.cost))}</div>
-                                                <div className="text-[11px] text-slate-500">Ref cost: {formatCurrency(Math.abs(fixtureTotals.ref))}</div>
+                                                <div className="text-[12px] text-slate-500">Ref cost: {formatCurrency(Math.abs(fixtureTotals.ref))}</div>
                                             </div>
                                             <button onClick={() => setIsPaymentsOpen(v => !v)} className="text-xs font-bold bg-slate-50 border border-slate-200 text-slate-700 px-3 py-2 rounded-lg flex items-center gap-1">
                                                 <Icon name={isPaymentsOpen ? 'ChevronUp' : 'ChevronDown'} size={14} /> {isPaymentsOpen ? 'Hide' : 'Show'}
@@ -8813,7 +9136,7 @@
                                                     <div className="flex justify-between items-center">
                                                         <div>
                                                             <div className="text-sm font-bold text-slate-900">{row.player.firstName} {row.player.lastName}</div>
-                                                            <div className="text-[11px] text-slate-500">
+                                                            <div className="text-[12px] text-slate-500">
                                                                 {row.isWrittenOff
                                                                     ? `Due ${formatCurrency(row.due)} · Written off ${formatCurrency(row.writeOffAmount || row.due)}`
                                                                     : `Due ${formatCurrency(row.due)} · Paid ${formatCurrency(row.paid)}`}
@@ -8850,14 +9173,14 @@
                                 )}
 
                                 {!isMatchdayWorkspace && fixtureDetailTab === 'costs' && (
-                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-4">
+                                <div className={getSurfaceClass('matchday', 'p-4 space-y-4')}>
                                     <div className="flex items-center justify-between">
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fees & Costs</div>
-                                        {isSiaVenue && <div className="text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-1 rounded-lg">SIA defaults ready</div>}
+                                        {isSiaVenue && <div className={getChipClass('neutral')}>SIA defaults ready</div>}
                                     </div>
                                     {isSiaVenue && (
                                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
-                                            <div className="text-[11px] font-bold text-slate-600 uppercase">SIA Sports Club defaults</div>
+                                            <div className="text-[12px] font-bold text-slate-600 uppercase">SIA Sports Club defaults</div>
                                             <div className="flex flex-wrap gap-2">
                                                 <button onClick={() => applySiaCostPreset('opposition')} className="px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-bold flex items-center gap-2">
                                                     <Icon name="Coins" size={14} /> Opposition pays $187
@@ -8912,14 +9235,14 @@
                                                             <span className="text-[11px] px-2 py-1 rounded-full bg-slate-100 text-slate-600 font-bold">{tx.category}</span>
                                                             <div className="text-sm font-bold text-slate-900">{tx.description}</div>
                                                         </div>
-                                                        <div className="text-[11px] text-slate-500 mt-1">{flowLabel} · {tx.payee || 'No payee'} · {new Date(tx.date).toLocaleDateString()}</div>
+                                                        <div className="text-[12px] text-slate-500 mt-1">{flowLabel} · {tx.payee || 'No payee'} · {new Date(tx.date).toLocaleDateString()}</div>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        {outstanding && <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-lg">{flowLabel}</span>}
+                                                        {outstanding && <span className={getChipClass('warning')}>{flowLabel}</span>}
                                                         <div className={`font-bold ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(tx.amount)}</div>
-                                                        {outstanding && <button onClick={() => settleCost(tx)} className="text-[11px] text-emerald-700 font-bold px-2 py-1 rounded-lg border border-emerald-200">{getSettlementActionLabel(tx)}</button>}
-                                                        <button onClick={() => editCost(tx)} className="text-[11px] text-slate-700 font-bold px-2 py-1 rounded-lg border border-slate-200 bg-white">Edit</button>
-                                                        <button onClick={() => deleteCost(tx)} className="text-[11px] text-rose-700 font-bold px-2 py-1 rounded-lg border border-rose-200 bg-rose-50">Delete</button>
+                                                        {outstanding && <button onClick={() => settleCost(tx)} className={getButtonClass('success', 'xs')}>{getSettlementActionLabel(tx)}</button>}
+                                                        <button onClick={() => editCost(tx)} className={getButtonClass('secondary', 'xs')}>Edit</button>
+                                                        <button onClick={() => deleteCost(tx)} className={getButtonClass('danger', 'xs')}>Delete</button>
                                                     </div>
                                                 </div>
                                             );
@@ -8932,35 +9255,35 @@
                                 )}
 
                                 <div className="flex flex-col md:flex-row gap-2 pb-6">
-                                    <button onClick={copySquadToClipboard} className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
+                                    <button onClick={copySquadToClipboard} className={getButtonClass('primary', 'lg', 'flex-1')}>
                                         <Icon name="Copy" size={18} /> Copy Squad (WhatsApp)
                                     </button>
-                                    <button onClick={downloadMatchCard} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
+                                    <button onClick={downloadMatchCard} className={getButtonClass('info', 'lg', 'flex-1')}>
                                         <Icon name="Image" size={18} /> Download Match Card
                                     </button>
                                 </div>
                             </div>
-                            <div className="fixed inset-x-0 bottom-0 z-[72] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-white via-white/95 to-white/0">
-                                <div className="max-w-4xl mx-auto space-y-2">
+                            <div className="fixed inset-x-0 bottom-0 z-[72] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-white via-white/92 to-white/0">
+                                <div className="max-w-4xl mx-auto rounded-[1.35rem] border border-slate-200/80 bg-white/96 backdrop-blur-md shadow-soft p-2 space-y-2">
                                     <div className={`grid gap-2 ${isMatchdayWorkspace ? 'grid-cols-2' : 'grid-cols-3'}`}>
-                                        <button onClick={requestCloseSelectedFixtureView} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
+                                        <button onClick={requestCloseSelectedFixtureView} className={getButtonClass('secondary', 'lg', 'w-full')}>
                                             Back
                                         </button>
                                         {!isMatchdayWorkspace && (
-                                            <button onClick={() => setIsScoreOpen(true)} className="min-h-[48px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">
+                                            <button onClick={() => setIsScoreOpen(true)} className={getButtonClass('secondary', 'lg', 'w-full')}>
                                                 Score
                                             </button>
                                         )}
                                         <button
                                             onClick={() => saveFixtureDetails({ closeOnSave: true })}
-                                            className="min-h-[48px] rounded-xl bg-slate-900 text-white text-sm font-bold"
+                                            className={getButtonClass('primary', 'lg', 'w-full')}
                                         >
                                             {isMatchdayWorkspace ? 'Save Plan & Close' : 'Save & Close'}
                                         </button>
                                     </div>
                                 </div>
                             </div>
-                            <button onClick={scrollToTop} className="fixed bottom-24 right-4 z-[75] bg-white/90 backdrop-blur border border-slate-200 shadow-lg rounded-full px-4 py-2 text-sm font-bold text-slate-700 flex items-center gap-2">
+                            <button onClick={scrollToTop} className={cx(getButtonClass('secondary', 'sm'), 'fixed bottom-24 right-4 z-[75] rounded-full px-4 shadow-lg backdrop-blur')}>
                                 <Icon name="ArrowUp" size={14} /> Top
                             </button>
                         </div>
@@ -8986,14 +9309,14 @@
                                 <button
                                     type="button"
                                     onClick={dismissLiveExitPrompt}
-                                    className="min-h-[44px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700"
+                                    className={getButtonClass('secondary', 'md', 'w-full')}
                                 >
                                     Stay on live screen
                                 </button>
                                 <button
                                     type="button"
                                     onClick={leaveSelectedFixtureKeepLive}
-                                    className="min-h-[44px] rounded-xl border border-blue-200 bg-blue-50 text-sm font-bold text-blue-800"
+                                    className={getButtonClass('info', 'md', 'w-full')}
                                 >
                                     Leave and keep live running
                                 </button>
@@ -9004,7 +9327,7 @@
                                         dismissLiveExitPrompt();
                                         closeSelectedFixtureView();
                                     }}
-                                    className="min-h-[44px] rounded-xl bg-amber-500 text-sm font-bold text-white"
+                                    className={getButtonClass('danger', 'md', 'w-full')}
                                 >
                                     Stop live and leave
                                 </button>
@@ -9020,16 +9343,16 @@
                     >
                         <div className="space-y-3 pb-[max(6rem,calc(4rem+env(safe-area-inset-bottom)))] sm:pb-3">
                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                                <div className="text-[11px] font-bold uppercase text-slate-500">Selected Player</div>
+                                <div className="text-[12px] font-bold uppercase text-slate-500">Selected Player</div>
                                 <div className="text-base font-bold text-slate-900 mt-1">
                                     {plannerLiveActionOutgoingId ? plannerPlayerName(plannerLiveActionOutgoingId) : 'No player selected'}
                                 </div>
-                                <div className="text-[11px] text-slate-500 mt-1">
+                                <div className="text-[12px] text-slate-500 mt-1">
                                     Slot {plannerLiveActionSlot?.label || '-'} · Preferred subs: {getBenchGroupLabel(plannerLiveActionPreferredGroup)}
                                 </div>
                                 {plannerLiveActionOutgoingId && (
                                     <>
-                                        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                                        <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]">
                                             <button
                                                 type="button"
                                                 onClick={() => plannerLogGoalForPlayer(plannerLiveActionOutgoingId)}
@@ -9037,9 +9360,9 @@
                                             >
                                                 <div className="flex items-center justify-between gap-2">
                                                     <div className="text-emerald-700">Goals</div>
-                                                    <div className="text-[10px] font-bold text-emerald-700">Tap to log</div>
+                                                    <div className="text-[11px] font-bold text-emerald-700">Tap to log</div>
                                                 </div>
-                                                <div className="text-sm font-bold text-emerald-900">{plannerLiveActionPlayerStatus.goals}</div>
+                                                <div className="text-base font-bold text-emerald-900">{plannerLiveActionPlayerStatus.goals}</div>
                                             </button>
                                             <button
                                                 type="button"
@@ -9048,9 +9371,9 @@
                                             >
                                                 <div className="flex items-center justify-between gap-2">
                                                     <div className="text-amber-700">Yellow</div>
-                                                    <div className="text-[10px] font-bold text-amber-700">Tap to log</div>
+                                                    <div className="text-[11px] font-bold text-amber-700">Tap to log</div>
                                                 </div>
-                                                <div className="text-sm font-bold text-amber-900">{plannerLiveActionPlayerStatus.yellow}</div>
+                                                <div className="text-base font-bold text-amber-900">{plannerLiveActionPlayerStatus.yellow}</div>
                                             </button>
                                             <button
                                                 type="button"
@@ -9059,9 +9382,9 @@
                                             >
                                                 <div className="flex items-center justify-between gap-2">
                                                     <div className="text-rose-700">Red</div>
-                                                    <div className="text-[10px] font-bold text-rose-700">Tap to log</div>
+                                                    <div className="text-[11px] font-bold text-rose-700">Tap to log</div>
                                                 </div>
-                                                <div className="text-sm font-bold text-rose-900">{plannerLiveActionPlayerStatus.red}</div>
+                                                <div className="text-base font-bold text-rose-900">{plannerLiveActionPlayerStatus.red}</div>
                                             </button>
                                             <button
                                                 type="button"
@@ -9070,11 +9393,11 @@
                                             >
                                                 <div className="flex items-center justify-between gap-2">
                                                     <div className={`${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-700' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'text-emerald-700' : 'text-slate-500'}`}>Injury</div>
-                                                    <div className={`text-[10px] font-bold ${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-700' : 'text-slate-500'}`}>
+                                                    <div className={`text-[11px] font-bold ${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-700' : 'text-slate-500'}`}>
                                                         {plannerLiveActionPlayerStatus.isInjured ? 'Tap to clear' : 'Tap to log'}
                                                     </div>
                                                 </div>
-                                                <div className={`text-xs font-bold ${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-900' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'text-emerald-900' : 'text-slate-700'}`}>
+                                                <div className={`text-sm font-bold ${plannerLiveActionPlayerStatus.isInjured ? 'text-orange-900' : plannerLiveActionPlayerStatus.injuryCount > 0 ? 'text-emerald-900' : 'text-slate-700'}`}>
                                                     {plannerLiveActionPlayerStatus.isInjured
                                                         ? 'Injured'
                                                         : plannerLiveActionPlayerStatus.injuryCount > 0
@@ -9083,11 +9406,11 @@
                                                 </div>
                                             </button>
                                         </div>
-                                        <div className="text-[11px] text-slate-500 mt-2">
+                                        <div className="text-[12px] text-slate-500 mt-2">
                                             Tap a tile to log it quickly for this player.
                                         </div>
                                         {plannerLiveActionPlayerStatus.lastIncidentMinute !== null && (
-                                            <div className="text-[11px] text-slate-500 mt-2">
+                                            <div className="text-[12px] text-slate-500 mt-2">
                                                 Last player incident: {plannerLiveActionPlayerStatus.lastIncidentMinute}'
                                             </div>
                                         )}
@@ -9098,13 +9421,13 @@
                             <div className="grid grid-cols-2 gap-2">
                                 <button
                                     onClick={() => setPlannerLiveActionModal((prev) => ({ ...prev, action: 'substitute' }))}
-                                    className={`min-h-[46px] rounded-lg border text-sm font-bold ${plannerLiveActionModal.action === 'substitute' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
+                                    className={getSegmentedButtonClass(plannerLiveActionModal.action === 'substitute', 'min-h-[46px] text-sm')}
                                 >
                                     Substitute
                                 </button>
                                 <button
                                     onClick={() => setPlannerLiveActionModal((prev) => ({ ...prev, action: 'swap' }))}
-                                    className={`min-h-[46px] rounded-lg border text-sm font-bold ${plannerLiveActionModal.action === 'swap' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'}`}
+                                    className={getSegmentedButtonClass(plannerLiveActionModal.action === 'swap', 'min-h-[46px] text-sm')}
                                 >
                                     Swap
                                 </button>
@@ -9112,7 +9435,7 @@
 
                             {plannerLiveActionModal.action === 'substitute' && (
                                 <div className="space-y-2">
-                                    <div className="text-[11px] text-slate-500">
+                                    <div className="text-[12px] text-slate-500">
                                         Suggested first: {getBenchGroupLabel(plannerLiveActionPreferredGroup)} subs.
                                     </div>
                                     {plannerLiveActionSubOptions.length === 0 ? (
@@ -9133,9 +9456,9 @@
                                                         <div className="flex items-center justify-between gap-2">
                                                             <div className="min-w-0">
                                                                 <div className="text-sm font-bold truncate">{player.firstName} {player.lastName}</div>
-                                                                <div className="text-[11px] text-slate-500">{player.position || 'Player'}</div>
+                                                                <div className="text-[12px] text-slate-500">{player.position || 'Player'}</div>
                                                             </div>
-                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isPreferred ? 'border-emerald-200 bg-white text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                                                            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${isPreferred ? 'border-emerald-200 bg-white text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
                                                                 {group === 'reserve' ? 'Reserve' : getBenchGroupLabel(group)}
                                                             </span>
                                                         </div>
@@ -9154,7 +9477,7 @@
                                     </div>
                                     <button
                                         onClick={plannerChooseSwapFromModal}
-                                        className="w-full min-h-[46px] rounded-lg bg-slate-900 text-white text-sm font-bold"
+                                        className={getButtonClass('primary', 'md', 'w-full')}
                                     >
                                         Highlight swap targets
                                     </button>
@@ -9748,6 +10071,16 @@
             const { startImportProgress, finishImportProgress, addProgressDetail } = useImportProgress();
             const [newTx, setNewTx] = useState({ description: '', amount: '', category: 'OTHER', type: 'EXPENSE', date: new Date().toISOString().split('T')[0], playerId: '' });
             const [isAddTxOpen, setIsAddTxOpen] = useState(false);
+            const {
+                confirmDialog: financeConfirmDialog,
+                requestConfirmation: requestFinanceConfirmation,
+                closeConfirmation: closeFinanceConfirmation,
+                textPrompt: financeTextPrompt,
+                textPromptValue: financeTextPromptValue,
+                setTextPromptValue: setFinanceTextPromptValue,
+                requestTextPrompt: requestFinanceTextPrompt,
+                closeTextPrompt: closeFinanceTextPrompt
+            } = useModalDialogs();
             const [newTxCategoryName, setNewTxCategoryName] = useState('');
             const [isBreakdownOpen, setIsBreakdownOpen] = useState(false);
             const [isLedgerCompact] = useState(false);
@@ -10092,8 +10425,23 @@
             };
 
             const editLedgerTx = async (tx) => {
-                const desc = prompt('Edit description', tx.description) ?? tx.description;
-                const amt = Number(prompt('Edit amount', Math.abs(tx.amount)) || Math.abs(tx.amount));
+                const desc = await requestFinanceTextPrompt({
+                    title: 'Edit ledger entry',
+                    description: 'Update the description for this ledger line.',
+                    placeholder: 'Description',
+                    initialValue: tx.description || '',
+                    confirmLabel: 'Next'
+                });
+                if (desc === null) return;
+                const amountInput = await requestFinanceTextPrompt({
+                    title: 'Edit ledger entry',
+                    description: 'Update the amount for this ledger line.',
+                    placeholder: 'Amount',
+                    initialValue: String(Math.abs(tx.amount || 0)),
+                    confirmLabel: 'Save entry'
+                });
+                if (amountInput === null) return;
+                const amt = Number(amountInput);
                 if(isNaN(amt) || !amt) return;
                 const signed = tx.amount < 0 ? -Math.abs(amt) : Math.abs(amt);
                 await db.transactions.update(tx.id, { description: desc, amount: signed });
@@ -10101,7 +10449,13 @@
             };
 
             const deleteLedgerTx = async (tx) => {
-                if(!confirm('Delete this ledger entry?')) return;
+                const approved = await requestFinanceConfirmation({
+                    title: 'Delete ledger entry',
+                    description: `Delete "${tx.description || 'this ledger entry'}"?`,
+                    confirmLabel: 'Delete entry',
+                    danger: true
+                });
+                if(!approved) return;
                 await db.transactions.delete(tx.id);
                 refresh();
             };
@@ -10112,73 +10466,73 @@
                         title="Bank"
                         subtitle="Cashflow, ledger, receivables, and exports."
                         actions={
-                            <button onClick={() => setIsAddTxOpen(true)} className="min-h-[44px] px-4 rounded-xl bg-slate-900 text-white shadow-lg shadow-slate-800/20 hover:bg-slate-800 text-sm font-bold flex items-center gap-2">
+                            <button onClick={() => setIsAddTxOpen(true)} className={getButtonClass('primary', 'md')}>
                                 <Icon name="Plus" size={18} />
                                 Add Entry
                             </button>
                         }
                     />
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('finance', 'p-4 space-y-4')}>
                         <div className="flex items-start justify-between gap-3 flex-wrap">
                             <div>
-                                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Money Position</div>
-                                <div className="text-[11px] text-slate-500 mt-1">Club funds total = cleared bank cash + pending incoming - pending outgoing.</div>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-sky-700')}>Bank Snapshot</div>
+                                <div className="text-[13px] text-slate-500 mt-1">Club funds total = cleared bank cash + pending incoming - pending outgoing.</div>
                             </div>
-                            <div className={`text-[11px] font-bold ${financePosition.pendingNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            <div className={`text-[13px] font-bold ${financePosition.pendingNet >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                                 Pending net {financePosition.pendingNet >= 0 ? '+' : ''}{formatCurrency(financePosition.pendingNet)}
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
-                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                                <div className="text-[10px] font-semibold text-slate-500 uppercase">Club funds total</div>
-                                <div className="text-lg font-display font-bold text-slate-900 mt-1">{formatCurrency(financePosition.clubFundsTotal)}</div>
+                            <div className={getSurfaceClass('muted', 'p-3')}>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Club funds total</div>
+                                <div className="text-xl font-display font-bold text-slate-900 mt-1">{formatCurrency(financePosition.clubFundsTotal)}</div>
                             </div>
-                            <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
-                                <div className="text-[10px] font-semibold text-sky-700 uppercase">Cleared bank cash</div>
-                                <div className="text-lg font-display font-bold text-sky-900 mt-1">{formatCurrency(financePosition.clearedBankCash)}</div>
+                            <div className={getSurfaceClass('info', 'p-3')}>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-sky-700')}>Cleared bank cash</div>
+                                <div className="text-xl font-display font-bold text-sky-900 mt-1">{formatCurrency(financePosition.clearedBankCash)}</div>
                             </div>
-                            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                                <div className="text-[10px] font-semibold text-emerald-700 uppercase">Pending incoming</div>
-                                <div className="text-lg font-display font-bold text-emerald-800 mt-1">{formatCurrency(financePosition.pendingIncoming)}</div>
+                            <div className={getSurfaceClass('success', 'p-3')}>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-emerald-700')}>Pending incoming</div>
+                                <div className="text-xl font-display font-bold text-emerald-800 mt-1">{formatCurrency(financePosition.pendingIncoming)}</div>
                             </div>
-                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                                <div className="text-[10px] font-semibold text-amber-700 uppercase">Pending outgoing</div>
-                                <div className="text-lg font-display font-bold text-amber-800 mt-1">{formatCurrency(financePosition.pendingOutgoing)}</div>
+                            <div className={getSurfaceClass('warning', 'p-3')}>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-amber-700')}>Pending outgoing</div>
+                                <div className="text-xl font-display font-bold text-amber-800 mt-1">{formatCurrency(financePosition.pendingOutgoing)}</div>
                             </div>
                         </div>
-                        <div className="text-[10px] text-slate-500">
+                        <div className={UI_TEXT.helper}>
                             Cleared bank cash reflects settled ledger cash only. Pending incoming and outgoing stay outside cleared bank cash until they are actually received or paid.
                         </div>
                     </div>
 
                     <div className="grid md:grid-cols-2 gap-3">
-                        <div className="bg-white p-3 rounded-2xl shadow-soft border border-slate-100 space-y-2">
-                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cashflow</div>
+                        <div className={getSurfaceClass('finance', 'p-3 space-y-2')}>
+                            <div className={cx(UI_TEXT.eyebrow, 'text-sky-700')}>Cashflow</div>
                             <div className="flex flex-col gap-2">
-                                <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-between">
-                                    <span className="text-[10px] font-semibold text-emerald-700 uppercase">Income</span>
+                                <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-between">
+                                    <span className={cx(UI_TEXT.eyebrow, 'text-emerald-700')}>Income</span>
                                     <span className="text-base font-display font-bold text-emerald-700">{formatCurrency(totalIncome)}</span>
                                 </div>
-                                <div className="p-2 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-between">
-                                    <span className="text-[10px] font-semibold text-rose-700 uppercase">Outgoings</span>
+                                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-between">
+                                    <span className={cx(UI_TEXT.eyebrow, 'text-rose-700')}>Outgoings</span>
                                     <span className="text-base font-display font-bold text-rose-700">{formatCurrency(Math.abs(totalExpense))}</span>
                                 </div>
-                                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-                                    <span className="text-[10px] font-semibold text-slate-600 uppercase">Net</span>
+                                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                                    <span className={cx(UI_TEXT.eyebrow, 'text-slate-600')}>Net</span>
                                     <span className="text-base font-display font-bold text-slate-900">{formatCurrency(totalIncome + totalExpense)}</span>
                                 </div>
                             </div>
                         </div>
-                        <div className="bg-white p-3 rounded-2xl shadow-soft border border-slate-100 space-y-2">
-                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pending Queues</div>
+                        <div className={getSurfaceClass('finance', 'p-3 space-y-2')}>
+                            <div className={cx(UI_TEXT.eyebrow, 'text-sky-700')}>Pending Queues</div>
                             <div className="flex flex-col gap-2">
-                                <div className="p-2 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-between">
-                                    <span className="text-[10px] font-semibold text-amber-700 uppercase">Pending Incoming</span>
+                                <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-between">
+                                    <span className={cx(UI_TEXT.eyebrow, 'text-amber-700')}>Pending Incoming</span>
                                     <span className="text-base font-display font-bold text-amber-800">{formatCurrency(outstanding.receivable)}</span>
                                 </div>
-                                <div className="p-2 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-between">
-                                    <span className="text-[10px] font-semibold text-indigo-700 uppercase">Pending Outgoing</span>
+                                <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-between">
+                                    <span className={cx(UI_TEXT.eyebrow, 'text-indigo-700')}>Pending Outgoing</span>
                                     <span className="text-base font-display font-bold text-indigo-800">{formatCurrency(Math.abs(outstanding.payable))}</span>
                                 </div>
                             </div>
@@ -10186,42 +10540,42 @@
                     </div>
 
                     <div className="grid md:grid-cols-2 gap-3">
-                        <div className="bg-white p-3 rounded-2xl shadow-soft border border-slate-100">
-                            <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Top Income Categories</h3>
+                        <div className={getSurfaceClass('default', 'p-3')}>
+                            <h3 className={cx(UI_TEXT.eyebrow, 'text-slate-500 mb-2')}>Top Income Categories</h3>
                             <div className="space-y-1.5">
                                 {Object.entries(incomeBreakdown).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([cat, val]) => (
-                                    <div key={cat} className="flex items-center justify-between text-xs">
+                                    <div key={cat} className="flex items-center justify-between text-[13px]">
                                         <span className="font-semibold text-slate-700 truncate pr-2">{formatCategoryLabel(cat) || cat}</span>
                                         <span className="font-bold text-emerald-700">{formatCurrency(val)}</span>
                                     </div>
                                 ))}
-                                {Object.keys(incomeBreakdown).length === 0 && <div className="text-[11px] text-slate-400">No income yet.</div>}
+                                {Object.keys(incomeBreakdown).length === 0 && <div className={UI_TEXT.subtle}>No income yet.</div>}
                             </div>
                         </div>
-                        <div className="bg-white p-3 rounded-2xl shadow-soft border border-slate-100">
-                            <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Top Expense Categories</h3>
+                        <div className={getSurfaceClass('default', 'p-3')}>
+                            <h3 className={cx(UI_TEXT.eyebrow, 'text-slate-500 mb-2')}>Top Expense Categories</h3>
                             <div className="space-y-1.5">
                                 {Object.entries(expenseBreakdown).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([cat, val]) => (
-                                    <div key={cat} className="flex items-center justify-between text-xs">
+                                    <div key={cat} className="flex items-center justify-between text-[13px]">
                                         <span className="font-semibold text-slate-700 truncate pr-2">{formatCategoryLabel(cat) || cat}</span>
                                         <span className="font-bold text-rose-700">{formatCurrency(val)}</span>
                                     </div>
                                 ))}
-                                {Object.keys(expenseBreakdown).length === 0 && <div className="text-[11px] text-slate-400">No expenses yet.</div>}
+                                {Object.keys(expenseBreakdown).length === 0 && <div className={UI_TEXT.subtle}>No expenses yet.</div>}
                             </div>
                         </div>
                     </div>
 
-                    <div className="bg-white p-3 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('finance', 'p-3 space-y-3')}>
                         <div className="flex items-center justify-between">
                             <div>
-                                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Financial Statements</div>
-                                <div className="text-[10px] text-slate-500">Calendar breakdowns · auditor view</div>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-sky-700')}>Financial Statements</div>
+                                <div className={UI_TEXT.meta}>Calendar breakdowns · auditor view</div>
                             </div>
-                            <button type="button" onClick={() => setIsBreakdownOpen(true)} className="text-[11px] font-bold text-brand-600 underline">Full breakdown</button>
+                            <button type="button" onClick={() => setIsBreakdownOpen(true)} className={getButtonClass('secondary', 'sm')}>Full breakdown</button>
                         </div>
                         <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-900 text-white">
-                            <div className="text-[11px] font-semibold uppercase tracking-wide opacity-80">Cleared Bank Cash</div>
+                            <div className="text-[12px] font-semibold uppercase tracking-wide opacity-80">Cleared Bank Cash</div>
                             <div className="text-lg font-display font-bold">{formatCurrency(currentCash, { minimumFractionDigits: 0 })}</div>
                         </div>
                         <div className="space-y-3">
@@ -10268,11 +10622,11 @@
                         </div>
                     </div>
 
-                    <div className="bg-white p-3 rounded-2xl shadow-soft border border-slate-100 space-y-2">
+                    <div className={getSurfaceClass('default', 'p-3 space-y-2')}>
                         <div className="flex items-center justify-between">
                             <div>
-                                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Recent Activity</div>
-                                <div className="text-[10px] text-slate-500">Last 10 transactions</div>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Recent Activity</div>
+                                <div className={UI_TEXT.meta}>Last 10 transactions</div>
                             </div>
                         </div>
                         <div className="space-y-1.5 pr-1">
@@ -10286,12 +10640,12 @@
                                         : (formatCategoryLabel(tx.category) || tx.category || 'Uncategorized'));
                                 const contextLabel = playerName || tx.payee || feeLabel;
                                 return (
-                                    <div key={tx.id} className="flex justify-between items-center p-2 rounded-xl border border-slate-100 bg-slate-50">
+                                    <div key={tx.id} className="flex justify-between items-center p-2.5 rounded-xl border border-slate-200 bg-slate-50/80">
                                         <div>
-                                            <div className="text-[12px] font-bold text-slate-900">{tx.description}</div>
-                                            <div className="text-[10px] text-slate-500">{contextLabel} · {new Date(tx.date).toLocaleDateString()}</div>
+                                            <div className="text-[13px] font-bold text-slate-900">{tx.description}</div>
+                                            <div className="text-[12px] text-slate-500">{contextLabel} · {new Date(tx.date).toLocaleDateString()}</div>
                                         </div>
-                                        <div className={`font-bold text-xs ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{tx.amount > 0 ? '+' : ''}{formatCurrency(Math.abs(tx.amount))}</div>
+                                        <div className={`font-bold text-[13px] ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{tx.amount > 0 ? '+' : ''}{formatCurrency(Math.abs(tx.amount))}</div>
                                     </div>
                                 );
                             })}
@@ -10300,21 +10654,21 @@
 
                     <div className="space-y-3">
                         <div className="flex items-center justify-between px-1 flex-wrap gap-2">
-                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ledger</h3>
-                            <div className="flex gap-2 text-[11px] items-center flex-wrap">
-                                <span className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold">Open receivable: {formatCurrency(outstanding.receivable)}</span>
-                                <span className="px-2 py-1 rounded-lg bg-rose-50 text-rose-700 font-bold">Open payable: {formatCurrency(Math.abs(outstanding.payable))}</span>
-                                <span className="px-2 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold">Open net: {formatCurrency(outstanding.receivable + outstanding.payable)}</span>
-                                <button type="button" onClick={() => setIsBreakdownOpen(true)} className="text-brand-600 font-bold underline">Full breakdown</button>
+                            <h3 className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Ledger</h3>
+                            <div className="flex gap-2 text-[12px] items-center flex-wrap">
+                                <span className={getChipClass('success')}>Open receivable: {formatCurrency(outstanding.receivable)}</span>
+                                <span className={getChipClass('danger')}>Open payable: {formatCurrency(Math.abs(outstanding.payable))}</span>
+                                <span className={getChipClass('neutral')}>Open net: {formatCurrency(outstanding.receivable + outstanding.payable)}</span>
+                                <button type="button" onClick={() => setIsBreakdownOpen(true)} className={getButtonClass('secondary', 'sm')}>Full breakdown</button>
                             </div>
                         </div>
-                        <div className="px-1 text-[10px] text-slate-500">Outstanding balances only. Covered player fees are excluded.</div>
-                        <div className="px-1 text-[10px] text-slate-500">Each row now shows cash after that line item so you can audit exact running cash.</div>
+                        <div className="px-1 text-[12px] text-slate-500">Outstanding balances only. Covered player fees are excluded.</div>
+                        <div className="px-1 text-[12px] text-slate-500">Each row shows cash after that line item so you can audit exact running cash.</div>
                         <div className="flex flex-wrap gap-2 px-1">
-                            <button type="button" onClick={exportLedgerCsv} className="flex-1 min-w-[120px] bg-slate-900 text-white text-[11px] font-bold py-2 rounded-lg shadow-sm">
+                            <button type="button" onClick={exportLedgerCsv} className={getButtonClass('primary', 'md', 'flex-1 min-w-[120px]')}>
                                 Export CSV
                             </button>
-                            <button type="button" onClick={exportLedgerPdf} className="flex-1 min-w-[140px] bg-white border border-slate-200 text-slate-700 text-[11px] font-bold py-2 rounded-lg">
+                            <button type="button" onClick={exportLedgerPdf} className={getButtonClass('secondary', 'md', 'flex-1 min-w-[140px]')}>
                                 Print / PDF View
                             </button>
                         </div>
@@ -10325,18 +10679,18 @@
                                 const flowDirection = getTxFlowDirection(tx);
                                 const cashImpact = getTxCashImpact(tx);
                                 return (
-                                    <div key={tx.id} className="bg-white/90 backdrop-blur-sm p-3 rounded-xl shadow-sm border border-slate-100 flex justify-between gap-2 items-start hover:shadow-md transition">
+                                    <div key={tx.id} className="bg-white/95 backdrop-blur-sm p-3 rounded-2xl shadow-soft border border-slate-200/80 flex justify-between gap-3 items-start hover:border-slate-300 transition">
                                         <div className="flex items-start gap-2">
-                                            <div className={`p-1.5 rounded-full border ${tx.amount > 0 ? 'border-emerald-100 bg-emerald-50 text-emerald-600' : 'border-rose-100 bg-rose-50 text-rose-600'}`}>
+                                            <div className={getIconBadgeClass(tx.amount > 0 ? 'emerald' : 'rose', 'h-8 w-8 rounded-full')}>
                                                 <Icon name={tx.amount > 0 ? 'ArrowDownLeft' : 'ArrowUpRight'} size={14} />
                                             </div>
                                             <div className="space-y-1">
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className="text-[10px] px-2 py-1 rounded-full bg-slate-100 text-slate-600 font-semibold tracking-tight">{formatCategoryLabel(tx.category) || tx.category || 'Uncategorized'}</span>
-                                                    {tx.isWriteOff && <span className="text-[10px] px-2 py-1 rounded-full bg-slate-200 text-slate-700 font-semibold">Write-off</span>}
-                                                    <div className="text-[12px] font-bold text-slate-900 leading-tight">{tx.description}</div>
+                                                    <span className={getChipClass('neutral')}>{formatCategoryLabel(tx.category) || tx.category || 'Uncategorized'}</span>
+                                                    {tx.isWriteOff && <span className={getChipClass('warning')}>Write-off</span>}
+                                                    <div className="text-[13px] font-bold text-slate-900 leading-tight">{tx.description}</div>
                                                 </div>
-                                                <div className="text-[10px] text-slate-500 space-x-1">
+                                                <div className="text-[12px] text-slate-500 space-x-1">
                                                     <span>{new Date(tx.date).toLocaleDateString()}</span>
                                                     {tx.playerId && playerLookup[tx.playerId] && (
                                                         <span>· {tx.amount > 0 ? 'From' : 'For'} {playerLookup[tx.playerId].firstName} {playerLookup[tx.playerId].lastName}</span>
@@ -10346,33 +10700,33 @@
                                                 </div>
                                             </div>
                                         </div>
-                                        <div className="flex flex-col items-end gap-1">
-                                            <div className="flex items-center gap-1 flex-wrap justify-end">
-                                                {outstandingTx && (
-                                                    <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-100">
-                                                        {flowDirection === 'receivable' ? 'Receivable' : 'Payable'}
-                                                    </span>
-                                                )}
-                                                {coveredPlayerCharge && (
-                                                    <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                                                        Covered
-                                                    </span>
-                                                )}
-                                                {!cashImpact && Number(tx.amount || 0) !== 0 && (
-                                                    <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                                                        Non-cash
-                                                    </span>
-                                                )}
-                                                <div className={`font-mono font-extrabold text-sm ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                            <div className="flex flex-col items-end gap-1">
+                                                <div className="flex items-center gap-1 flex-wrap justify-end">
+                                                    {outstandingTx && (
+                                                        <span className={getChipClass('warning')}>
+                                                            {flowDirection === 'receivable' ? 'Receivable' : 'Payable'}
+                                                        </span>
+                                                    )}
+                                                    {coveredPlayerCharge && (
+                                                        <span className={getChipClass('success')}>
+                                                            Covered
+                                                        </span>
+                                                    )}
+                                                    {!cashImpact && Number(tx.amount || 0) !== 0 && (
+                                                        <span className={getChipClass('neutral')}>
+                                                            Non-cash
+                                                        </span>
+                                                    )}
+                                                <div className={`font-mono font-extrabold text-[14px] ${tx.amount > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                                     {tx.amount > 0 ? '+' : ''}{formatCurrency(Math.abs(tx.amount))}
                                                 </div>
                                             </div>
-                                            <div className="text-[10px] font-semibold text-slate-600">
+                                            <div className="text-[12px] font-semibold text-slate-600">
                                                 Cash after line: {formatCurrency(tx.runningBalance || 0)}
                                             </div>
                                             <div className="flex items-center gap-1">
-                                                <button onClick={() => editLedgerTx(tx)} className="text-[10px] text-slate-600 font-bold px-2 py-1 rounded-full border border-slate-200 bg-white hover:bg-slate-50">Edit</button>
-                                                <button onClick={() => deleteLedgerTx(tx)} className="text-[10px] text-rose-600 font-bold px-2 py-1 rounded-full border border-rose-200 bg-rose-50 hover:bg-rose-100">Delete</button>
+                                                <button onClick={() => editLedgerTx(tx)} className={getButtonClass('secondary', 'xs')}>Edit</button>
+                                                <button onClick={() => deleteLedgerTx(tx)} className={getButtonClass('danger', 'xs')}>Delete</button>
                                             </div>
                                         </div>
                                     </div>
@@ -10382,7 +10736,7 @@
                     </div>
 
                     <Modal isOpen={isBreakdownOpen} onClose={() => setIsBreakdownOpen(false)} title="Full Breakdown">
-                        <div className="text-xs text-slate-500 mb-2">All income and expenses by category.</div>
+                        <div className={cx(UI_TEXT.meta, 'mb-2')}>All income and expenses by category.</div>
                         <div className="border border-slate-100 rounded-xl overflow-hidden">
                             <div className="grid grid-cols-5 bg-slate-50 text-[11px] font-bold text-slate-600 px-2 py-2">
                                 <span>Category</span>
@@ -10408,29 +10762,31 @@
 
                     <Modal isOpen={isAddTxOpen} onClose={() => setIsAddTxOpen(false)} title="Add Transaction">
                         <div className="space-y-3">
-                            <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Description" value={newTx.description} onChange={e => setNewTx({ ...newTx, description: e.target.value })} />
-                            <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="number" placeholder="Amount" value={newTx.amount} onChange={e => setNewTx({ ...newTx, amount: e.target.value })} />
-                            <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" type="date" value={newTx.date} onChange={e => setNewTx({ ...newTx, date: e.target.value })} />
+                            <input className={FORM_CONTROL_CLASS} placeholder="Description" value={newTx.description} onChange={e => setNewTx({ ...newTx, description: e.target.value })} />
+                            <input className={FORM_CONTROL_CLASS} type="number" placeholder="Amount" value={newTx.amount} onChange={e => setNewTx({ ...newTx, amount: e.target.value })} />
+                            <input className={FORM_CONTROL_CLASS} type="date" value={newTx.date} onChange={e => setNewTx({ ...newTx, date: e.target.value })} />
                             <div className="grid grid-cols-2 gap-2">
-                                <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={newTx.type} onChange={e => setNewTx({ ...newTx, type: e.target.value })}>
+                                <select className={FORM_CONTROL_CLASS} value={newTx.type} onChange={e => setNewTx({ ...newTx, type: e.target.value })}>
                                     <option value="EXPENSE">Expense</option>
                                     <option value="INCOME">Income</option>
                                 </select>
-                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={newTx.category} onChange={e => setNewTx({ ...newTx, category: e.target.value })}>
+                            <select className={FORM_CONTROL_CLASS} value={newTx.category} onChange={e => setNewTx({ ...newTx, category: e.target.value })}>
                                     { (categories?.length ? categories : ['OTHER']).map(cat => <option key={cat} value={cat}>{cat}</option>)}
                                     <option value="__new__">Add new category…</option>
                                 </select>
                             {newTx.category === '__new__' && (
-                                <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="New category name" value={newTxCategoryName} onChange={e => setNewTxCategoryName(e.target.value)} />
+                                <input className={FORM_CONTROL_CLASS} placeholder="New category name" value={newTxCategoryName} onChange={e => setNewTxCategoryName(e.target.value)} />
                             )}
                             </div>
-                            <select className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={newTx.playerId} onChange={e => setNewTx({ ...newTx, playerId: e.target.value })}>
+                            <select className={FORM_CONTROL_CLASS} value={newTx.playerId} onChange={e => setNewTx({ ...newTx, playerId: e.target.value })}>
                                 <option value="">No player</option>
                                 {players.map(p => <option key={p.id} value={p.id}>{p.firstName} {p.lastName}</option>)}
                             </select>
-                            <button onClick={() => { addTransaction(); setIsAddTxOpen(false); }} className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">Save</button>
+                            <button onClick={() => { addTransaction(); setIsAddTxOpen(false); }} className={getButtonClass('primary', 'lg', 'w-full')}>Save</button>
                         </div>
                     </Modal>
+                    <ConfirmationModal dialog={financeConfirmDialog} onClose={closeFinanceConfirmation} />
+                    <TextPromptModal dialog={financeTextPrompt} value={financeTextPromptValue} onChange={setFinanceTextPromptValue} onClose={closeFinanceTextPrompt} />
                 </div>
             );
         };
@@ -10957,22 +11313,22 @@
                                         </div>
                                     </div>
                                     <div className="rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-right shrink-0">
-                                        <div className="text-[11px] font-bold leading-tight">{todayWeekdayLabel}</div>
-                                        <div className="text-[10px] text-blue-100 leading-tight mt-0.5">{todayDateLabel}</div>
+                                        <div className="text-[12px] font-bold leading-tight">{todayWeekdayLabel}</div>
+                                        <div className="text-[11px] text-blue-100 leading-tight mt-0.5">{todayDateLabel}</div>
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-3 gap-2">
                                     <div className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-2">
-                                        <div className="text-[10px] uppercase tracking-wider text-blue-100">Played</div>
-                                        <div className="text-lg font-display font-bold leading-tight">{stats.record.played}</div>
+                                        <div className="text-[11px] uppercase tracking-wider text-blue-100">Played</div>
+                                        <div className="text-xl font-display font-bold leading-tight">{stats.record.played}</div>
                                     </div>
                                     <div className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-2">
-                                        <div className="text-[10px] uppercase tracking-wider text-blue-100">Points</div>
-                                        <div className="text-lg font-display font-bold leading-tight">{stats.record.points}</div>
+                                        <div className="text-[11px] uppercase tracking-wider text-blue-100">Points</div>
+                                        <div className="text-xl font-display font-bold leading-tight">{stats.record.points}</div>
                                     </div>
                                     <div className="rounded-xl border border-white/20 bg-white/10 px-2.5 py-2">
-                                        <div className="text-[10px] uppercase tracking-wider text-blue-100">Record</div>
-                                        <div className="text-sm font-bold leading-tight">{stats.record.wins}-{stats.record.draws}-{stats.record.losses}</div>
+                                        <div className="text-[11px] uppercase tracking-wider text-blue-100">Record</div>
+                                        <div className="text-base font-bold leading-tight">{stats.record.wins}-{stats.record.draws}-{stats.record.losses}</div>
                                     </div>
                                 </div>
                             </div>
@@ -10982,27 +11338,28 @@
                     <button
                         type="button"
                         onClick={() => onNavigate('finances')}
-                        className="w-full rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft backdrop-blur-sm text-left transition-colors hover:border-blue-200"
+                        className={getSurfaceClass('finance', 'w-full p-4 text-left transition-colors hover:border-sky-200')}
                     >
                         <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                                 <div className="text-3xl font-display font-bold text-slate-900 leading-none">{formatCurrency(stats.clearedBankCash, { minimumFractionDigits: 0 })}</div>
+                                <div className="mt-2 text-[13px] text-slate-500">Tap to open Banking</div>
                             </div>
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-right shrink-0 min-w-[122px]">
-                                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Last 7 days</div>
+                            <div className="rounded-2xl border border-sky-200 bg-sky-50/80 px-3 py-2 text-right shrink-0 min-w-[122px]">
+                                <div className="text-[11px] uppercase tracking-wider text-sky-700 font-bold">Last 7 days</div>
                                 <div className={`text-[13px] font-bold leading-tight mt-1 ${stats.weeklyBankDelta > 0 ? 'text-emerald-600' : stats.weeklyBankDelta < 0 ? 'text-rose-600' : 'text-slate-900'}`}>
                                     {stats.weeklyBankDelta > 0 ? '+' : stats.weeklyBankDelta < 0 ? '-' : ''}{formatCurrency(Math.abs(stats.weeklyBankDelta), { maximumFractionDigits: 0 })}
                                 </div>
-                                <div className="text-[10px] text-slate-500 mt-1">bank movement</div>
+                                <div className="text-[11px] text-sky-700/80 mt-1">bank movement</div>
                             </div>
                         </div>
                     </button>
 
-                    <div className="rounded-3xl border border-slate-200/70 bg-white/95 p-4 shadow-soft space-y-3 backdrop-blur-sm">
+                    <div className={getSurfaceClass('dashboard', 'p-4 space-y-3')}>
                         <div className="flex items-center justify-between gap-2">
-                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Today</div>
+                            <div className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Match Centre</div>
                             {nextFixtureCountdown ? (
-                                <span className="rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700">
+                                <span className={getChipClass('info')}>
                                     {nextFixtureCountdown}
                                 </span>
                             ) : null}
@@ -11010,14 +11367,14 @@
                         {nextFixture ? (
                             <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-cyan-50/80 p-3.5 flex items-center justify-between gap-3">
                                 <div className="min-w-0">
-                                    <div className="text-[10px] uppercase tracking-wider font-bold text-blue-500">Upcoming Fixture</div>
+                                    <div className="text-[11px] uppercase tracking-wider font-bold text-blue-500">Upcoming Fixture</div>
                                     <div className="text-base font-display font-bold text-slate-900 truncate">vs {nextFixture.opponent}</div>
-                                    <div className="text-[11px] text-slate-600 truncate">{new Date(nextFixture.date).toLocaleDateString()} · {renderTimeLabel(nextFixture.time)} · {nextFixture.venue || 'TBC'}</div>
+                                    <div className="text-[13px] text-slate-600 truncate">{new Date(nextFixture.date).toLocaleDateString()} · {renderTimeLabel(nextFixture.time)} · {nextFixture.venue || 'TBC'}</div>
                                 </div>
-                                <button onClick={() => onNavigate('fixtures')} className="min-h-[44px] px-4 rounded-xl bg-white border border-blue-200 text-[11px] font-bold text-blue-800 shrink-0">Open Game</button>
+                                <button onClick={() => onNavigate('fixtures')} className={getButtonClass('secondary', 'md', 'shrink-0')}>Open Game</button>
                             </div>
                         ) : (
-                            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-3 text-sm text-slate-500">
+                            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-3 text-[13px] text-slate-500">
                                 No upcoming game scheduled.
                             </div>
                         )}
@@ -11031,16 +11388,16 @@
                             >
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
-                                        <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Last Result</div>
+                                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Last Result</div>
                                         <div className="text-base font-display font-bold text-slate-900 leading-tight">
                                             {lastResult.isForfeit
                                                 ? `Exiles ${lastResult.score} vs ${lastResult.opponent}`
                                                 : `Exiles ${lastResult.score} ${lastResult.opponent}`}
                                         </div>
-                                        <div className="text-[11px] text-slate-500">{new Date(lastResult.date).toLocaleDateString()}</div>
+                                        <div className="text-[12px] text-slate-500">{new Date(lastResult.date).toLocaleDateString()}</div>
                                     </div>
                                     {lastResult.fixtureId ? (
-                                        <span className="mt-1 inline-flex h-7 w-7 items-center justify-center rounded-full border border-blue-200 bg-white text-blue-700">
+                                        <span className={getIconBadgeClass('blue', 'mt-1 h-8 w-8 rounded-full')}>
                                             <Icon name="ArrowRight" size={14} />
                                         </span>
                                     ) : null}
@@ -11050,27 +11407,27 @@
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
-                        <button onClick={() => onNavigate('fixtures')} className="text-left rounded-2xl border border-slate-200/80 bg-white/95 p-3.5 shadow-soft">
+                        <button onClick={() => onNavigate('fixtures')} className={getSurfaceClass('dashboard', 'text-left p-3.5 hover:border-slate-300 transition-colors')}>
                             <div>
-                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Fixtures</div>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Fixtures</div>
                                 <div className="mt-1 text-2xl font-display font-bold text-slate-900 leading-none">{stats.fixtureCt}</div>
-                                <div className="text-[11px] text-slate-500 mt-1">Season games</div>
+                                <div className={UI_TEXT.meta}>Season games</div>
                             </div>
                         </button>
-                        <button onClick={() => onNavigate('players')} className="text-left rounded-2xl border border-slate-200/80 bg-white/95 p-3.5 shadow-soft">
+                        <button onClick={() => onNavigate('players')} className={getSurfaceClass('dashboard', 'text-left p-3.5 hover:border-slate-300 transition-colors')}>
                             <div>
-                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Squad</div>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Squad</div>
                                 <div className="mt-1 text-2xl font-display font-bold text-slate-900 leading-none">{stats.playerCt}</div>
-                                <div className="text-[11px] text-slate-500 mt-1">Registered players</div>
+                                <div className={UI_TEXT.meta}>Registered players</div>
                             </div>
                         </button>
                     </div>
 
-                    <div className="rounded-3xl border border-slate-200/70 bg-white/95 shadow-soft overflow-hidden">
+                    <div className={getSurfaceClass('dashboard', 'overflow-hidden')}>
                         <button onClick={() => setShowHomeIntel(prev => !prev)} className="w-full flex items-center justify-between p-4">
                             <div className="text-left">
-                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Insights</div>
-                                <div className="text-[11px] text-slate-400">Form, birthdays, kit snapshot and debt watch</div>
+                                <div className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Club Insights</div>
+                                <div className={UI_TEXT.meta}>Form, birthdays, kit snapshot and debt watch</div>
                             </div>
                             <Icon name={showHomeIntel ? 'ChevronUp' : 'ChevronDown'} size={18} className="text-slate-400" />
                         </button>
@@ -11147,7 +11504,7 @@
                                                             <div className="text-sm font-bold text-rose-800">{debtor.name}</div>
                                                             <div className="text-[11px] text-rose-500">Owes {formatCurrency(Math.abs(debtor.balance), { maximumFractionDigits: 0 })}</div>
                                                         </div>
-                                                        <button onClick={() => onNavigate('players')} className="text-[10px] font-bold text-rose-700 underline">Follow up</button>
+                                                        <button onClick={() => onNavigate('players')} className={getButtonClass('danger', 'xs')}>Follow up</button>
                                                     </div>
                                                 ))}
                                             </div>
@@ -11222,28 +11579,28 @@
                         )}
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200/80 bg-white/95 p-3 shadow-soft flex items-center justify-between gap-3">
+                    <div className={getSurfaceClass('dashboard', 'p-3 flex items-center justify-between gap-3')}>
                         <div className="min-w-0">
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Season Record</div>
+                            <div className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Season Record</div>
                             <div className="text-sm font-display font-bold text-slate-900">{stats.record.wins}W · {stats.record.draws}D · {stats.record.losses}L</div>
                         </div>
                         <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-right">
-                            <div className="text-[10px] uppercase tracking-wider text-blue-600 font-bold">Points</div>
+                            <div className="text-[11px] uppercase tracking-wider text-blue-600 font-bold">Points</div>
                             <div className="text-base font-display font-bold text-blue-800 leading-none">{stats.record.points}</div>
                         </div>
                     </div>
 
-                    <div className="bg-white/95 border border-slate-200/70 rounded-3xl p-4 shadow-soft space-y-3 backdrop-blur-sm">
+                    <div className={getSurfaceClass('warning', 'p-4 space-y-3')}>
                         <div className="flex items-start justify-between gap-2">
                             <div>
-                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Unpaid Items</div>
-                                <div className="text-[11px] text-slate-400">
+                                <div className={cx(UI_TEXT.eyebrow, 'text-amber-700')}>Unpaid Items</div>
+                                <div className={UI_TEXT.meta}>
                                     {unpaidSummary.count
                                         ? `Outstanding ${unpaidSummary.count} item${unpaidSummary.count === 1 ? '' : 's'} · ${formatCurrency(unpaidSummary.total, { maximumFractionDigits: 0 })}`
                                         : 'Quick mark payments without leaving home.'}
                                 </div>
                             </div>
-                            <button onClick={() => onNavigate('players')} className="min-h-[40px] px-3 rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-brand-600">Open Squad</button>
+                            <button onClick={() => onNavigate('players')} className={getButtonClass('secondary', 'sm')}>Open Squad</button>
                         </div>
                         {unpaidGroups.length ? (
                             <div className="space-y-3 pr-1">
@@ -11279,7 +11636,7 @@
                                                             <div className="text-[11px] font-bold text-rose-600">{formatCurrency(Math.abs(item.amount), { maximumFractionDigits: 0 })}</div>
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); setPendingPayment(item); }}
-                                                                className="min-h-[40px] text-[11px] font-bold bg-emerald-600 text-white px-3 py-1 rounded-md shadow-sm"
+                                                                className={getButtonClass('success', 'sm')}
                                                             >
                                                                 Mark received
                                                             </button>
@@ -11294,7 +11651,7 @@
                                     <button
                                         type="button"
                                         onClick={() => setShowAllUnpaidGroups(prev => !prev)}
-                                        className="w-full min-h-[42px] text-sm font-bold rounded-lg border border-slate-200 bg-white text-slate-700"
+                                        className={getButtonClass('secondary', 'md', 'w-full')}
                                     >
                                         {showAllUnpaidGroups ? 'Show fewer players' : `Show ${hiddenUnpaidGroupsCount} more player${hiddenUnpaidGroupsCount === 1 ? '' : 's'}`}
                                     </button>
@@ -11305,17 +11662,17 @@
                         )}
                     </div>
 
-                    <div className="bg-white/95 border border-slate-200/70 rounded-3xl p-4 shadow-soft space-y-3 backdrop-blur-sm">
+                    <div className={getSurfaceClass('info', 'p-4 space-y-3')}>
                         <div className="flex items-start justify-between gap-2">
                             <div>
-                                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Club Receivables</div>
-                                <div className="text-[11px] text-slate-400">
+                                <div className={cx(UI_TEXT.eyebrow, 'text-sky-700')}>Club Receivables</div>
+                                <div className={UI_TEXT.meta}>
                                     {clubReceivableSummary.count
                                         ? `Outstanding ${clubReceivableSummary.count} item${clubReceivableSummary.count === 1 ? '' : 's'} · ${formatCurrency(clubReceivableSummary.total, { maximumFractionDigits: 0 })}`
                                         : 'No clubs owe us right now.'}
                                 </div>
                             </div>
-                            <button onClick={() => onNavigate('opponents')} className="min-h-[40px] px-3 rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-brand-600">Open League</button>
+                            <button onClick={() => onNavigate('opponents')} className={getButtonClass('secondary', 'sm')}>Open League</button>
                         </div>
                         {clubReceivableGroups.length ? (
                             <div className="space-y-3 pr-1">
@@ -11345,12 +11702,12 @@
                                                         <div className="text-[12px] font-semibold text-slate-800 truncate">{item.label}</div>
                                                         {item.context && <div className="text-[10px] text-slate-500">{item.context}</div>}
                                                     </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="text-[11px] font-bold text-indigo-600">{formatCurrency(Math.abs(item.amount), { maximumFractionDigits: 0 })}</div>
-                                                        <button onClick={(e) => { e.stopPropagation(); settleClubReceivable(item); }} disabled={isSettlingClub} className="min-h-[40px] text-[11px] font-bold bg-emerald-600 text-white px-3 py-1 rounded-md shadow-sm disabled:opacity-60">{getSettlementActionLabel(item)}</button>
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="text-[11px] font-bold text-indigo-600">{formatCurrency(Math.abs(item.amount), { maximumFractionDigits: 0 })}</div>
+                                                            <button onClick={(e) => { e.stopPropagation(); settleClubReceivable(item); }} disabled={isSettlingClub} className={getButtonClass('success', 'sm')}>{getSettlementActionLabel(item)}</button>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))}
+                                                ))}
                                         </div>
                                     </div>
                                 ))}
@@ -11358,7 +11715,7 @@
                                     <button
                                         type="button"
                                         onClick={() => setShowAllClubReceivables(prev => !prev)}
-                                        className="w-full min-h-[42px] text-sm font-bold rounded-lg border border-slate-200 bg-white text-slate-700"
+                                        className={getButtonClass('secondary', 'md', 'w-full')}
                                     >
                                         {showAllClubReceivables ? 'Show fewer clubs' : `Show ${hiddenClubReceivableCount} more club${hiddenClubReceivableCount === 1 ? '' : 's'}`}
                                     </button>
@@ -11379,8 +11736,8 @@
                                     <div className="mt-3 text-2xl font-display font-bold text-emerald-700">{formatCurrency(Math.abs(pendingPayment.amount), { maximumFractionDigits: 0 })}</div>
                                 </div>
                                 <div className="flex gap-2">
-                                    <button onClick={closePaymentModal} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
-                                    <button onClick={confirmPayment} disabled={isPaying} className="flex-1 bg-emerald-600 text-white font-bold py-2 rounded-lg disabled:opacity-60">
+                                    <button onClick={closePaymentModal} className={getButtonClass('secondary', 'md', 'flex-1')}>Cancel</button>
+                                    <button onClick={confirmPayment} disabled={isPaying} className={getButtonClass('success', 'md', 'flex-1')}>
                                         {isPaying ? 'Recording...' : 'Mark received'}
                                     </button>
                                 </div>
@@ -11405,15 +11762,15 @@
 
             return (
                 <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pb-safe">
-                    <nav className="glass-panel mx-auto w-full max-w-md flex items-center justify-between gap-1 p-2.5 rounded-t-2xl shadow-glass">
+                    <nav className="glass-panel mx-auto mb-2 w-full max-w-md flex items-center justify-between gap-1.5 p-2 rounded-[1.75rem] border border-slate-200/80 shadow-glass">
                         {items.map(item => {
                             const isActive = item.id === 'more' ? isMoreSection : activeTab === item.id;
                             return (
                                 <button key={item.id} onClick={() => setTab(item.id)}
-                                    className={`relative flex flex-col items-center justify-center flex-1 h-[4.5rem] rounded-xl transition-all duration-300 ${isActive ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+                                    className={`relative flex flex-col items-center justify-center flex-1 h-[4.1rem] rounded-[1.15rem] transition-all duration-300 ${isActive ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/15' : 'text-slate-500 hover:text-slate-700 hover:bg-white/70'}`}
                                 >
-                                    <Icon name={item.icon} size={20} strokeWidth={isActive ? 2.5 : 2} className="mb-0.5" />
-                                    <span className="text-[11px] font-bold tracking-wide">{item.label}</span>
+                                    <Icon name={item.icon} size={20} strokeWidth={isActive ? 2.5 : 2} className="mb-1" />
+                                    <span className="text-[12px] font-bold tracking-wide">{item.label}</span>
                                 </button>
                             );
                         })}
@@ -11556,6 +11913,7 @@
                 <div className="space-y-5 pb-20 animate-fade-in">
                     <PageHeader
                         title="More"
+                        tone="admin"
                         inlineActionsOnMobile
                         actions={(
                             <div className="flex flex-col items-end gap-1 text-right">
@@ -11565,14 +11923,14 @@
                                     disabled={isRefreshingApp}
                                     title={isRefreshingApp ? 'Refreshing app...' : 'Hard refresh app'}
                                     aria-label={isRefreshingApp ? 'Refreshing app' : 'Hard refresh app'}
-                                    className={`h-11 w-11 rounded-xl border flex items-center justify-center ${isRefreshingApp ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-slate-200 bg-white text-slate-700 hover:border-brand-200'}`}
+                                    className={getButtonClass('secondary', 'sm', 'h-11 w-11 rounded-xl p-0')}
                                 >
                                     <Icon name="RotateCw" size={18} className={isRefreshingApp ? 'animate-spin' : ''} />
                                 </button>
-                                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
                                     Build {APP_VERSION}
                                 </div>
-                                <div className="text-[10px] text-slate-400">
+                                <div className="text-[12px] text-slate-400">
                                     Updated {moreHeaderUpdatedLabel}
                                 </div>
                             </div>
@@ -11583,15 +11941,15 @@
                             <button
                                 key={action.id}
                                 onClick={() => onNavigate(action.tab)}
-                                className="w-full min-h-[74px] flex items-center justify-between bg-white border border-slate-200 rounded-2xl px-4 py-4 shadow-soft hover:border-brand-200"
+                                className={getSurfaceClass('admin', 'w-full min-h-[82px] flex items-center justify-between px-4 py-4 hover:border-slate-300 hover:bg-slate-50/80 transition-colors')}
                             >
                                 <div className="flex items-center gap-3 text-left">
-                                    <div className="h-11 w-11 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center">
+                                    <div className={getIconBadgeClass(action.tab === 'reports' || action.tab === 'finances' ? 'blue' : action.tab === 'settings' || action.tab === 'auditcontrols' || action.tab === 'appdb' ? 'amber' : action.tab === 'sponsors' ? 'emerald' : action.tab === 'opponentintel' ? 'violet' : 'slate', 'h-12 w-12')}>
                                         <Icon name={action.icon} size={18} />
                                     </div>
                                     <div>
                                         <div className="text-base font-display font-bold text-slate-900">{action.label}</div>
-                                        <div className="text-[12px] text-slate-500">{action.sub}</div>
+                                        <div className="text-[13px] text-slate-500 leading-snug">{action.sub}</div>
                                     </div>
                                 </div>
                                 <Icon name="ChevronRight" size={18} className="text-slate-400" />
@@ -11647,7 +12005,7 @@
                         title="App Log"
                         subtitle="Everything we shipped recently, explained clearly for club use."
                         actions={(
-                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
                                 Back to More
                             </button>
                         )}
@@ -11840,7 +12198,7 @@
                         title="User Guide"
                         subtitle="A practical, step-by-step playbook for running Exiles in the app."
                         actions={(
-                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
                                 Back to More
                             </button>
                         )}
@@ -12053,7 +12411,7 @@
                         title="App & Database"
                         subtitle="Build details and database access controls."
                         actions={(
-                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
                                 Back to More
                             </button>
                         )}
@@ -12161,7 +12519,7 @@
                         title="Man of the Match Board"
                         subtitle="Every recorded MOTM award."
                         actions={(
-                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
                                 Back to More
                             </button>
                         )}
@@ -13161,51 +13519,52 @@
                 <div className="space-y-5 pb-[calc(8rem+env(safe-area-inset-bottom))] animate-fade-in">
                     <PageHeader
                         title="Reports"
+                        tone="report"
                         subtitle="Monthly P&L, cashflow, fixture profitability, and fee collection."
                         actions={(
-                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
                                 Back to More
                             </button>
                         )}
                     />
                     <div className="grid grid-cols-2 gap-2">
-                        <div className="bg-white border border-slate-200 rounded-xl p-3">
-                            <div className="text-[10px] uppercase font-bold text-slate-500">Net cashflow</div>
-                            <div className="text-lg font-display font-bold text-slate-900">{formatCurrency(cashSummary.net)}</div>
+                        <div className={getSurfaceClass(cashSummary.net >= 0 ? 'success' : 'critical', 'p-3.5')}>
+                            <div className={cx(UI_TEXT.label, cashSummary.net >= 0 ? 'text-emerald-700' : 'text-rose-700')}>Net cashflow</div>
+                            <div className="text-xl font-display font-bold text-slate-900 mt-1">{formatCurrency(cashSummary.net)}</div>
                         </div>
-                        <div className="bg-white border border-slate-200 rounded-xl p-3">
-                            <div className="text-[10px] uppercase font-bold text-slate-500">Collection rate</div>
-                            <div className="text-lg font-display font-bold text-slate-900">{Number(collectionSummary.rate || 0).toFixed(1)}%</div>
+                        <div className={getSurfaceClass('info', 'p-3.5')}>
+                            <div className={cx(UI_TEXT.label, 'text-sky-700')}>Collection rate</div>
+                            <div className="text-xl font-display font-bold text-slate-900 mt-1">{Number(collectionSummary.rate || 0).toFixed(1)}%</div>
                         </div>
-                        <div className="bg-white border border-slate-200 rounded-xl p-3">
-                            <div className="text-[10px] uppercase font-bold text-slate-500">Avg monthly net</div>
-                            <div className="text-lg font-display font-bold text-slate-900">{formatCurrency(cashSummary.avgNet)}</div>
+                        <div className={getSurfaceClass('muted', 'p-3.5')}>
+                            <div className={cx(UI_TEXT.label, 'text-slate-500')}>Avg monthly net</div>
+                            <div className="text-xl font-display font-bold text-slate-900 mt-1">{formatCurrency(cashSummary.avgNet)}</div>
                         </div>
-                        <div className="bg-white border border-slate-200 rounded-xl p-3">
-                            <div className="text-[10px] uppercase font-bold text-slate-500">Avg fixture cash P/L</div>
-                            <div className="text-lg font-display font-bold text-slate-900">{formatCurrency(averageFixtureNet)}</div>
+                        <div className={getSurfaceClass('muted', 'p-3.5')}>
+                            <div className={cx(UI_TEXT.label, 'text-slate-500')}>Avg fixture cash P/L</div>
+                            <div className="text-xl font-display font-bold text-slate-900 mt-1">{formatCurrency(averageFixtureNet)}</div>
                         </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                        <button onClick={exportReportsCsv} className="min-h-[44px] rounded-xl bg-slate-900 text-white text-sm font-bold">Export CSV</button>
-                        <button onClick={exportReportsPdf} className="min-h-[44px] rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700">Print / PDF View</button>
+                        <button onClick={exportReportsCsv} className={getButtonClass('primary', 'md', 'w-full')}>Export CSV</button>
+                        <button onClick={exportReportsPdf} className={getButtonClass('secondary', 'md', 'w-full')}>Print / PDF View</button>
                     </div>
-                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
-                        <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Player Fee Collection</div>
+                    <div className={getSurfaceClass('report', 'p-4 space-y-3')}>
+                        <div className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Player Fee Collection</div>
                         <div className="grid grid-cols-2 gap-2 text-[12px]">
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Billed: <span className="font-bold text-slate-900">{formatCurrency(collectionSummary.billed)}</span></div>
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Collected: <span className="font-bold text-emerald-700">{formatCurrency(collectionSummary.collected)}</span></div>
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Written off: <span className="font-bold text-amber-700">{formatCurrency(collectionSummary.writtenOff)}</span></div>
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Outstanding: <span className="font-bold text-rose-700">{formatCurrency(collectionSummary.outstanding)}</span></div>
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-[13px]">Billed: <span className="font-bold text-slate-900">{formatCurrency(collectionSummary.billed)}</span></div>
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-[13px]">Collected: <span className="font-bold text-emerald-700">{formatCurrency(collectionSummary.collected)}</span></div>
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-[13px]">Written off: <span className="font-bold text-amber-700">{formatCurrency(collectionSummary.writtenOff)}</span></div>
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-[13px]">Outstanding: <span className="font-bold text-amber-800">{formatCurrency(collectionSummary.outstanding)}</span></div>
                         </div>
                     </div>
-                    <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                    <div className={getSurfaceClass('report', 'p-4 space-y-4')}>
                         <div className="flex items-center justify-between gap-2">
                             <div>
-                                <div className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Reconciliation Audit</div>
-                                <div className="text-[11px] text-slate-500 mt-1">Flags player-fee reconciliation gaps plus missing/misaligned pitch fee attribution (including SIA home flow checks).</div>
-                                <div className="text-[11px] text-slate-500 mt-1">Legacy match already handled? Use "Settled" to hide it from future scans.</div>
-                                <div className="text-[11px] text-slate-500 mt-1">
+                                <div className={cx(UI_TEXT.eyebrow, 'text-slate-500')}>Reconciliation Audit</div>
+                                <div className="text-[13px] text-slate-600 mt-1 leading-snug">Flags player-fee reconciliation gaps plus missing or misaligned pitch fee attribution, including SIA home-flow checks.</div>
+                                <div className="text-[13px] text-slate-600 mt-1 leading-snug">Legacy match already handled? Use "Settled" to hide it from future scans.</div>
+                                <div className="text-[13px] text-slate-500 mt-2">
                                     {isRescanning
                                         ? `Scanning now... ${auditScanActiveStepLabel} (${auditScanStepIndex + 1}/${REPORT_AUDIT_SCAN_STEPS.length})`
                                         : lastAuditScanAt
@@ -13216,16 +13575,16 @@
                             <button
                                 onClick={runManualRescan}
                                 disabled={isRescanning}
-                                className={`min-h-[40px] px-3 rounded-lg border text-xs font-bold ${isRescanning ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-slate-200 bg-white text-slate-700'}`}
+                                className={getButtonClass('secondary', 'sm')}
                             >
                                 {isRescanning ? 'Scanning...' : 'Rescan'}
                             </button>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-[12px]">
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Scanned: <span className="font-bold text-slate-900">{auditSummary.scanned}</span></div>
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Flagged: <span className={`font-bold ${auditSummary.flagged ? 'text-rose-700' : 'text-emerald-700'}`}>{auditSummary.flagged}</span></div>
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Outstanding: <span className="font-bold text-amber-700">{formatCurrency(auditSummary.outstanding)}</span></div>
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">Over-covered: <span className="font-bold text-rose-700">{formatCurrency(auditSummary.overCollected)}</span></div>
+                        <div className="grid grid-cols-2 gap-2 text-[13px]">
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5">Scanned: <span className="font-bold text-slate-900">{auditSummary.scanned}</span></div>
+                            <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5">Flagged: <span className={`font-bold ${auditSummary.flagged ? 'text-rose-700' : 'text-emerald-700'}`}>{auditSummary.flagged}</span></div>
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5">Outstanding: <span className="font-bold text-amber-800">{formatCurrency(auditSummary.outstanding)}</span></div>
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5">Review delta: <span className="font-bold text-amber-800">{formatCurrency(auditSummary.overCollected)}</span></div>
                         </div>
                         <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
                             <div className="flex items-center justify-between gap-3">
@@ -13282,32 +13641,33 @@
                                     return (
                                     <div
                                         key={`audit-fixture-${row.fixtureId}`}
-                                        className="w-full rounded-lg border border-rose-200 bg-rose-50/30 p-3 text-left"
+                                        className={getSurfaceClass('warning', 'w-full p-3.5 text-left')}
                                     >
                                         <div className="flex items-start justify-between gap-2">
                                             <div className="text-sm font-bold text-slate-900">vs {row.opponent}</div>
                                             <div className="flex flex-col items-end gap-1">
-                                                <div className="text-xs font-bold text-rose-700">{row.issues.length} issue{row.issues.length === 1 ? '' : 's'}</div>
+                                                <div className="text-[12px] font-bold text-amber-800">{row.issues.length} issue{row.issues.length === 1 ? '' : 's'}</div>
                                                 <button
                                                     type="button"
                                                     onClick={() => openAuditSettlementDialog(row, 'hide')}
-                                                    className="min-h-[28px] px-2 rounded-md border border-emerald-200 bg-emerald-50 text-[10px] font-bold text-emerald-700"
+                                                    className={getButtonClass('success', 'xs', 'min-h-[30px] px-2.5 rounded-lg shadow-none')}
                                                 >
                                                     Settled
                                                 </button>
                                             </div>
                                         </div>
-                                        <div className="mt-1 text-[11px] text-slate-600">
+                                        <div className="mt-1 text-[13px] text-slate-600 leading-snug">
                                             {row.date ? new Date(row.date).toLocaleDateString('en-GB') : 'Date TBC'} · Billed {formatCurrency(row.billed)} · Collected {formatCurrency(row.collected)} · Cash {formatCurrency(row.cashPL)}
                                         </div>
-                                        <div className="mt-2 flex flex-wrap gap-1">
+                                        <div className="mt-3 space-y-1.5">
                                             {prioritizedIssues.slice(0, 3).map((issue, idx) => (
-                                                <span key={`audit-issue-${row.fixtureId}-${idx}`} className="px-2 py-1 rounded-full bg-white border border-rose-200 text-[10px] font-semibold text-rose-700">
-                                                    {issue}
-                                                </span>
+                                                <div key={`audit-issue-${row.fixtureId}-${idx}`} className="flex items-start gap-2 rounded-xl border border-white/80 bg-white/90 px-3 py-2">
+                                                    <Icon name="AlertTriangle" size={14} className="mt-0.5 text-amber-600 shrink-0" />
+                                                    <span className="text-[12px] font-semibold text-slate-800">{issue}</span>
+                                                </div>
                                             ))}
                                             {prioritizedIssues.length > 3 && (
-                                                <span className="px-2 py-1 rounded-full bg-white border border-slate-200 text-[10px] font-semibold text-slate-600">
+                                                <span className={getChipClass('neutral')}>
                                                     +{prioritizedIssues.length - 3} more
                                                 </span>
                                             )}
@@ -13315,11 +13675,11 @@
                                         {!!row.issueDetails?.length && (
                                             <div className="mt-3 space-y-2">
                                                 {row.issueDetails.slice(0, 2).map((detail, detailIdx) => (
-                                                    <div key={`audit-detail-${row.fixtureId}-${detail.type || detailIdx}`} className="rounded-lg border border-amber-200 bg-white/80 p-2">
-                                                        <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700">{detail.title}</div>
+                                                    <div key={`audit-detail-${row.fixtureId}-${detail.type || detailIdx}`} className="rounded-xl border border-slate-200 bg-white p-3">
+                                                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{detail.title}</div>
                                                         <div className="mt-1 space-y-1">
                                                             {(detail.items || []).slice(0, 3).map((item, itemIdx) => (
-                                                                <div key={`audit-detail-item-${row.fixtureId}-${detailIdx}-${itemIdx}`} className="text-[10px] text-slate-700">
+                                                                <div key={`audit-detail-item-${row.fixtureId}-${detailIdx}-${itemIdx}`} className="text-[12px] text-slate-700 leading-snug">
                                                                     {item}
                                                                 </div>
                                                             ))}
@@ -13328,11 +13688,11 @@
                                                 ))}
                                             </div>
                                         )}
-                                        <div className="mt-3">
+                                        <div className="mt-3 flex gap-2">
                                             <button
                                                 type="button"
                                                 onClick={() => openAuditFixture(row)}
-                                                className="w-full min-h-[36px] rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-700"
+                                                className={getButtonClass('secondary', 'sm', 'w-full')}
                                             >
                                                 Open game
                                             </button>
@@ -13343,7 +13703,7 @@
                                 {hiddenAuditRowsCount > 0 && (
                                     <button
                                         onClick={() => setShowAllAuditRows(prev => !prev)}
-                                        className="w-full min-h-[42px] rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-700"
+                                        className={getButtonClass('secondary', 'sm', 'w-full')}
                                     >
                                         {showAllAuditRows ? 'Show fewer flagged fixtures' : `Show ${hiddenAuditRowsCount} more flagged fixture${hiddenAuditRowsCount === 1 ? '' : 's'}`}
                                     </button>
@@ -14189,7 +14549,7 @@
                         title="Opponent Intel"
                         subtitle="Head-to-head trends, danger players, and a win snapshot."
                         actions={(
-                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
                                 Back to More
                             </button>
                         )}
@@ -14439,7 +14799,7 @@
                         title="Sponsors & Revenue"
                         subtitle="Deals, schedules, outstanding invoices, and ROI."
                         actions={(
-                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
                                 Back to More
                             </button>
                         )}
@@ -14561,6 +14921,8 @@
                             </div>
                         )}
                     </Modal>
+
+                    <ConfirmationModal dialog={playerConfirmDialog} onClose={closePlayerConfirmation} />
                 </div>
             );
         };
@@ -14749,7 +15111,7 @@
                         title="Audit & Controls"
                         subtitle="Change log, reconciliation health, and backup integrity."
                         actions={(
-                            <button onClick={() => onNavigate('more')} className="min-h-[42px] px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700">
+                            <button onClick={() => onNavigate('more')} className={getButtonClass('secondary', 'sm')}>
                                 Back to More
                             </button>
                         )}
@@ -14829,6 +15191,16 @@
 
         const Opponents = ({ opponents, setOpponents, venues, setVenues, referees, setReferees, onNavigate, initialView = 'opponents', lockView = false }) => {
             const normalizedInitialView = initialView === 'venues' ? 'venues' : 'opponents';
+            const {
+                confirmDialog: intelConfirmDialog,
+                requestConfirmation: requestIntelConfirmation,
+                closeConfirmation: closeIntelConfirmation,
+                textPrompt: intelTextPrompt,
+                textPromptValue: intelTextPromptValue,
+                setTextPromptValue: setIntelTextPromptValue,
+                requestTextPrompt: requestIntelTextPrompt,
+                closeTextPrompt: closeIntelTextPrompt
+            } = useModalDialogs();
             const [newOpponent, setNewOpponent] = useState({ name: '', contact: '', phone: '', payee: '' });
             const [isAddOpponentOpen, setIsAddOpponentOpen] = useState(false);
             const [isAddVenueOpen, setIsAddVenueOpen] = useState(false);
@@ -15124,7 +15496,12 @@
                     openOpponentSheet(match);
                     return;
                 }
-                if (!confirm(`"${cleanName}" isn't in Opponents yet. Add it now?`)) return;
+                const approved = await requestIntelConfirmation({
+                    title: 'Add opponent',
+                    description: `"${cleanName}" is not in Opponents yet. Add it now and open the sheet?`,
+                    confirmLabel: 'Add opponent'
+                });
+                if (!approved) return;
                 try {
                     await waitForDb();
                     const payload = { name: cleanName, contact: '', phone: '', payee: '' };
@@ -15316,7 +15693,12 @@
                 };
                 const duplicate = opponents.find(o => o.id !== selectedOpponent.id && (o.name || '').trim().toLowerCase() === cleanName.toLowerCase());
                 if (duplicate) {
-                    if (!confirm(`"${cleanName}" already exists. Update this opponent anyway?`)) return;
+                    const approved = await requestIntelConfirmation({
+                        title: 'Update existing opponent name',
+                        description: `"${cleanName}" already exists. Save this opponent anyway?`,
+                        confirmLabel: 'Save anyway'
+                    });
+                    if (!approved) return;
                 }
                 clearOpponentSaveTimer();
                 setOpponentSaveStatus('saving');
@@ -15408,10 +15790,38 @@
             };
 
             const editVenue = async (venue) => {
-                const name = prompt('Edit venue name', venue.name) || venue.name;
-                const notes = prompt('Edit notes', venue.notes || '') ?? venue.notes;
-                const payee = prompt('Edit payee', venue.payee || '') ?? venue.payee;
-                const contact = prompt('Edit contact', venue.contact || '') ?? venue.contact;
+                const name = await requestIntelTextPrompt({
+                    title: 'Edit venue',
+                    description: 'Update the venue name.',
+                    placeholder: 'Venue name',
+                    initialValue: venue.name || '',
+                    confirmLabel: 'Next'
+                });
+                if (name === null) return;
+                const notes = await requestIntelTextPrompt({
+                    title: 'Edit venue',
+                    description: 'Update venue notes.',
+                    placeholder: 'Notes',
+                    initialValue: venue.notes || '',
+                    confirmLabel: 'Next'
+                });
+                if (notes === null) return;
+                const payee = await requestIntelTextPrompt({
+                    title: 'Edit venue',
+                    description: 'Update payee.',
+                    placeholder: 'Payee',
+                    initialValue: venue.payee || '',
+                    confirmLabel: 'Next'
+                });
+                if (payee === null) return;
+                const contact = await requestIntelTextPrompt({
+                    title: 'Edit venue',
+                    description: 'Update contact details.',
+                    placeholder: 'Contact',
+                    initialValue: venue.contact || '',
+                    confirmLabel: 'Save venue'
+                });
+                if (contact === null) return;
                 await db.venues.update(venue.id, { name, notes, payee, contact });
                 setVenues(venues.map(v => v.id === venue.id ? { ...v, name, notes, payee, contact } : v));
             };
@@ -15434,7 +15844,12 @@
                 };
                 const duplicate = venues.find(v => v.id !== selectedVenue.id && (v.name || '').trim().toLowerCase() === cleanName.toLowerCase());
                 if (duplicate) {
-                    if (!confirm(`"${cleanName}" already exists. Update this venue anyway?`)) return;
+                    const approved = await requestIntelConfirmation({
+                        title: 'Update existing venue name',
+                        description: `"${cleanName}" already exists. Save this venue anyway?`,
+                        confirmLabel: 'Save anyway'
+                    });
+                    if (!approved) return;
                 }
                 clearVenueSaveTimer();
                 setVenueSaveStatus('saving');
@@ -15827,15 +16242,19 @@
                     />
 
                     {!lockView && (
-                        <div className="bg-white p-2 rounded-2xl border border-slate-100 flex gap-2 text-sm font-bold">
-                            <button onClick={() => setViewTab('opponents')} className={`flex-1 py-2 rounded-xl ${viewTab === 'opponents' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Opponents</button>
-                            <button onClick={() => setViewTab('venues')} className={`flex-1 py-2 rounded-xl ${viewTab === 'venues' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-700'}`}>Venues</button>
+                        <div className={getSurfaceClass('intel', 'p-2 flex gap-2 text-sm font-bold')}>
+                            <button onClick={() => setViewTab('opponents')} className={getSegmentedButtonClass(viewTab === 'opponents', 'flex-1 py-2')}>
+                                Opponents
+                            </button>
+                            <button onClick={() => setViewTab('venues')} className={getSegmentedButtonClass(viewTab === 'venues', 'flex-1 py-2')}>
+                                Venues
+                            </button>
                         </div>
                     )}
 
                     {viewTab === 'opponents' && (
                         <div className="space-y-4">
-                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                            <div className={getSurfaceClass('intel', 'p-5 space-y-4')}>
                                 <div className="flex items-center justify-between">
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">League Table</div>
                                 </div>
@@ -15935,13 +16354,13 @@
                                     </div>
                                 </div>
                             </div>
-                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                            <div className={getSurfaceClass('intel', 'p-5 space-y-4')}>
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Opponents</div>
                                         <div className="text-[11px] text-slate-500">Tap a team to open details.</div>
                                     </div>
-                                    <button onClick={() => setIsAddOpponentOpen(true)} className="bg-slate-900 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1">
+                                    <button onClick={() => setIsAddOpponentOpen(true)} className={getButtonClass('primary', 'sm')}>
                                         <Icon name="Plus" size={14} /> Add Opponent
                                     </button>
                                 </div>
@@ -15954,7 +16373,7 @@
                                         return (
                                             <button key={o.id} onClick={() => openOpponentSheet(o)} className="w-full text-left p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
                                                 <div className="flex items-center gap-3">
-                                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-600 font-display font-bold text-sm border border-white shadow-inner">
+                                                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-100 to-sky-100 flex items-center justify-center text-slate-700 font-display font-bold text-sm border border-white shadow-inner">
                                                         {initials || 'OP'}
                                                     </div>
                                                     <div>
@@ -15977,13 +16396,13 @@
 
                     {viewTab === 'venues' && (
                         <div className="space-y-4">
-                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                            <div className={getSurfaceClass('intel', 'p-5 space-y-4')}>
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Venues</div>
                                         <div className="text-[11px] text-slate-500">Tap a venue to view details, history, and the map.</div>
                                     </div>
-                                    <button onClick={() => { setIsAddVenueOpen(true); setNewVenue({ ...emptyVenueForm }); }} className="bg-slate-900 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1">
+                                    <button onClick={() => { setIsAddVenueOpen(true); setNewVenue({ ...emptyVenueForm }); }} className={getButtonClass('primary', 'sm')}>
                                         <Icon name="Plus" size={14} /> Add Venue
                                     </button>
                                 </div>
@@ -16047,7 +16466,7 @@
                                     )}
                                 </div>
                             </div>
-                            <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                            <div className={getSurfaceClass('intel', 'p-5 space-y-4')}>
                                 <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Venue League Table</div>
                                 <div className="overflow-x-auto">
                                     <table className="min-w-full text-[11px]">
@@ -16204,29 +16623,29 @@
                             <input
                                 required
                                 placeholder="Opponent name"
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                className={FORM_CONTROL_CLASS}
                                 value={newOpponent.name}
                                 onChange={e => setNewOpponent({ ...newOpponent, name: e.target.value })}
                             />
                             <input
                                 placeholder="Payee / bank"
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                className={FORM_CONTROL_CLASS}
                                 value={newOpponent.payee}
                                 onChange={e => setNewOpponent({ ...newOpponent, payee: e.target.value })}
                             />
                             <input
                                 placeholder="Contact name/email"
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                className={FORM_CONTROL_CLASS}
                                 value={newOpponent.contact}
                                 onChange={e => setNewOpponent({ ...newOpponent, contact: e.target.value })}
                             />
                             <input
                                 placeholder="Phone number"
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium outline-none"
+                                className={FORM_CONTROL_CLASS}
                                 value={newOpponent.phone}
                                 onChange={e => setNewOpponent({ ...newOpponent, phone: e.target.value })}
                             />
-                            <button type="submit" className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl">
+                            <button type="submit" className={getButtonClass('primary', 'lg', 'w-full')}>
                                 Add Opponent
                             </button>
                         </form>
@@ -16235,10 +16654,10 @@
                     <Modal isOpen={!!selectedVenue} onClose={closeVenueSheet} title={venueDisplayName}>
                         {selectedVenue && (
                             <div className="space-y-4">
-                                <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 text-white p-4 shadow-soft space-y-1">
+                                <div className="rounded-[28px] bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950 text-white p-5 shadow-soft space-y-2">
                                     <div className="text-2xl font-display font-bold">{venueDisplayName}</div>
-                                    {selectedVenue.address && <div className="text-[11px] text-white/70">{selectedVenue.address}</div>}
-                                    <div className="text-[11px] text-white/70">Games {venueStats.total} · Record W{venueStats.wins} D{venueStats.draws} L{venueStats.losses}</div>
+                                    {selectedVenue.address && <div className="text-[12px] text-white/75">{selectedVenue.address}</div>}
+                                    <div className="text-[12px] text-white/75">Games {venueStats.total} · Record W{venueStats.wins} D{venueStats.draws} L{venueStats.losses}</div>
                                     {venueStats.lastPlayed && (
                                         <div className="text-[11px] text-white/60 mt-1">
                                             Last played {new Date(venueStats.lastPlayed.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · {getFixtureForfeitLabel(venueStats.lastPlayed) || `Exiles ${venueStats.lastPlayed.homeScore ?? '-'}-${venueStats.lastPlayed.awayScore ?? '-'}`} vs {venueStats.lastPlayed.opponent || 'Opponent'}
@@ -16252,9 +16671,9 @@
                                     {selectedVenueFacts?.opponents?.length ? (
                                         <div className="flex flex-wrap gap-1 pt-1">
                                             {selectedVenueFacts.opponents.slice(0, 4).map(n => (
-                                                <span key={n} className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 border border-white/20">{n}</span>
+                                                <span key={n} className="text-[11px] px-2 py-1 rounded-full bg-white/10 border border-white/20">{n}</span>
                                             ))}
-                                            {selectedVenueFacts.opponents.length > 4 && <span className="text-[10px] text-white/70">+{selectedVenueFacts.opponents.length - 4} more</span>}
+                                            {selectedVenueFacts.opponents.length > 4 && <span className="text-[11px] text-white/70">+{selectedVenueFacts.opponents.length - 4} more</span>}
                                         </div>
                                     ) : null}
                                 </div>
@@ -16273,78 +16692,78 @@
                                 )}
                                 <div className="flex flex-wrap gap-2">
                                     {venueMapSearchUrl && (
-                                        <a href={venueMapSearchUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                                        <a href={venueMapSearchUrl} target="_blank" rel="noopener noreferrer" className={cx(getButtonClass('secondary', 'sm'), 'no-underline')}>
                                             <Icon name="MapPin" size={14} /> Open in Google Maps
                                         </a>
                                     )}
-                                    <button onClick={() => shareVenueToWhatsApp(selectedVenue)} className="text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg px-3 py-2 flex items-center gap-2">
+                                    <button onClick={() => shareVenueToWhatsApp(selectedVenue)} className={getButtonClass('success', 'sm')}>
                                         <Icon name="Send" size={14} /> Share address (WhatsApp)
                                     </button>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-2">
-                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
-                                        <div className="text-[10px] font-bold uppercase text-slate-500">Games</div>
+                                    <div className={getSurfaceClass('intel', 'p-3 space-y-1')}>
+                                        <div className="text-[11px] font-bold uppercase text-slate-500">Games</div>
                                         <div className="text-xl font-display font-bold text-slate-900">{venueStats.total}</div>
-                                        <div className="text-[11px] text-slate-500">Played {venueStats.played}</div>
+                                        <div className="text-[12px] text-slate-500">Played {venueStats.played}</div>
                                     </div>
-                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
-                                        <div className="text-[10px] font-bold uppercase text-slate-500">Record</div>
+                                    <div className={getSurfaceClass('intel', 'p-3 space-y-1')}>
+                                        <div className="text-[11px] font-bold uppercase text-slate-500">Record</div>
                                         <div className="text-xl font-display font-bold text-slate-900">{venueStats.wins}-{venueStats.draws}-{venueStats.losses}</div>
-                                        <div className="text-[11px] text-slate-500">W-D-L</div>
+                                        <div className="text-[12px] text-slate-500">W-D-L</div>
                                     </div>
-                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
-                                        <div className="text-[10px] font-bold uppercase text-slate-500">Venue</div>
+                                    <div className={getSurfaceClass('intel', 'p-3 space-y-1')}>
+                                        <div className="text-[11px] font-bold uppercase text-slate-500">Venue</div>
                                         <div className="text-xl font-display font-bold text-slate-900">{selectedVenue.price !== undefined && selectedVenue.price !== null && selectedVenue.price !== '' ? formatCurrency(Number(selectedVenue.price) || 0) : 'No default fee'}</div>
-                                        <div className="text-[11px] text-slate-500">
+                                        <div className="text-[12px] text-slate-500">
                                             {selectedVenueHomeTeam ? `Home: ${selectedVenueHomeTeam.name}` : 'No home team set'}
                                         </div>
                                     </div>
-                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
-                                        <div className="text-[10px] font-bold uppercase text-slate-500">Outstanding</div>
+                                    <div className={getSurfaceClass('intel', 'p-3 space-y-1')}>
+                                        <div className="text-[11px] font-bold uppercase text-slate-500">Outstanding</div>
                                         <div className={`text-xl font-display font-bold ${venueOutstandingTone}`}>{formatCurrency(venuePaymentSummary.netOutstanding)}</div>
-                                        <div className="text-[11px] text-slate-500">Recv {formatCurrency(venuePaymentSummary.outstandingReceivable)} · Pay {formatCurrency(Math.abs(venuePaymentSummary.outstandingPayable))}</div>
+                                        <div className="text-[12px] text-slate-500">Recv {formatCurrency(venuePaymentSummary.outstandingReceivable)} · Pay {formatCurrency(Math.abs(venuePaymentSummary.outstandingPayable))}</div>
                                     </div>
                                 </div>
 
                                 <div className="grid sm:grid-cols-2 gap-4">
-                                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                    <div className={getSurfaceClass('intel', 'p-4 space-y-3')}>
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Edit Details</div>
-                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Venue name" value={venueForm.name} onChange={e => setVenueForm(prev => ({ ...prev, name: e.target.value }))} />
-                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Address" value={venueForm.address} onChange={e => setVenueForm(prev => ({ ...prev, address: e.target.value }))} />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Venue name" value={venueForm.name} onChange={e => setVenueForm(prev => ({ ...prev, name: e.target.value }))} />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Address" value={venueForm.address} onChange={e => setVenueForm(prev => ({ ...prev, address: e.target.value }))} />
                                         <div className="flex justify-end">
-                                            <button onClick={() => lookupAddressFromOsm('existing')} className="text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-2" type="button">
+                                            <button onClick={() => lookupAddressFromOsm('existing')} className={getButtonClass('secondary', 'sm')} type="button">
                                                 {isAddressLookupRunning ? 'Looking…' : 'Auto-fill (OpenStreetMap)'}
                                             </button>
                                         </div>
-                                        {addressLookupMessage && <div className="text-[11px] text-slate-500">{addressLookupMessage}</div>}
-                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" type="number" placeholder="Pitch price" value={venueForm.price ?? ''} onChange={e => setVenueForm(prev => ({ ...prev, price: e.target.value }))} />
-                                        <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" value={venueForm.homeTeamId ?? ''} onChange={e => setVenueForm(prev => ({ ...prev, homeTeamId: e.target.value ? Number(e.target.value) : null }))}>
+                                        {addressLookupMessage && <div className="text-[12px] text-slate-500">{addressLookupMessage}</div>}
+                                        <input className={FORM_CONTROL_CLASS} type="number" placeholder="Pitch price" value={venueForm.price ?? ''} onChange={e => setVenueForm(prev => ({ ...prev, price: e.target.value }))} />
+                                        <select className={FORM_CONTROL_CLASS} value={venueForm.homeTeamId ?? ''} onChange={e => setVenueForm(prev => ({ ...prev, homeTeamId: e.target.value ? Number(e.target.value) : null }))}>
                                             <option value="">Home team (optional)</option>
                                             {opponents.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                                         </select>
-                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Payee / bank" value={venueForm.payee} onChange={e => setVenueForm(prev => ({ ...prev, payee: e.target.value }))} />
-                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Contact name/email" value={venueForm.contact} onChange={e => setVenueForm(prev => ({ ...prev, contact: e.target.value }))} />
-                                        <textarea className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm min-h-[80px]" placeholder="Notes about the venue" value={venueForm.notes} onChange={e => setVenueForm(prev => ({ ...prev, notes: e.target.value }))} />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Payee / bank" value={venueForm.payee} onChange={e => setVenueForm(prev => ({ ...prev, payee: e.target.value }))} />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Contact name/email" value={venueForm.contact} onChange={e => setVenueForm(prev => ({ ...prev, contact: e.target.value }))} />
+                                        <textarea className={cx(FORM_CONTROL_CLASS, 'min-h-[96px]')} placeholder="Notes about the venue" value={venueForm.notes} onChange={e => setVenueForm(prev => ({ ...prev, notes: e.target.value }))} />
                                         <div className="flex items-center gap-2">
-                                            <button onClick={handleVenueDelete} className="flex-1 bg-rose-50 text-rose-700 font-bold py-2 rounded-lg border border-rose-200">Delete</button>
-                                            <button onClick={saveVenueDetails} disabled={!venueIsDirty || venueSaveStatus === 'saving'} className={`flex-1 font-bold py-2 rounded-lg ${venueIsDirty ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'} disabled:opacity-60`}>
+                                            <button onClick={handleVenueDelete} className={getButtonClass('danger', 'md', 'flex-1')}>Delete</button>
+                                            <button onClick={saveVenueDetails} disabled={!venueIsDirty || venueSaveStatus === 'saving'} className={getButtonClass((venueIsDirty && venueSaveStatus !== 'saving') ? 'primary' : 'subtle', 'md', 'flex-1')}>
                                                 {venueSaveStatus === 'saving' ? 'Saving...' : 'Save'}
                                             </button>
                                         </div>
                                         {venueSaveLabel && (
-                                            <div className={`text-[11px] font-bold ${venueSaveTone}`}>{venueSaveLabel}</div>
+                                            <div className={`text-[12px] font-bold ${venueSaveTone}`}>{venueSaveLabel}</div>
                                         )}
                                     </div>
-                                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                    <div className={getSurfaceClass('intel', 'p-4 space-y-3')}>
                                         <div className="flex items-center justify-between">
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments</div>
-                                            {isVenueLoading && <div className="text-[10px] text-slate-400">Loading...</div>}
+                                            {isVenueLoading && <div className="text-[11px] text-slate-400">Loading...</div>}
                                         </div>
-                                        <div className="flex flex-wrap gap-2 text-[11px]">
-                                            <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold">Receivable: {formatCurrency(venuePaymentSummary.outstandingReceivable)}</span>
-                                            <span className="px-2 py-1 rounded-full bg-rose-50 text-rose-700 font-bold">Payable: {formatCurrency(Math.abs(venuePaymentSummary.outstandingPayable))}</span>
-                                            <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 font-bold">Net: {formatCurrency(venuePaymentSummary.netOutstanding)}</span>
+                                        <div className="flex flex-wrap gap-2 text-[12px]">
+                                            <span className={getChipClass('success')}>Receivable: {formatCurrency(venuePaymentSummary.outstandingReceivable)}</span>
+                                            <span className={getChipClass('danger')}>Payable: {formatCurrency(Math.abs(venuePaymentSummary.outstandingPayable))}</span>
+                                            <span className={getChipClass('neutral')}>Net: {formatCurrency(venuePaymentSummary.netOutstanding)}</span>
                                         </div>
                                         <div className="space-y-2 pr-1">
                                             {venueTransactions.length ? venueTransactions.slice(0, 8).map(tx => {
@@ -16370,14 +16789,14 @@
                                                         : 'bg-rose-50 text-rose-700 border-rose-100';
                                                 return (
                                                     <div key={tx.id} className="flex justify-between items-start gap-2 p-3 rounded-xl border border-slate-100 bg-slate-50">
-                                                        <div>
+                                                        <div className="min-w-0">
                                                             <div className="text-xs font-bold text-slate-900">{label}</div>
-                                                            {meta && <div className="text-[10px] text-slate-500">{meta}</div>}
-                                                            {!meta && dateLabel && <div className="text-[10px] text-slate-500">{dateLabel}</div>}
+                                                            {meta && <div className="text-[11px] text-slate-500">{meta}</div>}
+                                                            {!meta && dateLabel && <div className="text-[11px] text-slate-500">{dateLabel}</div>}
                                                         </div>
                                                         <div className="flex flex-col items-end gap-1">
                                                             <div className={`text-xs font-bold ${tone}`}>{amountLabel}</div>
-                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeTone}`}>
+                                                            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${badgeTone}`}>
                                                                 {tx.isReconciled ? 'Settled' : (tx.amount > 0 ? 'Receivable' : 'Payable')}
                                                             </span>
                                                         </div>
@@ -16390,10 +16809,12 @@
                                     </div>
                                 </div>
 
-                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                <div className={getSurfaceClass('intel', 'p-4 space-y-3')}>
                                     <div className="flex items-center justify-between">
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Games & Schedule</div>
-                                        <button onClick={() => jumpToVenueGames(selectedVenue.name)} className="text-[11px] text-brand-600 underline">Open games</button>
+                                        <button onClick={() => jumpToVenueGames(selectedVenue.name)} className={getButtonClass('secondary', 'xs')}>
+                                            Open games
+                                        </button>
                                     </div>
                                     <div className="space-y-2 pr-1">
                                         {venueFixtures.length ? venueFixtures.map(f => {
@@ -16411,7 +16832,7 @@
                                                 <div key={f.id} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-white">
                                                     <div>
                                                         <div className="text-xs font-bold text-slate-900">{dateLabel} · {(f.competitionType || 'LEAGUE').replace('_',' ')}</div>
-                                                        <div className="text-[11px] text-slate-500">{f.opponent || 'Opponent TBC'}</div>
+                                                        <div className="text-[12px] text-slate-500">{f.opponent || 'Opponent TBC'}</div>
                                                     </div>
                                                     <div className="text-right">
                                                         {hasScore || outcome.isForfeit ? (
@@ -16419,10 +16840,10 @@
                                                                 <div className="text-sm font-bold text-slate-900">
                                                                     {hasScore ? `Exiles ${f.homeScore}-${f.awayScore}` : forfeitLabel}
                                                                 </div>
-                                                                <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${resultTone}`}>{result}</span>
+                                                                <span className={`inline-block mt-1 text-[11px] font-bold px-2 py-0.5 rounded-full border ${resultTone}`}>{result}</span>
                                                             </>
                                                         ) : (
-                                                            <div className="text-[11px] text-slate-400">Score TBC</div>
+                                                            <div className="text-[12px] text-slate-400">Score TBC</div>
                                                         )}
                                                     </div>
                                                 </div>
@@ -16439,10 +16860,10 @@
                     <Modal isOpen={!!selectedOpponent} onClose={closeOpponentSheet} title={opponentDisplayName}>
                         {selectedOpponent && (
                             <div className="space-y-4">
-                                <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 text-white p-4 shadow-soft">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-white/60">Opponent Sheet</div>
+                                <div className="rounded-[28px] bg-gradient-to-br from-slate-950 via-slate-900 to-violet-950 text-white p-5 shadow-soft space-y-2">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-white/60">Opponent Sheet</div>
                                     <div className="text-2xl font-display font-bold">{opponentDisplayName}</div>
-                                    <div className="text-[11px] text-white/70">Games {opponentStats.total} · Record W{opponentStats.wins} D{opponentStats.draws} L{opponentStats.losses}</div>
+                                    <div className="text-[12px] text-white/75">Games {opponentStats.total} · Record W{opponentStats.wins} D{opponentStats.draws} L{opponentStats.losses}</div>
                                     {opponentStats.lastPlayed && (
                                         <div className="text-[11px] text-white/60 mt-1">
                                             Last played {new Date(opponentStats.lastPlayed.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} · {getFixtureForfeitLabel(opponentStats.lastPlayed) || `Exiles ${opponentStats.lastPlayed.homeScore ?? '-'}-${opponentStats.lastPlayed.awayScore ?? '-'}`}
@@ -16456,54 +16877,54 @@
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-2">
-                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
-                                        <div className="text-[10px] font-bold uppercase text-slate-500">Games</div>
+                                    <div className={getSurfaceClass('intel', 'p-3 space-y-1')}>
+                                        <div className="text-[11px] font-bold uppercase text-slate-500">Games</div>
                                         <div className="text-xl font-display font-bold text-slate-900">{opponentStats.total}</div>
-                                        <div className="text-[11px] text-slate-500">Played {opponentStats.played}</div>
+                                        <div className="text-[12px] text-slate-500">Played {opponentStats.played}</div>
                                     </div>
-                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
-                                        <div className="text-[10px] font-bold uppercase text-slate-500">Record</div>
+                                    <div className={getSurfaceClass('intel', 'p-3 space-y-1')}>
+                                        <div className="text-[11px] font-bold uppercase text-slate-500">Record</div>
                                         <div className="text-xl font-display font-bold text-slate-900">{opponentStats.wins}-{opponentStats.draws}-{opponentStats.losses}</div>
-                                        <div className="text-[11px] text-slate-500">W-D-L</div>
+                                        <div className="text-[12px] text-slate-500">W-D-L</div>
                                     </div>
-                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
-                                        <div className="text-[10px] font-bold uppercase text-slate-500">Goals</div>
+                                    <div className={getSurfaceClass('intel', 'p-3 space-y-1')}>
+                                        <div className="text-[11px] font-bold uppercase text-slate-500">Goals</div>
                                         <div className="text-xl font-display font-bold text-slate-900">{opponentStats.goalsFor}</div>
-                                        <div className="text-[11px] text-slate-500">For · {opponentStats.goalsAgainst} Against</div>
+                                        <div className="text-[12px] text-slate-500">For · {opponentStats.goalsAgainst} Against</div>
                                     </div>
-                                    <div className="bg-white p-3 rounded-xl border border-slate-100">
-                                        <div className="text-[10px] font-bold uppercase text-slate-500">Outstanding</div>
+                                    <div className={getSurfaceClass('intel', 'p-3 space-y-1')}>
+                                        <div className="text-[11px] font-bold uppercase text-slate-500">Outstanding</div>
                                         <div className={`text-xl font-display font-bold ${opponentOutstandingTone}`}>{formatCurrency(opponentPaymentSummary.netOutstanding)}</div>
-                                        <div className="text-[11px] text-slate-500">Recv {formatCurrency(opponentPaymentSummary.outstandingReceivable)} · Pay {formatCurrency(Math.abs(opponentPaymentSummary.outstandingPayable))}</div>
+                                        <div className="text-[12px] text-slate-500">Recv {formatCurrency(opponentPaymentSummary.outstandingReceivable)} · Pay {formatCurrency(Math.abs(opponentPaymentSummary.outstandingPayable))}</div>
                                     </div>
                                 </div>
 
                                 <div className="grid sm:grid-cols-2 gap-4">
-                                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                    <div className={getSurfaceClass('intel', 'p-4 space-y-3')}>
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Edit Details</div>
-                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Opponent name" value={opponentForm.name} onChange={e => setOpponentForm(prev => ({ ...prev, name: e.target.value }))} />
-                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Payee / bank" value={opponentForm.payee} onChange={e => setOpponentForm(prev => ({ ...prev, payee: e.target.value }))} />
-                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Contact name/email" value={opponentForm.contact} onChange={e => setOpponentForm(prev => ({ ...prev, contact: e.target.value }))} />
-                                        <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Phone number" value={opponentForm.phone} onChange={e => setOpponentForm(prev => ({ ...prev, phone: e.target.value }))} />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Opponent name" value={opponentForm.name} onChange={e => setOpponentForm(prev => ({ ...prev, name: e.target.value }))} />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Payee / bank" value={opponentForm.payee} onChange={e => setOpponentForm(prev => ({ ...prev, payee: e.target.value }))} />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Contact name/email" value={opponentForm.contact} onChange={e => setOpponentForm(prev => ({ ...prev, contact: e.target.value }))} />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Phone number" value={opponentForm.phone} onChange={e => setOpponentForm(prev => ({ ...prev, phone: e.target.value }))} />
                                         <div className="flex items-center gap-2">
-                                            <button onClick={handleOpponentDelete} className="flex-1 bg-rose-50 text-rose-700 font-bold py-2 rounded-lg border border-rose-200">Delete</button>
-                                            <button onClick={saveOpponentDetails} disabled={!opponentIsDirty || opponentSaveStatus === 'saving'} className={`flex-1 font-bold py-2 rounded-lg ${opponentIsDirty ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'} disabled:opacity-60`}>
+                                            <button onClick={handleOpponentDelete} className={getButtonClass('danger', 'md', 'flex-1')}>Delete</button>
+                                            <button onClick={saveOpponentDetails} disabled={!opponentIsDirty || opponentSaveStatus === 'saving'} className={getButtonClass((opponentIsDirty && opponentSaveStatus !== 'saving') ? 'primary' : 'subtle', 'md', 'flex-1')}>
                                                 {opponentSaveStatus === 'saving' ? 'Saving...' : 'Save'}
                                             </button>
                                         </div>
                                         {opponentSaveLabel && (
-                                            <div className={`text-[11px] font-bold ${opponentSaveTone}`}>{opponentSaveLabel}</div>
+                                            <div className={`text-[12px] font-bold ${opponentSaveTone}`}>{opponentSaveLabel}</div>
                                         )}
                                     </div>
-                                    <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                    <div className={getSurfaceClass('intel', 'p-4 space-y-3')}>
                                         <div className="flex items-center justify-between">
                                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments</div>
-                                            {isOpponentLoading && <div className="text-[10px] text-slate-400">Loading...</div>}
+                                            {isOpponentLoading && <div className="text-[11px] text-slate-400">Loading...</div>}
                                         </div>
-                                        <div className="flex flex-wrap gap-2 text-[11px]">
-                                            <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold">Receivable: {formatCurrency(opponentPaymentSummary.outstandingReceivable)}</span>
-                                            <span className="px-2 py-1 rounded-full bg-rose-50 text-rose-700 font-bold">Payable: {formatCurrency(Math.abs(opponentPaymentSummary.outstandingPayable))}</span>
-                                            <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 font-bold">Net: {formatCurrency(opponentPaymentSummary.netOutstanding)}</span>
+                                        <div className="flex flex-wrap gap-2 text-[12px]">
+                                            <span className={getChipClass('success')}>Receivable: {formatCurrency(opponentPaymentSummary.outstandingReceivable)}</span>
+                                            <span className={getChipClass('danger')}>Payable: {formatCurrency(Math.abs(opponentPaymentSummary.outstandingPayable))}</span>
+                                            <span className={getChipClass('neutral')}>Net: {formatCurrency(opponentPaymentSummary.netOutstanding)}</span>
                                         </div>
                                         <div className="space-y-2 pr-1">
                                             {opponentTransactions.length ? opponentTransactions.slice(0, 8).map(tx => {
@@ -16528,14 +16949,14 @@
                                                         : 'bg-rose-50 text-rose-700 border-rose-100';
                                                 return (
                                                     <div key={tx.id} className="flex justify-between items-start gap-2 p-3 rounded-xl border border-slate-100 bg-slate-50">
-                                                        <div>
+                                                        <div className="min-w-0">
                                                             <div className="text-xs font-bold text-slate-900">{label}</div>
-                                                            {meta && <div className="text-[10px] text-slate-500">{meta}</div>}
-                                                            {!meta && dateLabel && <div className="text-[10px] text-slate-500">{dateLabel}</div>}
+                                                            {meta && <div className="text-[11px] text-slate-500">{meta}</div>}
+                                                            {!meta && dateLabel && <div className="text-[11px] text-slate-500">{dateLabel}</div>}
                                                         </div>
                                                         <div className="flex flex-col items-end gap-1">
                                                             <div className={`text-xs font-bold ${tone}`}>{amountLabel}</div>
-                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeTone}`}>
+                                                            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${badgeTone}`}>
                                                                 {tx.isReconciled ? 'Settled' : (tx.amount > 0 ? 'Receivable' : 'Payable')}
                                                             </span>
                                                         </div>
@@ -16548,10 +16969,12 @@
                                     </div>
                                 </div>
 
-                                <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                                <div className={getSurfaceClass('intel', 'p-4 space-y-3')}>
                                     <div className="flex items-center justify-between">
                                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Games & Scores</div>
-                                        <button onClick={() => jumpToOpponentGames(selectedOpponent.name)} className="text-[11px] text-brand-600 underline">Open games</button>
+                                        <button onClick={() => jumpToOpponentGames(selectedOpponent.name)} className={getButtonClass('secondary', 'xs')}>
+                                            Open games
+                                        </button>
                                     </div>
                                     <div className="space-y-2 pr-1">
                                         {opponentFixtures.length ? opponentFixtures.slice(0, 8).map(f => {
@@ -16569,7 +16992,7 @@
                                                 <div key={f.id} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-white">
                                                     <div>
                                                         <div className="text-xs font-bold text-slate-900">{dateLabel} · {(f.competitionType || 'LEAGUE').replace('_',' ')}</div>
-                                                        <div className="text-[11px] text-slate-500">{f.venue || 'Venue TBC'}</div>
+                                                        <div className="text-[12px] text-slate-500">{f.venue || 'Venue TBC'}</div>
                                                     </div>
                                                     <div className="text-right">
                                                         {hasScore || outcome.isForfeit ? (
@@ -16577,10 +17000,10 @@
                                                                 <div className="text-sm font-bold text-slate-900">
                                                                     {hasScore ? `Exiles ${f.homeScore}-${f.awayScore}` : forfeitLabel}
                                                                 </div>
-                                                                <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${resultTone}`}>{result}</span>
+                                                                <span className={`inline-block mt-1 text-[11px] font-bold px-2 py-0.5 rounded-full border ${resultTone}`}>{result}</span>
                                                             </>
                                                         ) : (
-                                                            <div className="text-[11px] text-slate-400">Score TBC</div>
+                                                            <div className="text-[12px] text-slate-400">Score TBC</div>
                                                         )}
                                                     </div>
                                                 </div>
@@ -16597,7 +17020,7 @@
                     <Modal isOpen={reassignEntity.open} onClose={() => setReassignEntity({ open:false, type:'', item:null, count:0 })} title={`Reassign ${reassignEntity.type === 'venue' ? 'Venue' : 'Opponent'}`}>
                         <div className="space-y-3">
                             <div className="text-sm text-slate-600">"{reassignEntity.item?.name}" is used in {reassignEntity.count} game(s). Choose an existing {reassignEntity.type} or create a new one to move those games.</div>
-                            <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={reassignChoice} onChange={e => setReassignChoice(e.target.value)}>
+                            <select className={FORM_CONTROL_CLASS} value={reassignChoice} onChange={e => setReassignChoice(e.target.value)}>
                                 <option value="">Select existing</option>
                                 {(reassignEntity.type === 'venue' ? [...venues].sort((a,b)=>a.name.localeCompare(b.name)) : [...opponents].sort((a,b)=>a.name.localeCompare(b.name))).filter(x => x.id !== reassignEntity.item?.id).map(x => (
                                     <option key={x.id} value={x.name}>{x.name}</option>
@@ -16605,14 +17028,16 @@
                                 <option value="__new__">Create new...</option>
                             </select>
                             {reassignChoice === '__new__' && (
-                                <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder={`New ${reassignEntity.type} name`} value={reassignNew} onChange={e => setReassignNew(e.target.value)} />
+                                <input className={FORM_CONTROL_CLASS} placeholder={`New ${reassignEntity.type} name`} value={reassignNew} onChange={e => setReassignNew(e.target.value)} />
                             )}
                             <div className="flex gap-2">
-                                <button onClick={() => setReassignEntity({ open:false, type:'', item:null, count:0 })} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
-                                <button onClick={applyReassignEntity} disabled={isReassigning} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg disabled:opacity-60">Reassign & Remove</button>
+                                <button onClick={() => setReassignEntity({ open:false, type:'', item:null, count:0 })} className={getButtonClass('secondary', 'md', 'flex-1')}>Cancel</button>
+                                <button onClick={applyReassignEntity} disabled={isReassigning} className={getButtonClass(isReassigning ? 'subtle' : 'primary', 'md', 'flex-1')}>Reassign & Remove</button>
                             </div>
                         </div>
                     </Modal>
+                    <ConfirmationModal dialog={intelConfirmDialog} onClose={closeIntelConfirmation} />
+                    <TextPromptModal dialog={intelTextPrompt} value={intelTextPromptValue} onChange={setIntelTextPromptValue} onClose={closeIntelTextPrompt} />
                 </div>
             );
         };
@@ -16640,6 +17065,11 @@
             const [kitImportMessage, setKitImportMessage] = useState('');
             const [isImportingKit, setIsImportingKit] = useState(false);
             const { startImportProgress, finishImportProgress } = useImportProgress();
+            const {
+                confirmDialog: kitConfirmDialog,
+                requestConfirmation: requestKitConfirmation,
+                closeConfirmation: closeKitConfirmation
+            } = useModalDialogs();
             const importInputRef = useRef(null);
             const queueItemOptions = useMemo(() => ([
                 { value: 'SHIRT', label: 'Shirt' },
@@ -16651,7 +17081,13 @@
                 if (!detail?.id) return;
                 const playerLabel = detail.playerName || 'this player';
                 const numberLabel = detail.numberAssigned ? `#${detail.numberAssigned}` : 'their number';
-                if (!confirm(`Release kit for ${playerLabel} (${numberLabel})?`)) return;
+                const approved = await requestKitConfirmation({
+                    title: 'Release kit',
+                    description: `Release kit for ${playerLabel} (${numberLabel})?`,
+                    confirmLabel: 'Release kit',
+                    danger: true
+                });
+                if (!approved) return;
                 startImportProgress('Releasing kit…');
                 try {
                     await waitForDb();
@@ -16663,7 +17099,7 @@
                 } finally {
                     finishImportProgress();
                 }
-            }, [finishImportProgress, setKitImportMessage, startImportProgress]);
+            }, [finishImportProgress, setKitImportMessage, startImportProgress, requestKitConfirmation]);
 
             useEffect(() => {
                 let mounted = true;
@@ -16744,7 +17180,13 @@
                 const playerLabel = detail.playerId
                     ? `${playerLookup[String(detail.playerId)]?.firstName || ''} ${playerLookup[String(detail.playerId)]?.lastName || ''}`.trim()
                     : detail.playerName || 'player';
-                if (!confirm(`Remove kit record for ${playerLabel}?`)) return;
+                const approved = await requestKitConfirmation({
+                    title: 'Remove kit record',
+                    description: `Remove the stored kit record for ${playerLabel}?`,
+                    confirmLabel: 'Remove record',
+                    danger: true
+                });
+                if (!approved) return;
                 startImportProgress('Removing kit record…');
                 try {
                     const cleared = {
@@ -16942,16 +17384,18 @@
                         title="Kit"
                         subtitle="Track assignments, free numbers, and order queue."
                         actions={
-                            <button onClick={() => importInputRef.current?.click()} className={`min-h-[44px] px-4 text-xs font-bold rounded-xl ${isImportingKit ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'}`} disabled={isImportingKit}>
+                            <button onClick={() => importInputRef.current?.click()} className={getButtonClass(isImportingKit ? 'subtle' : 'primary', 'md')} disabled={isImportingKit}>
                                 {isImportingKit ? 'Importing…' : 'Upload Kit CSV'}
                             </button>
                         }
                     />
-                    <div className="px-1 text-[11px] text-slate-500">Expected columns: Player Name, Kit arrived, Shirt Size, Number Requested, Short Size, Writing On Back Of Shirt, Paid?, Number Free, Number Requested, Number Assigned.</div>
-                    {kitImportMessage && <p className="px-1 text-[11px] text-slate-500">{kitImportMessage}</p>}
+                    <div className={getSurfaceClass('roster', 'p-4 space-y-2')}>
+                        <div className={UI_TEXT.helper}>Expected columns: Player Name, Kit arrived, Shirt Size, Number Requested, Short Size, Writing On Back Of Shirt, Paid?, Number Free, Number Requested, Number Assigned.</div>
+                        {kitImportMessage && <p className={UI_TEXT.helper}>{kitImportMessage}</p>}
+                    </div>
 
                     <div className="space-y-4">
-                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-soft space-y-3">
+                        <div className={getSurfaceClass('roster', 'p-5 space-y-4')}>
                             <div className="flex items-center justify-between">
                                 <div>
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Players with kit</div>
@@ -16994,7 +17438,7 @@
                     </div>
                         </div>
 
-                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-soft space-y-3">
+                        <div className={getSurfaceClass('roster', 'p-5 space-y-4')}>
                             <div className="flex items-center justify-between">
                                 <div>
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Available Numbers</div>
@@ -17020,7 +17464,7 @@
                             </div>
                         </div>
 
-                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-soft space-y-3">
+                        <div className={getSurfaceClass('roster', 'p-5 space-y-4')}>
                             <div className="flex items-center justify-between">
                                 <div>
                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Next Order Queue</div>
@@ -17093,7 +17537,7 @@
                                     return (
                                         <div key={entry.id || `queue-${entry.playerId}`} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50">
                                             <div className="flex-1">
-                                                <button onClick={() => player.firstName && openPlayer(String(entry.playerId))} className="text-sm font-bold text-slate-900 text-left hover:underline">
+                                                <button onClick={() => player.firstName && openPlayer(String(entry.playerId))} className="text-sm font-bold text-slate-900 text-left">
                                                     {player.firstName} {player.lastName}
                                                 </button>
                                                 <div className="text-[11px] text-slate-500 flex flex-wrap gap-2">
@@ -17164,6 +17608,7 @@
                             <div className="text-sm text-slate-500">Parsing kit import...</div>
                         )}
                     </Modal>
+                    <ConfirmationModal dialog={kitConfirmDialog} onClose={closeKitConfirmation} />
                 </div>
             );
         };
@@ -19483,63 +19928,63 @@
                 <div className="space-y-6 pb-20 animate-fade-in">
                     <PageHeader title="Settings" subtitle="Backups, imports, repair tools, and app controls." />
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">App Refresh</div>
                         <div className="text-sm text-slate-600">Forces a full reload of the PWA without closing the app.</div>
                         <button
                             onClick={fullRefreshPwa}
                             disabled={isRefreshingApp}
-                            className={`w-full font-bold rounded-lg px-4 py-3 ${isRefreshingApp ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                            className={getButtonClass(isRefreshingApp ? 'subtle' : 'primary', 'lg', 'w-full')}
                         >
                             {isRefreshingApp ? 'Refreshing…' : 'Full Refresh PWA'}
                         </button>
                         <div className="text-[11px] text-slate-500">Clears service worker + cache storage, then reloads this page.</div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cost Categories</div>
                         <div className="flex gap-2 flex-wrap">
                             {categories.map(cat => (
-                                <div key={cat} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
+                                <div key={cat} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/90 border border-slate-200 text-xs font-bold text-slate-700 shadow-sm">
                                     <span>{cat}</span>
-                                    <button onClick={() => renameCategory(cat, false)} className="text-brand-600 underline">Edit</button>
-                                    <button onClick={() => deleteCategory(cat, false)} className="text-rose-600">✕</button>
+                                    <button onClick={() => renameCategory(cat, false)} className={getButtonClass('ghost', 'xs', 'min-h-0 h-7 px-2 rounded-lg')}>Edit</button>
+                                    <button onClick={() => deleteCategory(cat, false)} className={getButtonClass('danger', 'xs', 'min-h-0 h-7 px-2 rounded-lg')}>Remove</button>
                                 </div>
                             ))}
                         </div>
                         <div className="flex gap-2">
-                            <input className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Add category (e.g. Pitch Hire)" value={newCat} onChange={e => setNewCat(e.target.value)} />
-                            <button onClick={addCategory} className="bg-slate-900 text-white font-bold rounded-lg px-4">Add</button>
+                            <input className={cx(FORM_CONTROL_CLASS, 'flex-1')} placeholder="Add category (e.g. Pitch Hire)" value={newCat} onChange={e => setNewCat(e.target.value)} />
+                            <button onClick={addCategory} className={getButtonClass('primary', 'md')}>Add</button>
                         </div>
                         <div className="text-[11px] text-slate-500">Defaults include Referee Fee and Pitch Fee. New categories become available when adding costs.</div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Season Categories</div>
                         <div className="flex gap-2 flex-wrap">
                             {seasonCategories.map(cat => (
-                                <div key={cat} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
+                                <div key={cat} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/90 border border-slate-200 text-xs font-bold text-slate-700 shadow-sm">
                                     <span>{cat}</span>
-                                    <button onClick={() => renameSeasonCategory(cat)} className="text-brand-600 underline">Edit</button>
-                                    <button onClick={() => { const updated = seasonCategories.filter(c => c !== cat); setSeasonCategories(updated); persistSeasonCategories(updated); }} className="text-rose-600">✕</button>
+                                    <button onClick={() => renameSeasonCategory(cat)} className={getButtonClass('ghost', 'xs', 'min-h-0 h-7 px-2 rounded-lg')}>Edit</button>
+                                    <button onClick={() => { const updated = seasonCategories.filter(c => c !== cat); setSeasonCategories(updated); persistSeasonCategories(updated); }} className={getButtonClass('danger', 'xs', 'min-h-0 h-7 px-2 rounded-lg')}>Remove</button>
                                 </div>
                             ))}
                         </div>
                         <div className="flex gap-2">
-                            <input className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Add season (e.g. 2025/2026 Season)" value={newSeason} onChange={e => setNewSeason(e.target.value)} />
-                            <button onClick={addSeason} className="bg-slate-900 text-white font-bold rounded-lg px-4">Add</button>
+                            <input className={cx(FORM_CONTROL_CLASS, 'flex-1')} placeholder="Add season (e.g. 2025/2026 Season)" value={newSeason} onChange={e => setNewSeason(e.target.value)} />
+                            <button onClick={addSeason} className={getButtonClass('primary', 'md')}>Add</button>
                         </div>
                         <div className="text-[11px] text-slate-500">Seasons are used on games and imports to tag records by year.</div>
                     </div>
 
-                    <div className="bg-blue-50 p-4 rounded-2xl shadow-soft border border-blue-100 space-y-2">
+                    <div className={getSurfaceClass('info', 'p-5 space-y-3')}>
                         <div className="text-xs font-bold text-blue-600 uppercase tracking-wider">Kit workflow</div>
                         <p className="text-sm text-blue-700">
                             The Kit tab in More stores who currently has gear, what numbers remain free, and who to include in the next order. Keep everything here, and use the Squad list for payments and ledger work.
                         </p>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Kit Sizes</div>
                         <div className="flex flex-wrap gap-2">
                             {kitSizeOptions.length ? kitSizeOptions.map(size => (
@@ -19552,28 +19997,28 @@
                             )}
                         </div>
                         <div className="flex gap-2">
-                            <input className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Add size (e.g. XS)" value={newKitSize} onChange={e => setNewKitSize(e.target.value)} />
-                            <button onClick={addKitSize} className="bg-slate-900 text-white font-bold rounded-lg px-4">Add</button>
+                            <input className={cx(FORM_CONTROL_CLASS, 'flex-1')} placeholder="Add size (e.g. XS)" value={newKitSize} onChange={e => setNewKitSize(e.target.value)} />
+                            <button onClick={addKitSize} className={getButtonClass('primary', 'md')}>Add</button>
                         </div>
                         <div className="text-[11px] text-slate-500">These sizes power the shirt and short selectors when editing players and updating kit records.</div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Position Definitions</div>
                         <div className="flex flex-wrap gap-2">
                             {positionDefinitions.map(def => (
-                                <div key={def.code} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
+                                <div key={def.code} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/90 border border-slate-200 text-xs font-bold text-slate-700 shadow-sm">
                                     <span>{def.code} · {def.label}</span>
-                                    <button onClick={() => editPositionDefinition(def.code)} className="text-brand-600 underline">Edit</button>
-                                    <button onClick={() => prepareDeletePositionDefinition(def.code)} className="text-rose-600">✕</button>
+                                    <button onClick={() => editPositionDefinition(def.code)} className={getButtonClass('ghost', 'xs', 'min-h-0 h-7 px-2 rounded-lg')}>Edit</button>
+                                    <button onClick={() => prepareDeletePositionDefinition(def.code)} className={getButtonClass('danger', 'xs', 'min-h-0 h-7 px-2 rounded-lg')}>Remove</button>
                                 </div>
                             ))}
                         </div>
                         <div className="grid grid-cols-2 gap-2">
-                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Code (e.g. CM)" value={newPositionCode} onChange={e => setNewPositionCode(e.target.value)} />
-                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Definition" value={newPositionLabel} onChange={e => setNewPositionLabel(e.target.value)} />
+                            <input className={FORM_CONTROL_CLASS} placeholder="Code (e.g. CM)" value={newPositionCode} onChange={e => setNewPositionCode(e.target.value)} />
+                            <input className={FORM_CONTROL_CLASS} placeholder="Definition" value={newPositionLabel} onChange={e => setNewPositionLabel(e.target.value)} />
                         </div>
-                        <button onClick={handleAddPositionDefinition} className="bg-slate-900 text-white font-bold rounded-lg px-4 py-2">Add position</button>
+                        <button onClick={handleAddPositionDefinition} className={getButtonClass('primary', 'md')}>Add position</button>
                         <div className="flex flex-wrap gap-2 items-center text-[11px] text-slate-500">
                             <button onClick={handleExportPositions} className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 font-bold">Export definitions</button>
                             <button onClick={() => positionImportRef.current?.click()} className={`px-3 py-2 rounded-lg font-bold ${positionImporting ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'}`} disabled={positionImporting}>
@@ -19586,81 +20031,81 @@
                     </div>
 
                     {/* Opponents and Venues moved to dedicated tab */}
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Player Item Categories</div>
                         <div className="flex gap-2 flex-wrap">
                             {itemCategories.map(cat => (
-                                <div key={cat} className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
+                                <div key={cat} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/90 border border-slate-200 text-xs font-bold text-slate-700 shadow-sm">
                                     <span>{cat}</span>
-                                    <button onClick={() => renameCategory(cat, true)} className="text-brand-600 underline">Edit</button>
-                                    <button onClick={() => deleteCategory(cat, true)} className="text-rose-600">✕</button>
+                                    <button onClick={() => renameCategory(cat, true)} className={getButtonClass('ghost', 'xs', 'min-h-0 h-7 px-2 rounded-lg')}>Edit</button>
+                                    <button onClick={() => deleteCategory(cat, true)} className={getButtonClass('danger', 'xs', 'min-h-0 h-7 px-2 rounded-lg')}>Remove</button>
                                 </div>
                             ))}
                         </div>
                         <div className="flex gap-2">
-                            <input className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Add item (e.g. Socks)" value={newItemCat} onChange={e => setNewItemCat(e.target.value)} />
-                            <button onClick={addItemCategory} className="bg-slate-900 text-white font-bold rounded-lg px-4">Add</button>
+                            <input className={cx(FORM_CONTROL_CLASS, 'flex-1')} placeholder="Add item (e.g. Socks)" value={newItemCat} onChange={e => setNewItemCat(e.target.value)} />
+                            <button onClick={addItemCategory} className={getButtonClass('primary', 'md')}>Add</button>
                         </div>
                         <div className="text-[11px] text-slate-500">These items show on player cards for adding personal charges.</div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Referees</div>
                         <div className="flex flex-wrap gap-2">
                             {referees.map(r => (
-                                <div key={r.id} className="px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2">
+                                <div key={r.id} className="px-3 py-1.5 rounded-full bg-white/90 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2 shadow-sm">
                                     <span>{r.name}{r.phone ? ` (${r.phone})` : ''}</span>
-                                    <button onClick={() => editRefereeRecord(r)} className="underline text-brand-600">Edit</button>
-                                    <button onClick={() => deleteRefereeRecord(r)} className="text-rose-600">✕</button>
+                                    <button onClick={() => editRefereeRecord(r)} className={getButtonClass('ghost', 'xs', 'min-h-0 h-7 px-2 rounded-lg')}>Edit</button>
+                                    <button onClick={() => deleteRefereeRecord(r)} className={getButtonClass('danger', 'xs', 'min-h-0 h-7 px-2 rounded-lg')}>Remove</button>
                                 </div>
                             ))}
                         </div>
                         <div className="grid grid-cols-2 gap-2">
-                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Referee name" value={newRef.name} onChange={e => setNewRef({ ...newRef, name: e.target.value })} />
-                            <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="Phone" value={newRef.phone} onChange={e => setNewRef({ ...newRef, phone: e.target.value })} />
+                            <input className={FORM_CONTROL_CLASS} placeholder="Referee name" value={newRef.name} onChange={e => setNewRef({ ...newRef, name: e.target.value })} />
+                            <input className={FORM_CONTROL_CLASS} placeholder="Phone" value={newRef.phone} onChange={e => setNewRef({ ...newRef, phone: e.target.value })} />
                             <div className="col-span-2 flex justify-end">
-                                <button onClick={async () => { if(!newRef.name.trim()) return; const id = await db.referees.add(newRef); setReferees([...referees, { ...newRef, id }]); setNewRef({ name: '', phone: '' }); }} className="bg-slate-900 text-white font-bold rounded-lg px-4 py-2">Add Referee</button>
+                                <button onClick={async () => { if(!newRef.name.trim()) return; const id = await db.referees.add(newRef); setReferees([...referees, { ...newRef, id }]); setNewRef({ name: '', phone: '' }); }} className={getButtonClass('primary', 'md')}>Add Referee</button>
                             </div>
                         </div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Backup & Import</div>
                         <div className="flex gap-2">
-                            <button onClick={() => setIsBackupPreviewOpen(true)} className="flex-1 bg-slate-900 text-white font-bold rounded-lg px-4 py-3">Download Backup</button>
-                            <button onClick={() => importInputRef.current?.click()} disabled={isImporting} className={`flex-1 border border-slate-200 font-bold rounded-lg px-4 py-3 ${isImporting ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-100 text-slate-800'}`}>
+                            <button onClick={() => setIsBackupPreviewOpen(true)} className={getButtonClass('primary', 'lg', 'flex-1')}>Download Backup</button>
+                            <button onClick={() => importInputRef.current?.click()} disabled={isImporting} className={getButtonClass(isImporting ? 'subtle' : 'secondary', 'lg', 'flex-1')}>
                                 {isImporting ? 'Importing…' : 'Import Data'}
                             </button>
                         </div>
                         <input type="file" accept="application/json" ref={importInputRef} className="hidden" onChange={handleImportFile} />
-                        <div className="text-[11px] text-slate-500">Backups run locally and include players, fixtures, ledger activity, kit tracking, and saved settings.</div>
+                        <div className={UI_TEXT.helper}>Backups run locally and include players, fixtures, ledger activity, kit tracking, and saved settings.</div>
                         {lastBackupSummary && (
-                            <div className="text-[11px] text-emerald-600 mt-1">
+                            <div className="text-[12px] text-emerald-700 mt-1 font-semibold">
                                 All data backed up at {new Date(lastBackupSummary.timestamp).toLocaleString()} ({lastBackupSummary.details}).
                             </div>
                         )}
-                        <div className="mt-4 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                        <div className={getSurfaceClass('info', 'p-4 space-y-3')}>
                             <div className="flex items-center justify-between gap-3">
                                 <div>
                                     <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Player CSV Import</div>
-                                    <div className="text-[11px] text-slate-500">Upload roster CSV (Full Name, Phone Number, Age, Position, Date of Birth, Shirt Number, Current Player or Not).</div>
+                                    <div className={UI_TEXT.helper}>Upload roster CSV (Full Name, Phone Number, Age, Position, Date of Birth, Shirt Number, Current Player or Not).</div>
                                 </div>
-                                <button onClick={() => playerImportRef.current?.click()} disabled={isImportingPlayersCsv} className={`px-3 py-2 rounded-lg text-sm font-bold ${isImportingPlayersCsv ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'}`}>
+                                <button onClick={() => playerImportRef.current?.click()} disabled={isImportingPlayersCsv} className={getButtonClass(isImportingPlayersCsv ? 'subtle' : 'primary', 'sm')}>
                                     {isImportingPlayersCsv ? 'Importing…' : 'Import players CSV'}
                                 </button>
                             </div>
                             {playerImportSummary && (
-                                <div className="text-[11px] text-emerald-600 mt-2">{playerImportSummary}</div>
+                                <div className="text-[12px] text-emerald-700 mt-2 font-semibold">{playerImportSummary}</div>
                             )}
                         </div>
                         <input type="file" accept=".csv,text/csv" ref={playerImportRef} className="hidden" onChange={handlePlayerCsvFile} />
-                        <div className="mt-4 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                        <div className={getSurfaceClass('info', 'p-4 space-y-3')}>
                             <div className="flex items-center justify-between">
                                 <div>
                                     <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Legacy CSV Import</div>
-                                    <div className="text-[11px] text-slate-500">Upload historical CSV (Date, Description, Category, Type, Total, Notes).</div>
+                                    <div className={UI_TEXT.helper}>Upload historical CSV (Date, Description, Category, Type, Total, Notes).</div>
                                 </div>
-                                <label className={`px-3 py-2 rounded-lg text-sm font-bold cursor-pointer ${legacyImporting ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'}`}>
+                                <label className={cx(getButtonClass(legacyImporting ? 'subtle' : 'primary', 'sm'), 'cursor-pointer')}>
                                     {legacyImporting ? 'Importing…' : 'Upload CSV'}
                                     <input type="file" accept=".csv,text/csv" className="hidden" onChange={e => handleLegacyCsv(e.target.files?.[0])} disabled={legacyImporting} />
                                 </label>
@@ -19668,45 +20113,45 @@
                         </div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-4">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Exports</div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                            <button onClick={() => exportEntity('opponents')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Opponents</button>
-                            <button onClick={() => exportEntity('venues')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Venues</button>
-                            <button onClick={() => exportEntity('players')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Players</button>
-                            <button onClick={() => exportEntity('fixtures')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Games</button>
-                            <button onClick={() => exportEntity('referees')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Referees</button>
-                            <button onClick={() => exportEntity('kitDetails')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Kit Details</button>
-                            <button onClick={() => exportEntity('kitQueue')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Kit Queue</button>
-                            <button onClick={() => exportEntity('sponsors')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Sponsors</button>
-                            <button onClick={() => exportEntity('itemCategories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Player Items</button>
-                            <button onClick={() => exportEntity('categories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Cost Categories</button>
-                            <button onClick={() => exportEntity('seasonCategories')} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Export Seasons</button>
-                            <button onClick={() => exportEntity('all')} className="bg-slate-900 text-white rounded-lg px-3 py-2 text-sm font-bold md:col-span-2">Export ALL</button>
+                            <button onClick={() => exportEntity('opponents')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Opponents</button>
+                            <button onClick={() => exportEntity('venues')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Venues</button>
+                            <button onClick={() => exportEntity('players')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Players</button>
+                            <button onClick={() => exportEntity('fixtures')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Games</button>
+                            <button onClick={() => exportEntity('referees')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Referees</button>
+                            <button onClick={() => exportEntity('kitDetails')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Kit Details</button>
+                            <button onClick={() => exportEntity('kitQueue')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Kit Queue</button>
+                            <button onClick={() => exportEntity('sponsors')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Sponsors</button>
+                            <button onClick={() => exportEntity('itemCategories')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Player Items</button>
+                            <button onClick={() => exportEntity('categories')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Cost Categories</button>
+                            <button onClick={() => exportEntity('seasonCategories')} className={getButtonClass('secondary', 'sm', 'w-full')}>Export Seasons</button>
+                            <button onClick={() => exportEntity('all')} className={getButtonClass('primary', 'sm', 'w-full md:col-span-2')}>Export ALL</button>
                         </div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-4">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Imports (replace current)</div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                            <button onClick={() => { setImportTarget('opponents'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Opponents</button>
-                            <button onClick={() => { setImportTarget('venues'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Venues</button>
-                            <button onClick={() => { setImportTarget('players'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Players</button>
-                            <button onClick={() => { setImportTarget('fixtures'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Games</button>
-                            <button onClick={() => { setImportTarget('referees'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Referees</button>
-                            <button onClick={() => { setImportTarget('sponsors'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Sponsors</button>
-                            <button onClick={() => { setImportTarget('itemCategories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Player Items</button>
-                            <button onClick={() => { setImportTarget('categories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Cost Categories</button>
-                            <button onClick={() => { setImportTarget('seasonCategories'); importSingleRef.current?.click(); }} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold">Import Seasons</button>
-                            <button onClick={() => { setImportTarget('all'); importSingleRef.current?.click(); }} disabled={isImportAllBusy || isImportAllDone} className={`bg-rose-600 text-white rounded-lg px-3 py-2 text-sm font-bold md:col-span-2 ${(isImportAllBusy || isImportAllDone) ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                            <button onClick={() => { setImportTarget('opponents'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Opponents</button>
+                            <button onClick={() => { setImportTarget('venues'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Venues</button>
+                            <button onClick={() => { setImportTarget('players'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Players</button>
+                            <button onClick={() => { setImportTarget('fixtures'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Games</button>
+                            <button onClick={() => { setImportTarget('referees'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Referees</button>
+                            <button onClick={() => { setImportTarget('sponsors'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Sponsors</button>
+                            <button onClick={() => { setImportTarget('itemCategories'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Player Items</button>
+                            <button onClick={() => { setImportTarget('categories'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Cost Categories</button>
+                            <button onClick={() => { setImportTarget('seasonCategories'); importSingleRef.current?.click(); }} className={getButtonClass('secondary', 'sm', 'w-full')}>Import Seasons</button>
+                            <button onClick={() => { setImportTarget('all'); importSingleRef.current?.click(); }} disabled={isImportAllBusy || isImportAllDone} className={getButtonClass(isImportAllBusy || isImportAllDone ? 'subtle' : 'danger', 'sm', 'w-full md:col-span-2')}>
                                 {isImportAllBusy ? 'Importing…' : (isImportAllDone ? 'Completed' : 'Import ALL')}
                             </button>
                         </div>
                         <input type="file" accept="application/json" ref={importSingleRef} className="hidden" onChange={handleSingleImportFile} />
-                        <div className="text-[11px] text-slate-500">Imports replace current data for that list. “ALL” replaces everything.</div>
+                        <div className={UI_TEXT.helper}>Imports replace current data for that list. `ALL` replaces everything.</div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ledger Repair (one-time)</div>
                         <div className="text-sm text-slate-600">
                             Scan first, review each suggested fix, then apply only the rows you approve.
@@ -19714,15 +20159,15 @@
                         <button
                             onClick={runLedgerRepair}
                             disabled={isRepairingLedger}
-                            className={`w-full font-bold rounded-lg px-4 py-3 ${isRepairingLedger ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                            className={getButtonClass(isRepairingLedger ? 'subtle' : 'primary', 'lg', 'w-full')}
                         >
                             {isRepairingLedger ? 'Scanning…' : (ledgerRepairHasRun ? 'Scan again & review' : 'Scan & review fixes')}
                         </button>
-                        <div className="text-[11px] text-slate-500">
+                        <div className={UI_TEXT.helper}>
                             Safe to rerun if older data is imported later.
                         </div>
                         {ledgerRepairSummary && (
-                            <div className={`text-[11px] rounded-lg border px-3 py-2 ${ledgerRepairSummary.cancelled ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+                            <div className={`text-[12px] rounded-xl border px-3 py-3 ${ledgerRepairSummary.cancelled ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
                                 {ledgerRepairSummary.cancelled
                                     ? `Review found ${ledgerRepairSummary.pending || 0} issue(s), but no fixes were applied.`
                                     : ledgerRepairSummary.proposed
@@ -19736,7 +20181,7 @@
                         )}
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('admin', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Player Payment Reconciliation</div>
                         <div className="text-sm text-slate-600">
                             Audit all historical player fees/payments, review reconciliation status, then apply only approved fixes.
@@ -19744,12 +20189,12 @@
                         <button
                             onClick={runPlayerReconciliationScan}
                             disabled={isScanningPlayerRecon}
-                            className={`w-full font-bold rounded-lg px-4 py-3 ${isScanningPlayerRecon ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-900 text-white'}`}
+                            className={getButtonClass(isScanningPlayerRecon ? 'subtle' : 'primary', 'lg', 'w-full')}
                         >
                             {isScanningPlayerRecon ? 'Scanning…' : (playerReconHasRun ? 'Scan again & review' : 'Scan player payments')}
                         </button>
                         {playerReconSummary && (
-                            <div className="text-[11px] rounded-lg border px-3 py-2 bg-emerald-50 border-emerald-200 text-emerald-700">
+                            <div className="text-[12px] rounded-xl border px-3 py-3 bg-emerald-50 border-emerald-200 text-emerald-800">
                                 {playerReconSummary.proposed
                                     ? `Scanned ${playerReconSummary.scanned || 0} player-fee row(s). ${playerReconSummary.proposed} suggested change(s) ready for review.`
                                     : `Scanned ${playerReconSummary.scanned || 0} player-fee row(s). No fixes suggested.`}
@@ -19759,42 +20204,42 @@
                         )}
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('warning', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Season Control</div>
                         <div className="text-sm text-slate-600">Freeze ledger, archive fixtures, reset balances.</div>
                         <div className="grid grid-cols-2 gap-2">
-                            <button onClick={() => archiveSeason(true)} className="bg-amber-50 border border-amber-200 text-amber-800 font-bold py-3 rounded-xl">Close Season (carry debt)</button>
-                            <button onClick={() => archiveSeason(false)} className="bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold py-3 rounded-xl">Close Season (reset)</button>
+                            <button onClick={() => archiveSeason(true)} className={getButtonClass('warning', 'lg', 'w-full')}>Close Season (carry debt)</button>
+                            <button onClick={() => archiveSeason(false)} className={getButtonClass('success', 'lg', 'w-full')}>Close Season (reset)</button>
                         </div>
-                        <div className="text-[11px] text-slate-500">Backups run locally. Download a backup first for safety.</div>
+                        <div className={UI_TEXT.helper}>Backups run locally. Download a backup first for safety.</div>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl shadow-soft border border-slate-100 space-y-3">
+                    <div className={getSurfaceClass('danger', 'p-5 space-y-4')}>
                         <div className="text-xs font-bold text-rose-500 uppercase tracking-wider">Danger Zone</div>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                            <button onClick={clearFixtures} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Fixtures</button>
-                            <button onClick={clearPlayers} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Players</button>
-                            <button onClick={clearAccounts} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Accounts</button>
-                            <button onClick={clearOpponentsList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Opponents</button>
-                            <button onClick={clearVenuesList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Venues</button>
-                            <button onClick={clearRefereesList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Referees</button>
-                            <button onClick={clearItemCategoriesList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Player Items</button>
-                            <button onClick={clearCostCategoriesList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Cost Categories</button>
-                            <button onClick={clearSeasonCategoriesList} className="bg-rose-50 text-rose-700 border border-rose-200 font-bold rounded-lg px-3 py-2 text-sm">Clear Seasons</button>
-                            <button onClick={clearAll} className="bg-rose-600 text-white font-bold rounded-lg px-3 py-2 text-sm md:col-span-3">Nuke all data & settings</button>
+                            <button onClick={clearFixtures} className={getButtonClass('danger', 'sm', 'w-full')}>Clear Fixtures</button>
+                            <button onClick={clearPlayers} className={getButtonClass('danger', 'sm', 'w-full')}>Clear Players</button>
+                            <button onClick={clearAccounts} className={getButtonClass('danger', 'sm', 'w-full')}>Clear Accounts</button>
+                            <button onClick={clearOpponentsList} className={getButtonClass('danger', 'sm', 'w-full')}>Clear Opponents</button>
+                            <button onClick={clearVenuesList} className={getButtonClass('danger', 'sm', 'w-full')}>Clear Venues</button>
+                            <button onClick={clearRefereesList} className={getButtonClass('danger', 'sm', 'w-full')}>Clear Referees</button>
+                            <button onClick={clearItemCategoriesList} className={getButtonClass('danger', 'sm', 'w-full')}>Clear Player Items</button>
+                            <button onClick={clearCostCategoriesList} className={getButtonClass('danger', 'sm', 'w-full')}>Clear Cost Categories</button>
+                            <button onClick={clearSeasonCategoriesList} className={getButtonClass('danger', 'sm', 'w-full')}>Clear Seasons</button>
+                            <button onClick={clearAll} className={getButtonClass('danger', 'sm', 'w-full md:col-span-3')}>Nuke all data & settings</button>
                         </div>
-                        <div className="text-[11px] text-slate-500">These actions are destructive; backups include kit, queue, and settings—export one before wiping.</div>
+                        <div className={UI_TEXT.helper}>These actions are destructive; backups include kit, queue, and settings. Export one before wiping.</div>
                     </div>
 
                     <Modal isOpen={isLedgerRepairPreviewOpen} onClose={() => { if(!isApplyingLedgerRepair) setIsLedgerRepairPreviewOpen(false); }} title="Review Ledger Fixes">
-                        <div className="text-xs text-slate-500 mb-3">
+                        <div className="text-[12px] text-slate-500 mb-3">
                             Review each suggested change below. Untick anything you want to keep unchanged.
                         </div>
                         <div className="flex gap-2 mb-3">
-                            <button onClick={() => setAllLedgerRepairSelections(true)} disabled={isApplyingLedgerRepair || !ledgerRepairCandidates.length} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${isApplyingLedgerRepair || !ledgerRepairCandidates.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                            <button onClick={() => setAllLedgerRepairSelections(true)} disabled={isApplyingLedgerRepair || !ledgerRepairCandidates.length} className={getButtonClass((isApplyingLedgerRepair || !ledgerRepairCandidates.length) ? 'subtle' : 'secondary', 'sm', 'flex-1')}>
                                 Select all
                             </button>
-                            <button onClick={() => setAllLedgerRepairSelections(false)} disabled={isApplyingLedgerRepair || !ledgerRepairCandidates.length} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${isApplyingLedgerRepair || !ledgerRepairCandidates.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                            <button onClick={() => setAllLedgerRepairSelections(false)} disabled={isApplyingLedgerRepair || !ledgerRepairCandidates.length} className={getButtonClass((isApplyingLedgerRepair || !ledgerRepairCandidates.length) ? 'subtle' : 'secondary', 'sm', 'flex-1')}>
                                 Clear all
                             </button>
                         </div>
@@ -19814,16 +20259,16 @@
                                                         {formatCurrency(row.currentAmount)} → {formatCurrency(row.nextAmount)}
                                                     </div>
                                                 </div>
-                                                <div className="text-[11px] text-slate-500">
+                                                <div className="text-[12px] text-slate-500">
                                                     {row.category || 'Other'} · {row.payee || row.fixtureOpponent || 'No payee'} · {dateLabel}
                                                 </div>
-                                                <div className="text-[11px] text-slate-500">
+                                                <div className="text-[12px] text-slate-500">
                                                     Flow: {row.currentFlow || 'unset'} → {row.nextFlow || 'unset'} · Type: {row.currentType || 'unset'} → {row.nextType || 'unset'}
                                                 </div>
                                                 <div className="flex flex-wrap gap-1 pt-1">
-                                                    {row.reasonFlags?.opponentPitch && <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold">Opponent pitch fee</span>}
-                                                    {row.reasonFlags?.mismatch && <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold">Flow/sign mismatch</span>}
-                                                    {row.reasonFlags?.missingFlow && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">Missing flow</span>}
+                                                    {row.reasonFlags?.opponentPitch && <span className={getChipClass('success')}>Opponent pitch fee</span>}
+                                                    {row.reasonFlags?.mismatch && <span className={getChipClass('info')}>Flow/sign mismatch</span>}
+                                                    {row.reasonFlags?.missingFlow && <span className={getChipClass('warning')}>Missing flow</span>}
                                                 </div>
                                             </div>
                                         </div>
@@ -19834,28 +20279,28 @@
                                 <div className="text-sm text-slate-400 text-center py-6">No suggestions available. Run a scan first.</div>
                             )}
                         </div>
-                        <div className="mt-3 text-[11px] text-slate-500">
+                        <div className="mt-3 text-[12px] text-slate-500">
                             Selected: <span className="font-bold text-slate-700">{selectedLedgerRepairCount}</span> of <span className="font-bold text-slate-700">{ledgerRepairCandidates.length}</span>
                         </div>
                         <div className="mt-4 flex gap-2">
-                            <button onClick={() => setIsLedgerRepairPreviewOpen(false)} disabled={isApplyingLedgerRepair} className={`flex-1 rounded-lg border border-slate-200 px-4 py-2 font-bold ${isApplyingLedgerRepair ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-50 text-slate-700'}`}>
+                            <button onClick={() => setIsLedgerRepairPreviewOpen(false)} disabled={isApplyingLedgerRepair} className={getButtonClass(isApplyingLedgerRepair ? 'subtle' : 'secondary', 'md', 'flex-1')}>
                                 Cancel
                             </button>
-                            <button onClick={applyLedgerRepairSelection} disabled={isApplyingLedgerRepair || !selectedLedgerRepairCount} className={`flex-1 rounded-lg px-4 py-2 font-bold text-white ${(isApplyingLedgerRepair || !selectedLedgerRepairCount) ? 'bg-slate-400 cursor-not-allowed' : 'bg-emerald-600'}`}>
+                            <button onClick={applyLedgerRepairSelection} disabled={isApplyingLedgerRepair || !selectedLedgerRepairCount} className={getButtonClass((isApplyingLedgerRepair || !selectedLedgerRepairCount) ? 'subtle' : 'success', 'md', 'flex-1')}>
                                 {isApplyingLedgerRepair ? 'Applying…' : `Apply selected (${selectedLedgerRepairCount})`}
                             </button>
                         </div>
                     </Modal>
 
                     <Modal isOpen={isPlayerReconPreviewOpen} onClose={() => { if(!isApplyingPlayerRecon) setIsPlayerReconPreviewOpen(false); }} title="Review Player Reconciliation">
-                        <div className="text-xs text-slate-500 mb-3">
+                        <div className="text-[12px] text-slate-500 mb-3">
                             Review each suggested fix for past player fee charges and payments.
                         </div>
                         <div className="flex gap-2 mb-3">
-                            <button onClick={() => setAllPlayerReconSelections(true)} disabled={isApplyingPlayerRecon || !playerReconCandidates.length} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${isApplyingPlayerRecon || !playerReconCandidates.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                            <button onClick={() => setAllPlayerReconSelections(true)} disabled={isApplyingPlayerRecon || !playerReconCandidates.length} className={getButtonClass((isApplyingPlayerRecon || !playerReconCandidates.length) ? 'subtle' : 'secondary', 'sm', 'flex-1')}>
                                 Select all
                             </button>
-                            <button onClick={() => setAllPlayerReconSelections(false)} disabled={isApplyingPlayerRecon || !playerReconCandidates.length} className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold ${isApplyingPlayerRecon || !playerReconCandidates.length ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                            <button onClick={() => setAllPlayerReconSelections(false)} disabled={isApplyingPlayerRecon || !playerReconCandidates.length} className={getButtonClass((isApplyingPlayerRecon || !playerReconCandidates.length) ? 'subtle' : 'secondary', 'sm', 'flex-1')}>
                                 Clear all
                             </button>
                         </div>
@@ -19876,21 +20321,21 @@
                                                         {formatCurrency(row.currentAmount)} → {formatCurrency(row.nextAmount)}
                                                     </div>
                                                 </div>
-                                                <div className="text-[11px] text-slate-500">
+                                                <div className="text-[12px] text-slate-500">
                                                     {row.playerName || 'Unknown player'} · {row.category || PLAYER_FEE_CATEGORY} · {dateLabel}
                                                 </div>
-                                                <div className="text-[11px] text-slate-500">
+                                                <div className="text-[12px] text-slate-500">
                                                     Flow: {row.currentFlow || 'unset'} → {row.nextFlow || 'unset'} · Type: {row.currentType || 'unset'} → {row.nextType || 'unset'} · Reconciled: {row.currentReconciled ? 'Yes' : 'No'} → {row.nextReconciled ? 'Yes' : 'No'}
                                                 </div>
                                                 <div className="flex flex-wrap gap-1 pt-1">
-                                                    {row.reasonFlags?.paymentLink && <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold">Link payment</span>}
-                                                    {row.reasonFlags?.coveredCharge && <span className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 text-[10px] font-bold">Covered charge</span>}
-                                                    {row.reasonFlags?.paymentReconciled && <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold">Mark reconciled</span>}
-                                                    {row.reasonFlags?.typeFlow && <span className="px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[10px] font-bold">Type/flow</span>}
-                                                    {row.reasonFlags?.orphanChargeReconciled && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">Needs review</span>}
+                                                    {row.reasonFlags?.paymentLink && <span className={getChipClass('success')}>Link payment</span>}
+                                                    {row.reasonFlags?.coveredCharge && <span className={getChipClass('info')}>Covered charge</span>}
+                                                    {row.reasonFlags?.paymentReconciled && <span className={getChipClass('info')}>Mark reconciled</span>}
+                                                    {row.reasonFlags?.typeFlow && <span className={getChipClass('neutral')}>Type/flow</span>}
+                                                    {row.reasonFlags?.orphanChargeReconciled && <span className={getChipClass('warning')}>Needs review</span>}
                                                 </div>
                                                 {row.reasonLabels?.length > 0 && (
-                                                    <div className="text-[11px] text-slate-500">{row.reasonLabels.join(' · ')}</div>
+                                                    <div className="text-[12px] text-slate-500">{row.reasonLabels.join(' · ')}</div>
                                                 )}
                                             </div>
                                         </div>
@@ -19901,14 +20346,14 @@
                                 <div className="text-sm text-slate-400 text-center py-6">No suggestions available. Run a scan first.</div>
                             )}
                         </div>
-                        <div className="mt-3 text-[11px] text-slate-500">
+                        <div className="mt-3 text-[12px] text-slate-500">
                             Selected: <span className="font-bold text-slate-700">{selectedPlayerReconCount}</span> of <span className="font-bold text-slate-700">{playerReconCandidates.length}</span>
                         </div>
                         <div className="mt-4 flex gap-2">
-                            <button onClick={() => setIsPlayerReconPreviewOpen(false)} disabled={isApplyingPlayerRecon} className={`flex-1 rounded-lg border border-slate-200 px-4 py-2 font-bold ${isApplyingPlayerRecon ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-50 text-slate-700'}`}>
+                            <button onClick={() => setIsPlayerReconPreviewOpen(false)} disabled={isApplyingPlayerRecon} className={getButtonClass(isApplyingPlayerRecon ? 'subtle' : 'secondary', 'md', 'flex-1')}>
                                 Cancel
                             </button>
-                            <button onClick={applyPlayerReconSelection} disabled={isApplyingPlayerRecon || !selectedPlayerReconCount} className={`flex-1 rounded-lg px-4 py-2 font-bold text-white ${(isApplyingPlayerRecon || !selectedPlayerReconCount) ? 'bg-slate-400 cursor-not-allowed' : 'bg-emerald-600'}`}>
+                            <button onClick={applyPlayerReconSelection} disabled={isApplyingPlayerRecon || !selectedPlayerReconCount} className={getButtonClass((isApplyingPlayerRecon || !selectedPlayerReconCount) ? 'subtle' : 'success', 'md', 'flex-1')}>
                                 {isApplyingPlayerRecon ? 'Applying…' : `Apply selected (${selectedPlayerReconCount})`}
                             </button>
                         </div>
@@ -20147,34 +20592,34 @@
                                 <div key={row.id} className="p-3 rounded-xl border border-slate-100 bg-slate-50 space-y-2">
                                     <div className="flex items-center justify-between">
                                         <span className="text-xs font-bold text-slate-500">Row {row.id + 1}</span>
-                                        <button onClick={() => updateLegacyRow(row.id, { drop: !row.drop })} className={`text-[11px] font-bold px-2 py-1 rounded-full border ${row.drop ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-white text-slate-600 border-slate-200'}`}>
+                                        <button onClick={() => updateLegacyRow(row.id, { drop: !row.drop })} className={getButtonClass(row.drop ? 'danger' : 'secondary', 'xs', 'min-h-0 h-8 px-3 rounded-full')}>
                                             {row.drop ? 'Discarded' : 'Keep'}
                                         </button>
                                     </div>
-                                    <input className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-sm" value={row.description} onChange={e => updateLegacyRow(row.id, { description: e.target.value })} />
+                                    <input className={FORM_CONTROL_CLASS} value={row.description} onChange={e => updateLegacyRow(row.id, { description: e.target.value })} />
                                     <div className="grid grid-cols-2 gap-2">
-                                        <input type="date" className="bg-white border border-slate-200 rounded-lg p-2.5 text-sm" value={row.date} onChange={e => updateLegacyRow(row.id, { date: e.target.value })} />
-                                        <input type="number" className="bg-white border border-slate-200 rounded-lg p-2.5 text-sm" value={row.amount} onChange={e => updateLegacyRow(row.id, { amount: e.target.value })} />
+                                        <input type="date" className={FORM_CONTROL_CLASS} value={row.date} onChange={e => updateLegacyRow(row.id, { date: e.target.value })} />
+                                        <input type="number" className={FORM_CONTROL_CLASS} value={row.amount} onChange={e => updateLegacyRow(row.id, { amount: e.target.value })} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-2">
-                                        <select className="bg-white border border-slate-200 rounded-lg p-2.5 text-sm" value={row.type} onChange={e => updateLegacyRow(row.id, { type: e.target.value })}>
+                                        <select className={FORM_CONTROL_CLASS} value={row.type} onChange={e => updateLegacyRow(row.id, { type: e.target.value })}>
                                             <option value="EXPENSE">Expense</option>
                                             <option value="INCOME">Income</option>
                                         </select>
-                                        <input className="bg-white border border-slate-200 rounded-lg p-2.5 text-sm" value={row.category} onChange={e => updateLegacyRow(row.id, { category: e.target.value })} />
+                                        <input className={FORM_CONTROL_CLASS} value={row.category} onChange={e => updateLegacyRow(row.id, { category: e.target.value })} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-2">
-                                        <select className="bg-white border border-slate-200 rounded-lg p-2.5 text-sm" value={row.fixtureId} onChange={e => updateLegacyRow(row.id, { fixtureId: e.target.value })}>
+                                        <select className={FORM_CONTROL_CLASS} value={row.fixtureId} onChange={e => updateLegacyRow(row.id, { fixtureId: e.target.value })}>
                                             <option value="">Link to game (optional)</option>
                                             {[...fixtures].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(f => (
                                                 <option key={f.id} value={f.id}>{new Date(f.date).toLocaleDateString()} · vs {f.opponent || 'Unknown'}</option>
                                             ))}
                                         </select>
-                                        <input className="bg-white border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Payee / note" value={row.payee} onChange={e => updateLegacyRow(row.id, { payee: e.target.value })} />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Payee / note" value={row.payee} onChange={e => updateLegacyRow(row.id, { payee: e.target.value })} />
                                     </div>
                                     <div className="grid grid-cols-2 gap-2">
-                                        <input className="bg-white border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Opponent (optional)" value={row.opponent} onChange={e => updateLegacyRow(row.id, { opponent: e.target.value })} list="legacyOppList" />
-                                        <input className="bg-white border border-slate-200 rounded-lg p-2.5 text-sm" placeholder="Venue (optional)" value={row.venue} onChange={e => updateLegacyRow(row.id, { venue: e.target.value })} list="legacyVenueList" />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Opponent (optional)" value={row.opponent} onChange={e => updateLegacyRow(row.id, { opponent: e.target.value })} list="legacyOppList" />
+                                        <input className={FORM_CONTROL_CLASS} placeholder="Venue (optional)" value={row.venue} onChange={e => updateLegacyRow(row.id, { venue: e.target.value })} list="legacyVenueList" />
                                     </div>
                                 </div>
                             ))}
@@ -20186,25 +20631,25 @@
                             </datalist>
                         </div>
                         <div className="mt-3 flex gap-2">
-                            <button onClick={() => setLegacyPreview([])} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
-                            <button onClick={commitLegacyPreview} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg">Import Reviewed</button>
+                            <button onClick={() => setLegacyPreview([])} className={getButtonClass('secondary', 'md', 'flex-1')}>Cancel</button>
+                            <button onClick={commitLegacyPreview} className={getButtonClass('primary', 'md', 'flex-1')}>Import Reviewed</button>
                         </div>
                     </Modal>
 
                     <Modal isOpen={reassignModal.open} onClose={() => setReassignModal({ open:false, cat:'', isItem:false, count:0 })} title="Reassign Category">
                         <div className="space-y-3">
                             <div className="text-sm text-slate-600">"{reassignModal.cat}" is used in {reassignModal.count} record(s). Choose a fallback or create a new category to move them into.</div>
-                            <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={reassignChoice} onChange={e => setReassignChoice(e.target.value)}>
+                            <select className={FORM_CONTROL_CLASS} value={reassignChoice} onChange={e => setReassignChoice(e.target.value)}>
                                 <option value="">Select existing</option>
                                 {(reassignModal.isItem ? itemCategories : categories).filter(c => c !== reassignModal.cat).map(c => <option key={c} value={c}>{c}</option>)}
                                 <option value="__new__">Create new...</option>
                             </select>
                             {reassignChoice === '__new__' && (
-                                <input className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="New category name" value={reassignNew} onChange={e => setReassignNew(e.target.value)} />
+                                <input className={FORM_CONTROL_CLASS} placeholder="New category name" value={reassignNew} onChange={e => setReassignNew(e.target.value)} />
                             )}
                             <div className="flex gap-2">
-                                <button onClick={() => setReassignModal({ open:false, cat:'', isItem:false, count:0 })} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
-                                <button onClick={applyReassign} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg">Reassign & Remove</button>
+                                <button onClick={() => setReassignModal({ open:false, cat:'', isItem:false, count:0 })} className={getButtonClass('secondary', 'md', 'flex-1')}>Cancel</button>
+                                <button onClick={applyReassign} className={getButtonClass('primary', 'md', 'flex-1')}>Reassign & Remove</button>
                             </div>
                         </div>
                     </Modal>
@@ -20212,7 +20657,7 @@
                     <Modal isOpen={positionReassignModal.open} onClose={() => setPositionReassignModal({ open: false, code: '', count: 0, players: [] })} title="Reassign Position Code">
                         <div className="space-y-3">
                             <div className="text-sm text-slate-600">"{positionReassignModal.code}" is used by {positionReassignModal.count} player(s). Choose a fallback code or create a new one.</div>
-                            <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" value={positionReassignChoice} onChange={e => setPositionReassignChoice(e.target.value)}>
+                            <select className={FORM_CONTROL_CLASS} value={positionReassignChoice} onChange={e => setPositionReassignChoice(e.target.value)}>
                                 <option value="">Select fallback</option>
                                 <option value="none">None (remove code)</option>
                                 {positionDefinitions.filter(def => def.code !== positionReassignModal.code).map(def => (
@@ -20222,14 +20667,14 @@
                             </select>
                             {positionReassignChoice === '__new__' && (
                                 <div className="grid grid-cols-2 gap-2">
-                                    <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="New code (e.g. RW)" value={positionReassignNew} onChange={e => setPositionReassignNew(e.target.value)} />
-                                    <input className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" placeholder="New label" value={positionReassignNewLabel} onChange={e => setPositionReassignNewLabel(e.target.value)} />
+                                    <input className={FORM_CONTROL_CLASS} placeholder="New code (e.g. RW)" value={positionReassignNew} onChange={e => setPositionReassignNew(e.target.value)} />
+                                    <input className={FORM_CONTROL_CLASS} placeholder="New label" value={positionReassignNewLabel} onChange={e => setPositionReassignNewLabel(e.target.value)} />
                                 </div>
                             )}
-                            <div className="text-[11px] text-slate-500">Players affected: {positionReassignModal.players.slice(0,6).map(p => `${p.firstName} ${p.lastName}`).join(', ')}{positionReassignModal.players.length > 6 ? '…' : ''}</div>
+                            <div className="text-[12px] text-slate-500">Players affected: {positionReassignModal.players.slice(0,6).map(p => `${p.firstName} ${p.lastName}`).join(', ')}{positionReassignModal.players.length > 6 ? '…' : ''}</div>
                             <div className="flex gap-2">
-                                <button onClick={() => setPositionReassignModal({ open: false, code: '', count: 0, players: [] })} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
-                                <button onClick={applyPositionReassignment} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg">Reassign & Remove</button>
+                                <button onClick={() => setPositionReassignModal({ open: false, code: '', count: 0, players: [] })} className={getButtonClass('secondary', 'md', 'flex-1')}>Cancel</button>
+                                <button onClick={applyPositionReassignment} className={getButtonClass('primary', 'md', 'flex-1')}>Reassign & Remove</button>
                             </div>
                         </div>
                     </Modal>
@@ -20244,10 +20689,10 @@
                                 )}
                                 <div className="text-sm font-display font-bold text-slate-900">{isImportAllDone ? 'Import complete' : 'Hang tight…'}</div>
                                 <p className="text-xs text-slate-500">{importAllStatus}</p>
-                                <p className="text-[11px] text-slate-400">Large imports can take a few seconds. Avoid closing this window.</p>
+                                <p className="text-[12px] text-slate-400">Large imports can take a few seconds. Avoid closing this window.</p>
                                 {isImportAllDone && (
                                     <div className="pt-1">
-                                        <button onClick={() => { setIsImportAllDone(false); setImportAllStatus('Preparing files…'); }} className="w-full bg-slate-900 text-white font-bold py-2 rounded-lg">OK</button>
+                                        <button onClick={() => { setIsImportAllDone(false); setImportAllStatus('Preparing files…'); }} className={getButtonClass('primary', 'md', 'w-full')}>OK</button>
                                     </div>
                                 )}
                             </div>
@@ -20258,8 +20703,8 @@
                         <div className="space-y-4">
                             <div className="text-sm text-slate-600">{confirmDialog.description}</div>
                             <div className="flex gap-2">
-                                <button onClick={() => closeSettingsConfirmation(false)} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
-                                <button onClick={() => closeSettingsConfirmation(true)} className={`flex-1 font-bold py-2 rounded-lg text-white ${confirmDialog.danger ? 'bg-rose-600' : 'bg-slate-900'}`}>
+                                <button onClick={() => closeSettingsConfirmation(false)} className={getButtonClass('secondary', 'md', 'flex-1')}>Cancel</button>
+                                <button onClick={() => closeSettingsConfirmation(true)} className={getButtonClass(confirmDialog.danger ? 'danger' : 'primary', 'md', 'flex-1')}>
                                     {confirmDialog.confirmLabel}
                                 </button>
                             </div>
@@ -20270,15 +20715,15 @@
                         <div className="space-y-4">
                             <div className="text-sm text-slate-600">{textPrompt.description}</div>
                             <input
-                                className="w-full bg-white border border-slate-200 rounded-lg p-3 text-sm"
+                                className={FORM_CONTROL_CLASS}
                                 value={textPromptValue}
                                 onChange={e => setTextPromptValue(e.target.value)}
                                 placeholder={textPrompt.placeholder}
                                 autoFocus
                             />
                             <div className="flex gap-2">
-                                <button onClick={() => closeSettingsPrompt(false)} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
-                                <button onClick={() => closeSettingsPrompt(true)} className="flex-1 bg-slate-900 text-white font-bold py-2 rounded-lg">
+                                <button onClick={() => closeSettingsPrompt(false)} className={getButtonClass('secondary', 'md', 'flex-1')}>Cancel</button>
+                                <button onClick={() => closeSettingsPrompt(true)} className={getButtonClass('primary', 'md', 'flex-1')}>
                                     {textPrompt.confirmLabel}
                                 </button>
                             </div>
@@ -20289,21 +20734,21 @@
                         <div className="space-y-4">
                             <div className="text-sm text-slate-600">{typedConfirm.description}</div>
                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Type to confirm</div>
+                                <div className="text-[12px] font-bold uppercase tracking-wide text-slate-500">Type to confirm</div>
                                 <div className="text-sm font-mono font-bold text-slate-900 mt-1">{typedConfirm.phrase}</div>
                             </div>
                             <input
-                                className="w-full bg-white border border-slate-200 rounded-lg p-3 text-sm font-mono"
+                                className={cx(FORM_CONTROL_CLASS, 'font-mono')}
                                 value={typedConfirmValue}
                                 onChange={e => setTypedConfirmValue(e.target.value)}
                                 placeholder={typedConfirm.phrase}
                             />
                             <div className="flex gap-2">
-                                <button onClick={() => closeTypedConfirmation(false)} className="flex-1 bg-slate-100 text-slate-700 font-bold py-2 rounded-lg border border-slate-200">Cancel</button>
+                                <button onClick={() => closeTypedConfirmation(false)} className={getButtonClass('secondary', 'md', 'flex-1')}>Cancel</button>
                                 <button
                                     onClick={() => closeTypedConfirmation(true)}
                                     disabled={!typedConfirmMatches}
-                                    className={`flex-1 font-bold py-2 rounded-lg text-white ${typedConfirmMatches ? (typedConfirm.danger ? 'bg-rose-600' : 'bg-slate-900') : 'bg-slate-400 cursor-not-allowed'}`}
+                                    className={getButtonClass(typedConfirmMatches ? (typedConfirm.danger ? 'danger' : 'primary') : 'subtle', 'md', 'flex-1')}
                                 >
                                     {typedConfirm.confirmLabel}
                                 </button>
@@ -20319,6 +20764,11 @@
 
         const App = () => {
             const [activeTab, setActiveTab] = useState('dashboard');
+            const {
+                confirmDialog: authConfirmDialog,
+                requestConfirmation: requestAuthConfirmation,
+                closeConfirmation: closeAuthConfirmation
+            } = useModalDialogs();
             const [categories, setCategories] = useState(loadCategories());
             const [itemCategories, setItemCategories] = useState(loadItemCategories());
             const [seasonCategories, setSeasonCategories] = useState(loadSeasonCategories());
@@ -20447,7 +20897,11 @@
                         alert('Log out is not available right now.');
                         return;
                     }
-                    const ok = window.confirm('Log out of the database?');
+                    const ok = await requestAuthConfirmation({
+                        title: 'Log out of database',
+                        description: 'Log out of the connected database for this device?',
+                        confirmLabel: 'Log out'
+                    });
                     if (!ok) return;
                     try {
                         await signOut();
@@ -20457,7 +20911,11 @@
                     }
                     return;
                 }
-                const ok = window.confirm('Log in to the database?');
+                const ok = await requestAuthConfirmation({
+                    title: 'Log in to database',
+                    description: 'Log in to the database on this device now?',
+                    confirmLabel: 'Log in'
+                });
                 if (!ok) return;
                 try {
                     if (typeof signIn === 'function') {
@@ -20471,7 +20929,7 @@
                     console.error('Unable to log in', err);
                     alert('Unable to log in: ' + (err?.message || 'Unexpected error'));
                 }
-            }, [authUser]);
+            }, [authUser, requestAuthConfirmation]);
 
             useEffect(() => {
                 if (typeof window === 'undefined') return () => {};
@@ -20939,6 +21397,7 @@
                         
                         <Nav activeTab={activeTab} setTab={navigate} />
                     </div>
+                    <ConfirmationModal dialog={authConfirmDialog} onClose={closeAuthConfirmation} />
                     {importCount > 0 && <ImportProgressOverlay message={importMessage || "Updating data…"} details={progressDetails} />}
                 </ImportProgressContext.Provider>
             );
