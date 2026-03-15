@@ -5591,7 +5591,7 @@
             }, [fixtures]);
             const matchdayLiveFixture = useMemo(() => {
                 return [...fixtures]
-                    .filter((fixture) => !!fixture?.matchdayPlanner?.live?.active)
+                    .filter((fixture) => !!getFixtureMatchdayPlan(fixture)?.live?.active)
                     .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))[0] || null;
             }, [fixtures]);
             const matchdayUpcomingQueue = useMemo(() => {
@@ -5883,6 +5883,7 @@
                 setFixtures(prev => prev.map(f => String(f.id) === String(fixtureId) ? { ...f, matchdayPlan: nextPlanner } : f));
                 try {
                     await db.fixtures.update(fixtureId, { matchdayPlan: nextPlanner });
+                    window.dispatchEvent(new CustomEvent('gaffer-firestore-update', { detail: { name: 'fixtures' } }));
                 } catch (err) {
                     console.error('Unable to save matchday planner', err);
                     if (!options.silent) {
@@ -8379,12 +8380,12 @@
                                                 <div className="text-right">
                                                     <div className="text-sm font-bold text-slate-900">
                                                         {matchdayLiveFixture
-                                                            ? getLiveClockDisplay(matchdayPrimaryFixture?.matchdayPlanner?.live?.clock || {})
+                                                            ? getLiveClockDisplay(getFixtureMatchdayPlan(matchdayPrimaryFixture)?.live?.clock || {})
                                                             : renderTimeLabel(matchdayPrimaryFixture.time)}
                                                     </div>
                                                     <div className={`text-[12px] font-bold mt-1 ${matchdayLiveFixture ? 'text-rose-600' : 'text-emerald-600'}`}>
                                                         {matchdayLiveFixture
-                                                            ? `${MATCHDAY_LIVE_PHASE_LABELS[normalizeLivePhase(matchdayPrimaryFixture?.matchdayPlanner?.live?.clock?.phase)] || 'LIVE'} · RESUME`
+                                                            ? `${MATCHDAY_LIVE_PHASE_LABELS[normalizeLivePhase(getFixtureMatchdayPlan(matchdayPrimaryFixture)?.live?.clock?.phase)] || 'LIVE'} · RESUME`
                                                             : 'UPCOMING'}
                                                     </div>
                                                 </div>
@@ -21983,16 +21984,18 @@
             }), [startImportProgress, finishImportProgress, addProgressDetail, progressDetails, importCount]);
             const activeLiveFixture = useMemo(() => {
                 return [...appFixtures]
-                    .filter((fixture) => !!fixture?.matchdayPlanner?.live?.active)
+                    .filter((fixture) => !!getFixtureMatchdayPlan(fixture)?.live?.active)
                     .sort((a, b) => {
-                        const aUpdated = Date.parse(a?.matchdayPlanner?.live?.clock?.updatedAt || a?.updatedAt || a?.date || '') || 0;
-                        const bUpdated = Date.parse(b?.matchdayPlanner?.live?.clock?.updatedAt || b?.updatedAt || b?.date || '') || 0;
+                        const aPlan = getFixtureMatchdayPlan(a);
+                        const bPlan = getFixtureMatchdayPlan(b);
+                        const aUpdated = Date.parse(aPlan?.live?.clock?.updatedAt || a?.updatedAt || a?.date || '') || 0;
+                        const bUpdated = Date.parse(bPlan?.live?.clock?.updatedAt || b?.updatedAt || b?.date || '') || 0;
                         if (aUpdated !== bUpdated) return bUpdated - aUpdated;
                         return Number(b?.id || 0) - Number(a?.id || 0);
                     })[0] || null;
             }, [appFixtures]);
             const hasActiveLiveFixture = !!activeLiveFixture;
-            const activeLiveClock = useMemo(() => normalizeLiveClock(activeLiveFixture?.matchdayPlanner?.live?.clock || {}), [activeLiveFixture]);
+            const activeLiveClock = useMemo(() => normalizeLiveClock(getFixtureMatchdayPlan(activeLiveFixture)?.live?.clock || {}), [activeLiveFixture]);
             const activeLiveClockDisplay = useMemo(() => getLiveClockDisplay(activeLiveClock, liveHeaderNow), [activeLiveClock, liveHeaderNow]);
             const activeLivePhase = normalizeLivePhase(activeLiveClock.phase);
             const activeLivePhaseLabel = MATCHDAY_LIVE_PHASE_SHORT_LABELS[activeLivePhase] || 'LIVE';
