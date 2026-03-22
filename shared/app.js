@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.15-110';
+        const MASTER_BUILD_VERSION = '2026.03.22-111';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,22 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-03-22-matchday-position-player-picker',
+                at: '2026-03-22T18:10:00+08:00',
+                build: '2026.03.22-111',
+                area: 'Match day',
+                title: 'Formation positions now open a direct player picker',
+                summary: 'Match Day lineup setup now lets you tap a formation slot and pick or replace the player immediately from a dedicated list modal.',
+                changes: [
+                    { label: 'Starter assignment', from: 'Tap a slot, then use separate controls below the pitch to assign someone', to: 'Tap the slot itself and choose the player directly from the list that opens' },
+                    { label: 'Replacing players', from: 'Replacing an existing starter was hidden behind the old selection controls', to: 'Tapping an occupied slot now lets you replace or clear that player from the same flow' }
+                ],
+                details: [
+                    'The player picker only shows available Match Day roster players to keep the list focused.',
+                    'If you choose someone already assigned elsewhere, the app shows that and moves them cleanly into the new slot.'
+                ]
+            },
             {
                 id: '2026-03-15-opponent-intel-workspace-refresh',
                 at: '2026-03-15T22:10:00+08:00',
@@ -5192,6 +5208,7 @@
             const [plannerBoardMode, setPlannerBoardMode] = useState('assign');
             const [plannerBoardSelectedSlotId, setPlannerBoardSelectedSlotId] = useState('');
             const [plannerBoardAssignPlayerId, setPlannerBoardAssignPlayerId] = useState('');
+            const [plannerStarterPickerModal, setPlannerStarterPickerModal] = useState({ open: false, slotId: '', search: '' });
             const [plannerLiveActionModal, setPlannerLiveActionModal] = useState({ open: false, slotId: '', action: '' });
             const [isPlannerClockActionsOpen, setIsPlannerClockActionsOpen] = useState(false);
             const [plannerScoreActionModal, setPlannerScoreActionModal] = useState({ open: false, side: 'home', cardType: 'yellow', playerId: '' });
@@ -5354,6 +5371,14 @@
             const plannerStarterIds = useMemo(() => {
                 return uniquePlayerIds(Object.values(matchdayPlanner?.starters || {}));
             }, [matchdayPlanner?.starters]);
+            const plannerStarterSlotByPlayerId = useMemo(() => {
+                return Object.entries(matchdayPlanner?.starters || {}).reduce((acc, [slotId, playerId]) => {
+                    const normalized = normalizePlayerIdValue(playerId);
+                    if (!normalized) return acc;
+                    acc[normalized] = slotId;
+                    return acc;
+                }, {});
+            }, [matchdayPlanner?.starters]);
             const plannerCurrentOnPitch = useMemo(() => {
                 if (matchdayPlanner?.live?.active) return matchdayPlanner.live.onPitch || {};
                 const snapshot = {};
@@ -5411,6 +5436,41 @@
             const plannerBenchAssignableIds = useMemo(() => {
                 return plannerRosterIds.filter(id => !plannerStarterIds.includes(id));
             }, [plannerRosterIds, plannerStarterIds]);
+            const plannerStarterPickerSlot = plannerSlotLookup[plannerStarterPickerModal.slotId] || null;
+            const plannerStarterPickerCurrentPlayerId = plannerStarterPickerSlot
+                ? normalizePlayerIdValue(matchdayPlanner?.starters?.[plannerStarterPickerSlot.id])
+                : '';
+            const plannerStarterPickerRows = useMemo(() => {
+                const searchKey = normalizePersonNameKey(plannerStarterPickerModal.search || '');
+                const rows = plannerRosterIds
+                    .map((playerId) => {
+                        const player = plannerPlayerLookup[playerId];
+                        if (!player) return null;
+                        const fullName = `${player.firstName || ''} ${player.lastName || ''}`.trim() || `Player ${playerId}`;
+                        const assignedSlotId = plannerStarterSlotByPlayerId[playerId] || '';
+                        const assignedSlot = assignedSlotId ? plannerSlotLookup[assignedSlotId] : null;
+                        const isCurrent = plannerStarterPickerCurrentPlayerId === playerId;
+                        const isAssignedElsewhere = !!assignedSlotId && assignedSlotId !== plannerStarterPickerModal.slotId;
+                        const searchBlob = normalizePersonNameKey(`${fullName} ${player.position || ''} ${(assignedSlot?.label || '')}`);
+                        if (searchKey && !searchBlob.includes(searchKey)) return null;
+                        return {
+                            playerId,
+                            fullName,
+                            shortName: plannerPlayerShortName(playerId),
+                            position: player.position || 'Player',
+                            assignedSlotId,
+                            assignedSlotLabel: assignedSlot?.label || '',
+                            isCurrent,
+                            isAssignedElsewhere
+                        };
+                    })
+                    .filter(Boolean);
+                return rows.sort((a, b) => {
+                    if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
+                    if (a.isAssignedElsewhere !== b.isAssignedElsewhere) return a.isAssignedElsewhere ? 1 : -1;
+                    return a.fullName.localeCompare(b.fullName, 'en', { sensitivity: 'base' });
+                });
+            }, [plannerRosterIds, plannerPlayerLookup, plannerStarterSlotByPlayerId, plannerSlotLookup, plannerStarterPickerCurrentPlayerId, plannerStarterPickerModal.search, plannerStarterPickerModal.slotId, plannerPlayerShortName]);
             const plannerResolutionSummary = useMemo(() => {
                 const entries = matchdayPlanner?.matchedEntries || [];
                 let matched = 0;
@@ -7319,6 +7379,41 @@
                 });
             };
 
+            const openPlannerStarterPickerForSlot = (slotIdRaw) => {
+                const slotId = (slotIdRaw || '').trim();
+                if (!slotId || plannerLiveActive) return;
+                setPlannerBoardSelectedSlotId(slotId);
+                const currentStarterId = normalizePlayerIdValue((plannerRef.current || matchdayPlanner)?.starters?.[slotId]);
+                setPlannerBoardAssignPlayerId(currentStarterId);
+                setPlannerStarterPickerModal({
+                    open: true,
+                    slotId,
+                    search: ''
+                });
+            };
+
+            const closePlannerStarterPickerModal = () => {
+                setPlannerStarterPickerModal({ open: false, slotId: '', search: '' });
+            };
+
+            const plannerAssignStarterFromPicker = async (incomingIdRaw) => {
+                const slotId = (plannerStarterPickerModal?.slotId || '').trim();
+                const incomingId = normalizePlayerIdValue(incomingIdRaw);
+                if (!slotId || plannerLiveActive) return;
+                const previousSlotId = incomingId ? plannerStarterSlotByPlayerId[incomingId] || '' : '';
+                await plannerSetStarter(slotId, incomingId);
+                const slotLabel = plannerSlotLookup[slotId]?.label || slotId.toUpperCase();
+                if (!incomingId) {
+                    pushFixtureToast(`${slotLabel} cleared.`, 'info');
+                } else if (previousSlotId && previousSlotId !== slotId) {
+                    const previousLabel = plannerSlotLookup[previousSlotId]?.label || previousSlotId.toUpperCase();
+                    pushFixtureToast(`${plannerPlayerName(incomingId)} moved from ${previousLabel} to ${slotLabel}.`, 'success');
+                } else {
+                    pushFixtureToast(`${plannerPlayerName(incomingId)} assigned to ${slotLabel}.`, 'success');
+                }
+                closePlannerStarterPickerModal();
+            };
+
             const plannerChooseSwapFromModal = () => {
                 const slotId = (plannerLiveActionModal?.slotId || '').trim();
                 if (!slotId) return;
@@ -7357,10 +7452,10 @@
                         void plannerSwapStarterBetweenSlots(plannerSwapSlotA, normalizedSlotId);
                         return;
                     }
-                    setPlannerBoardSelectedSlotId(normalizedSlotId);
                     setPlannerSubSlotId(normalizedSlotId);
                     setPlannerSwapSlotA('');
                     setPlannerSwapSlotB('');
+                    openPlannerStarterPickerForSlot(normalizedSlotId);
                     return;
                 }
                 if (plannerBoardMode === 'assign') {
@@ -7936,6 +8031,9 @@
                     if (plannerBoardAssignPlayerId) {
                         setPlannerBoardAssignPlayerId('');
                     }
+                    if (plannerStarterPickerModal.open) {
+                        setPlannerStarterPickerModal({ open: false, slotId: '', search: '' });
+                    }
                     return;
                 }
                 if (plannerBoardMode === 'sub') {
@@ -7943,7 +8041,7 @@
                     setPlannerSwapSlotA('');
                     setPlannerSwapSlotB('');
                 }
-            }, [plannerLiveActive, plannerBoardMode, plannerBoardAssignPlayerId]);
+            }, [plannerLiveActive, plannerBoardMode, plannerBoardAssignPlayerId, plannerStarterPickerModal.open]);
             useEffect(() => {
                 if (!plannerBoardSelectedSlotId || plannerLiveActive) {
                     if (plannerBoardAssignPlayerId) setPlannerBoardAssignPlayerId('');
@@ -9571,55 +9669,54 @@
                                             </div>
 
                                             <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
-                                                <div className="text-[12px] font-bold text-slate-600 uppercase">
-                                                    {plannerBoardSelectedSlotId
-                                                        ? `Selected position: ${(plannerSlotLookup[plannerBoardSelectedSlotId]?.label || plannerBoardSelectedSlotId.toUpperCase())}`
-                                                        : 'Selected position: tap a pitch slot'}
+                                                <div className="flex items-start justify-between gap-3 flex-wrap">
+                                                    <div>
+                                                        <div className="text-[12px] font-bold text-slate-600 uppercase">
+                                                            {plannerBoardSelectedSlotId
+                                                                ? `Selected position: ${(plannerSlotLookup[plannerBoardSelectedSlotId]?.label || plannerBoardSelectedSlotId.toUpperCase())}`
+                                                                : 'Starter picker'}
+                                                        </div>
+                                                        <div className="text-[12px] text-slate-500 mt-1">
+                                                            {plannerBoardSelectedSlotId
+                                                                ? `Tap the ${plannerSlotLookup[plannerBoardSelectedSlotId]?.label || plannerBoardSelectedSlotId.toUpperCase()} tile again any time to replace or clear that starter.`
+                                                                : 'Tap any pitch position to open the player list and assign or replace the starter directly.'}
+                                                        </div>
+                                                    </div>
+                                                    {plannerBoardSelectedSlotId && !plannerLiveActive ? (
+                                                        <button
+                                                            onClick={() => openPlannerStarterPickerForSlot(plannerBoardSelectedSlotId)}
+                                                            className={getButtonClass('primary', 'sm')}
+                                                        >
+                                                            {normalizePlayerIdValue(matchdayPlanner?.starters?.[plannerBoardSelectedSlotId]) ? 'Replace starter' : 'Assign starter'}
+                                                        </button>
+                                                    ) : null}
                                                 </div>
-                                                <select
-                                                    className={`w-full min-h-[52px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-base ${plannerLiveActive || !plannerBoardSelectedSlotId ? 'text-slate-400 cursor-not-allowed' : ''}`}
-                                                    value={plannerBoardAssignPlayerId || ''}
-                                                    onChange={e => setPlannerBoardAssignPlayerId(normalizePlayerIdValue(e.target.value))}
-                                                    disabled={plannerLiveActive || !plannerBoardSelectedSlotId}
-                                                >
-                                                    <option value="">Unassigned</option>
-                                                    {plannerRosterIds.map((playerId) => {
-                                                        const player = plannerPlayerLookup[playerId];
-                                                        if (!player) return null;
-                                                        return (
-                                                            <option key={`planner-board-player-${playerId}`} value={playerId}>
-                                                                {player.firstName} {player.lastName}
-                                                            </option>
-                                                        );
-                                                    })}
-                                                </select>
-                                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                                    <button
-                                                        onClick={plannerAssignStarterFromBoard}
-                                                        disabled={plannerLiveActive || !plannerBoardSelectedSlotId}
-                                                        className={`min-h-[44px] rounded-lg border text-sm font-bold ${plannerLiveActive || !plannerBoardSelectedSlotId ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-900 text-white border-slate-900'}`}
-                                                    >
-                                                        Assign player
-                                                    </button>
-                                                    <button
-                                                        onClick={() => {
-                                                            if (!plannerBoardSelectedSlotId || plannerLiveActive) return;
-                                                            setPlannerBoardAssignPlayerId('');
-                                                            void plannerSetStarter(plannerBoardSelectedSlotId, '');
-                                                        }}
-                                                        disabled={plannerLiveActive || !plannerBoardSelectedSlotId}
-                                                        className={`min-h-[44px] rounded-lg border text-sm font-bold ${plannerLiveActive || !plannerBoardSelectedSlotId ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white text-slate-700 border-slate-200'}`}
-                                                    >
-                                                        Clear slot
-                                                    </button>
-                                                    <button
-                                                        onClick={plannerToggleStarterSwapMode}
-                                                        disabled={plannerLiveActive || !plannerBoardSelectedSlotId}
-                                                        className={`min-h-[44px] rounded-lg border text-sm font-bold ${plannerLiveActive || !plannerBoardSelectedSlotId ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerBoardMode === 'swap' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-white text-slate-700 border-slate-200'}`}
-                                                    >
-                                                        {plannerBoardMode === 'swap' ? 'Cancel swap' : 'Swap selected'}
-                                                    </button>
-                                                </div>
+                                                {plannerBoardSelectedSlotId && !plannerLiveActive ? (
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span className={getChipClass('info')}>
+                                                            {normalizePlayerIdValue(matchdayPlanner?.starters?.[plannerBoardSelectedSlotId])
+                                                                ? plannerPlayerName(matchdayPlanner?.starters?.[plannerBoardSelectedSlotId])
+                                                                : 'No player assigned'}
+                                                        </span>
+                                                        <button
+                                                            onClick={() => {
+                                                                if (!plannerBoardSelectedSlotId || plannerLiveActive) return;
+                                                                setPlannerBoardAssignPlayerId('');
+                                                                void plannerAssignStarterFromPicker('');
+                                                            }}
+                                                            className={getButtonClass('secondary', 'xs')}
+                                                        >
+                                                            Clear slot
+                                                        </button>
+                                                        <button
+                                                            onClick={plannerToggleStarterSwapMode}
+                                                            disabled={plannerLiveActive || !plannerBoardSelectedSlotId}
+                                                            className={`min-h-[36px] rounded-lg border text-sm font-bold ${plannerLiveActive || !plannerBoardSelectedSlotId ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : plannerBoardMode === 'swap' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-white text-slate-700 border-slate-200'}`}
+                                                        >
+                                                            {plannerBoardMode === 'swap' ? 'Cancel swap' : 'Swap selected'}
+                                                        </button>
+                                                    </div>
+                                                ) : null}
                                                 {!plannerLiveActive && plannerBoardMode === 'swap' && plannerSwapSlotA && (
                                                     <div className="text-[12px] text-amber-700">
                                                         Swap mode active. Tap another slot on the pitch to swap with {(plannerSlotLookup[plannerSwapSlotA]?.label || plannerSwapSlotA.toUpperCase())}.
@@ -10425,6 +10522,83 @@
                                     Stop live and leave
                                 </button>
                             </div>
+                        </div>
+                    </Modal>
+
+                    <Modal
+                        isOpen={plannerStarterPickerModal.open}
+                        onClose={closePlannerStarterPickerModal}
+                        title={plannerStarterPickerSlot ? `${plannerStarterPickerSlot.label} Starter` : 'Assign Starter'}
+                        placement="center"
+                    >
+                        <div className="space-y-3">
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                                <div className="text-[12px] font-bold uppercase text-slate-500">Selected position</div>
+                                <div className="text-lg font-bold text-slate-900">
+                                    {plannerStarterPickerSlot?.label || 'Starter slot'}
+                                </div>
+                                <div className="text-sm text-slate-600">
+                                    {plannerStarterPickerCurrentPlayerId
+                                        ? `${plannerPlayerName(plannerStarterPickerCurrentPlayerId)} is currently assigned here.`
+                                        : 'No player is currently assigned here yet.'}
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Search roster</label>
+                                <input
+                                    type="text"
+                                    value={plannerStarterPickerModal.search}
+                                    onChange={(e) => setPlannerStarterPickerModal((prev) => ({ ...prev, search: e.target.value }))}
+                                    placeholder="Search player or position"
+                                    className="w-full min-h-[48px] rounded-xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-100"
+                                />
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                    onClick={() => void plannerAssignStarterFromPicker('')}
+                                    className={getButtonClass('secondary', 'sm')}
+                                >
+                                    Clear slot
+                                </button>
+                                <div className="text-[12px] text-slate-500">
+                                    Picking someone already used in another slot will move them here automatically.
+                                </div>
+                            </div>
+
+                            {plannerStarterPickerRows.length === 0 ? (
+                                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                                    No roster players matched that search.
+                                </div>
+                            ) : (
+                                <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+                                    {plannerStarterPickerRows.map((row) => (
+                                        <button
+                                            key={`planner-starter-picker-${row.playerId}`}
+                                            onClick={() => void plannerAssignStarterFromPicker(row.playerId)}
+                                            className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                                                row.isCurrent
+                                                    ? 'border-emerald-300 bg-emerald-50'
+                                                    : row.isAssignedElsewhere
+                                                        ? 'border-amber-200 bg-amber-50'
+                                                        : 'border-slate-200 bg-white hover:border-brand-200 hover:bg-brand-50/50'
+                                            }`}
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="truncate text-base font-bold text-slate-900">{row.fullName}</div>
+                                                    <div className="text-sm text-slate-500">{row.position}</div>
+                                                </div>
+                                                <div className="flex flex-wrap justify-end gap-1">
+                                                    {row.isCurrent ? <span className={getChipClass('success')}>Current</span> : null}
+                                                    {row.isAssignedElsewhere ? <span className={getChipClass('warning')}>At {row.assignedSlotLabel}</span> : null}
+                                                </div>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </Modal>
 
