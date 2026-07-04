@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.03.22-111';
+        const MASTER_BUILD_VERSION = '2026.07.04-113';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,36 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-07-04-cache-busted-shared-app-script',
+                at: '2026-07-04T18:28:00+08:00',
+                build: '2026.07.04-113',
+                area: 'App shell',
+                title: 'Viewer and prod shells now version the shared app script',
+                summary: 'The web shells now load shared/app.js with an explicit build query string so GitHub Pages and PWA caching are less likely to keep serving an older broken bundle.',
+                changes: [
+                    { label: 'Script loading', from: 'shared/app.js loaded without a version query', to: 'shared/app.js now loads with a build-specific cache-busting query string' }
+                ],
+                details: [
+                    'This is aimed directly at stale-client situations where the browser keeps using an older shared/app.js even after the source has been fixed.'
+                ]
+            },
+            {
+                id: '2026-07-04-app-log-jsx-label-fix',
+                at: '2026-07-04T18:15:00+08:00',
+                build: '2026.07.04-112',
+                area: 'App shell',
+                title: 'Fixed startup compile error in the App Log screen',
+                summary: 'The app could fail to load because one App Log label used a raw arrow string inside JSX. That label is now safe text, and the web shells also include a favicon to avoid the extra 404 noise.',
+                changes: [
+                    { label: 'Startup stability', from: 'App could stop loading on a Babel JSX syntax error', to: 'App loads normally again with the App Log label rendered safely' },
+                    { label: 'Browser chrome', from: 'favicon.ico requested a missing file and logged 404 noise', to: 'A small inline favicon is now provided by the app shell' }
+                ],
+                details: [
+                    'The Tailwind CDN and in-browser Babel warnings are still build-pipeline warnings, but they are not what stopped the app loading.',
+                    'The real blocker was the JSX parse failure in the App Log screen.'
+                ]
+            },
             {
                 id: '2026-03-22-matchday-position-player-picker',
                 at: '2026-03-22T18:10:00+08:00',
@@ -13517,7 +13547,7 @@
 
                                 {!!entry.changes?.length && (
                                     <div className="space-y-2">
-                                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">From -> To</div>
+                                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">From to To</div>
                                         <div className="space-y-2">
                                             {entry.changes.map((change, index) => (
                                                 <div key={`${entry.id}-change-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
