@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.07.04-113';
+        const MASTER_BUILD_VERSION = '2026.07.04-114';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,21 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-07-04-pages-republish-trigger',
+                at: '2026-07-04T18:46:00+08:00',
+                build: '2026.07.04-114',
+                area: 'Deployment',
+                title: 'Added a Pages republish trigger and disabled Jekyll processing',
+                summary: 'A tiny deployment-only update was added to force GitHub Pages to rebuild from the latest main branch and to keep static asset publishing simple.',
+                changes: [
+                    { label: 'Pages publishing', from: 'Site was still serving a stale published copy after the source fix landed on main', to: 'A fresh publish trigger is now in place so GitHub Pages has a clearer rebuild signal' }
+                ],
+                details: [
+                    'This change is about deployment behavior rather than app behavior.',
+                    'It also adds a .nojekyll marker so GitHub Pages treats the repo as a plain static site.'
+                ]
+            },
             {
                 id: '2026-07-04-cache-busted-shared-app-script',
                 at: '2026-07-04T18:28:00+08:00',
