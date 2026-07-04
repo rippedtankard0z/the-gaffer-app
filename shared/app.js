@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.07.04-115';
+        const MASTER_BUILD_VERSION = '2026.07.04-116';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -13747,7 +13747,7 @@
                         <div className="flex items-center justify-between gap-3">
                             <div>
                                 <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Recommended Rhythm</div>
-                                <div className="text-[12px] text-slate-500 mt-1">The normal flow is Home -> Games -> Match Day -> Game Closeout -> Reports.</div>
+                                <div className="text-[12px] text-slate-500 mt-1">The normal flow is Home, then Games, then Match Day, then Game Closeout, then Reports.</div>
                             </div>
                             <div className="text-[11px] font-bold text-slate-400">{visibleCount} visible</div>
                         </div>
