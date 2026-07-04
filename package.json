@@ -1,0 +1,16 @@
+{
+  "name": "the-gaffer-app-web",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build:js": "esbuild shared/app.js --bundle --platform=browser --format=iife --target=es2020 --loader:.js=jsx --jsx-factory=React.createElement --jsx-fragment=React.Fragment --outfile=shared/app.compiled.js --legal-comments=none --minify",
+    "build:css": "tailwindcss -c tailwind.config.js -i shared/tailwind.input.css -o shared/tailwind.generated.css --minify",
+    "build": "npm run build:js && npm run build:css"
+  },
+  "devDependencies": {
+    "autoprefixer": "10.4.20",
+    "esbuild": "0.28.1",
+    "postcss": "8.5.6",
+    "tailwindcss": "3.4.17"
+  }
+}

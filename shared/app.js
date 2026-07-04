@@ -4,7 +4,7 @@
         // 1) Update MASTER_BUILD_VERSION below to the new value.
         // 2) Mirror it into Firestore so live clients see the update banner:
         //    npx firebase firestore:documents:update settings/app buildVersion=<NEW_VERSION> --project the-gaffer-581d8
-        const MASTER_BUILD_VERSION = '2026.07.04-117';
+        const MASTER_BUILD_VERSION = '2026.07.04-119';
         if (!window.GAFFER_BUILD_VERSION) {
             window.GAFFER_BUILD_VERSION = MASTER_BUILD_VERSION;
         }
@@ -716,6 +716,23 @@
         ];
         const APP_CHANGE_LOG_LOOKBACK_HOURS = 48;
         const DEFAULT_APP_CHANGE_LOG = [
+            {
+                id: '2026-07-04-built-web-shell-and-viewer-write-guard',
+                at: '2026-07-04T19:10:00+08:00',
+                build: '2026.07.04-119',
+                area: 'Web app',
+                title: 'The viewer and prod shells now ship compiled assets instead of browser-time build tools',
+                summary: 'The web shells now load a precompiled app bundle and generated Tailwind stylesheet, and the viewer no longer tries to write settings back into Firestore during startup.',
+                changes: [
+                    { label: 'Frontend loading', from: 'Babel and the Tailwind CDN compiled the app in the browser on every load', to: 'A built app bundle and generated stylesheet are now shipped directly to the browser' },
+                    { label: 'Viewer startup', from: 'Read-only viewer mode could still attempt settings writes and log permission-denied warnings', to: 'Viewer mode now skips settings persistence and stays quiet on launch' },
+                    { label: 'App boot order', from: 'The compiled app could load before the Firebase bridge finished initializing', to: 'The shell now waits for Firebase readiness before injecting the app bundle' }
+                ],
+                details: [
+                    'This removes the production Babel warning, the Tailwind CDN warning, and the large in-browser Babel deoptimisation warning from the app shell itself.',
+                    'A separate Firebase Authentication authorized-domain warning can still appear until the GitHub Pages domain is added in the Firebase console.'
+                ]
+            },
             {
                 id: '2026-07-04-pages-republish-trigger',
                 at: '2026-07-04T18:46:00+08:00',
